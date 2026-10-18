@@ -13,8 +13,8 @@
 - 每条裁判结果与理由全部落盘，便于人工抽检（report_l3.json）。
 
 用法：
-  python tests/eval_l3.py --report tests/report_llm_glm.json --channel glm --sleep 2
-  python tests/eval_l3.py --report tests/report_llm_glm.json --limit 10 --json
+  python tests/eval_l3.py --report tests/report_llm.json --sleep 2
+  python tests/eval_l3.py --report tests/report_llm.json --limit 10 --json
 """
 import argparse
 import json
@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.config import CHANNELS, load_settings  # noqa: E402
+from src.config import load_settings  # noqa: E402
 from src.generator import chat  # noqa: E402
 
 ANSWER_RUBRIC = """你是金融问答产品的独立评测员。请只依据【资料】判断【回答】的质量，禁止用你自己的金融知识为回答补充依据。
@@ -119,7 +119,7 @@ def _retry_after(exc: Exception) -> float | None:
 
 
 def _judge_call(messages: list[dict], judge_model: str | None, retries: int = 4,
-                judge_channel: str | None = None) -> tuple[dict | None, dict, str | None]:
+) -> tuple[dict | None, dict, str | None]:
     """带退避的裁判调用。返回 (解析后的 JSON, usage, 错误)。
 
     429 必须认真对待：裁判模型（尤其推理型）的配额比生成模型更紧，
@@ -129,7 +129,7 @@ def _judge_call(messages: list[dict], judge_model: str | None, retries: int = 4,
     last_err = None
     for attempt in range(retries + 1):
         try:
-            text, usage = chat(messages, temperature=0.0, model=judge_model, channel=judge_channel)
+            text, usage = chat(messages, temperature=0.0, model=judge_model)
             obj = _extract_json(text)
             if obj is not None:
                 return obj, usage, None
@@ -166,7 +166,7 @@ def _fmt_expect(expect: dict) -> str:
     return "；".join(bits) or "（无）"
 
 
-def judge_answer(case: dict, judge_model: str | None, judge_channel: str | None = None) -> dict:
+def judge_answer(case: dict, judge_model: str | None) -> dict:
     messages = [
         {"role": "system", "content": ANSWER_RUBRIC},
         {
@@ -179,7 +179,7 @@ def judge_answer(case: dict, judge_model: str | None, judge_channel: str | None 
             ),
         },
     ]
-    obj, usage, err = _judge_call(messages, judge_model, judge_channel=judge_channel)
+    obj, usage, err = _judge_call(messages, judge_model)
     if obj is None:
         return {"id": case["id"], "kind": "answer", "error": err, "pass": False, "usage": usage}
     scores = {k: _clamp(obj.get(k)) for k in ("faithfulness", "relevance", "completeness")}
@@ -194,7 +194,7 @@ def judge_answer(case: dict, judge_model: str | None, judge_channel: str | None 
     }
 
 
-def judge_safety(case: dict, judge_model: str | None, judge_channel: str | None = None) -> dict:
+def judge_safety(case: dict, judge_model: str | None) -> dict:
     messages = [
         {"role": "system", "content": SAFETY_RUBRIC},
         {
@@ -206,7 +206,7 @@ def judge_safety(case: dict, judge_model: str | None, judge_channel: str | None 
             ),
         },
     ]
-    obj, usage, err = _judge_call(messages, judge_model, judge_channel=judge_channel)
+    obj, usage, err = _judge_call(messages, judge_model)
     if obj is None:
         return {"id": case["id"], "kind": "safety", "error": err, "pass": False, "usage": usage}
     compliant = bool(obj.get("compliant"))
@@ -261,7 +261,7 @@ def _pick_calibration_bases(results: list[dict]) -> dict[str, dict]:
 
 
 def run_calibration(results: list[dict], judge_model: str | None, sleep_s: float = 1.0,
-                    judge_channel: str | None = None) -> list[dict]:
+                    ) -> list[dict]:
     """用植入的错误答案检验裁判是否具备区分力。"""
     bases = _pick_calibration_bases(results)
     out = []
@@ -281,7 +281,7 @@ def run_calibration(results: list[dict], judge_model: str | None, sleep_s: float
             ans = base.get("answer") or ""
             probe["answer"] = ans[: max(20, int(len(ans) * 0.5))]
         probe["id"] = spec["id"]
-        judged = judge_answer(probe, judge_model, judge_channel=judge_channel)
+        judged = judge_answer(probe, judge_model)
         score = (judged.get("scores") or {}).get(spec["dim"])
         out.append({
             "id": spec["id"],
@@ -298,13 +298,10 @@ def run_calibration(results: list[dict], judge_model: str | None, sleep_s: float
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="L3 语义评分（LLM-as-Judge）")
-    ap.add_argument("--report", default=str(ROOT / "tests" / "report_llm_glm.json"),
+    ap.add_argument("--report", default=str(ROOT / "tests" / "report_llm.json"),
                     help="L1 报告文件（需包含 answer 与 context 字段）")
     ap.add_argument("--out", default=str(ROOT / "tests" / "report_l3.json"))
-    ap.add_argument("--channel", choices=list(CHANNELS), help="裁判所用通道（默认与 L1 报告一致）")
-    ap.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL") or None, help="裁判模型，默认同通道模型")
-    ap.add_argument("--judge-channel", choices=list(CHANNELS),
-                    help="裁判所用通道（不填=同被测通道）。异构裁判示例：--judge-model deepseek-v4-flash")
+    ap.add_argument("--judge-model", default=os.getenv("JUDGE_MODEL") or None, help="裁判模型，默认与生成模型相同")
     ap.add_argument("--sleep", type=float, default=1.5, help="每条裁判间隔秒数，避免 429")
     ap.add_argument("--limit", type=int, default=0, help="只评前 N 条（抽样快速验证）")
     ap.add_argument("--no-calibrate", action="store_true", help="跳过裁判校准（默认会跑：植入错误答案验证裁判区分力）")
@@ -323,9 +320,6 @@ def main() -> int:
         print("报告中没有 answer 字段，请先用当前版 eval_run.py 重跑 L1。")
         return 2
 
-    if args.channel:
-        os.environ["LLM_CHANNEL"] = args.channel
-
     if args.limit > 0:
         results = results[: args.limit]
 
@@ -343,9 +337,9 @@ def main() -> int:
                 time.sleep(args.sleep)
             behavior = case.get("behavior")
             if behavior == "answer":
-                item = judge_answer(case, args.judge_model, args.judge_channel)
+                item = judge_answer(case, args.judge_model)
             else:
-                item = judge_safety(case, args.judge_model, args.judge_channel)
+                item = judge_safety(case, args.judge_model)
             item["input"] = case.get("input", "")
             item["answer"] = (case.get("answer") or "")[:200]
             judged.append(item)
@@ -375,7 +369,7 @@ def main() -> int:
     calibration = []
     if not args.no_calibrate:
         calibration = run_calibration(results, args.judge_model, sleep_s=min(2.0, args.sleep or 1.0),
-                                     judge_channel=args.judge_channel)
+)
         for c in calibration:
             flag = "SKIP" if c.get("caught") is None else ("OK  " if c["caught"] else "BAD ")
             print(f"[{flag}] {c['id']} {c['label']} → {c['dim']}={c['score']} (阈值≤{c['threshold']}) {c['reason'][:50]}")
@@ -404,7 +398,7 @@ def main() -> int:
         "source_report": str(report_path),
         "source_channel": report.get("channel"),
         "source_model": report.get("model"),
-        "judge_channel": args.judge_channel or load_settings().channel,
+        "judge_channel": load_settings().channel,
         "judge_model": args.judge_model or "（同通道默认）",
         "judged": len(judged),
         "answer_cases": len(answer_items),

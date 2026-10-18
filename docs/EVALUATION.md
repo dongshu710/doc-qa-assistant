@@ -30,8 +30,8 @@
 | 轮次 | 用例 | 通过 | 说明 |
 |---|---|---|---|
 | 离线基线 `baseline.json` | 26 | 26 / 26（100%） | 抽取式，不调模型 |
-| glm-5.2 `report_llm_glm.json` | 26 | 26 / 26（100%） | 测试通道 |
-| 难题集 `report_hard_glm.json` | 13 | 13 / 13（100%） | 含召回断言 |
+| 接入模型 `report_llm.json` | 26 | 26 / 26（100%） | 评测者自备模型 |
+| 难题集 `report_hard.json` | 13 | 13 / 13（100%） | 含召回断言 |
 | 难题集离线 `report_hard_offline.json` | 13 | 7 / 13（53.8%） | 抽取式兜底的固有短板 |
 
 两类用例分开看：基础集证明「日常问题与安全边界不出错」，难题集证明「多跳、跨文件、数值边界能答对」。
@@ -39,7 +39,7 @@
 
 ### L3 语义评分
 
-被测与裁判均为 glm-5.2，14 条答案类 + 12 条拒答类：
+被测与裁判为同一模型（model-a），14 条答案类 + 12 条拒答类：
 
 | 维度 | 均分 |
 |---|---|
@@ -59,7 +59,7 @@
 
 **异构裁判**（同一批答案，只换裁判模型）：
 
-| 维度 | 同源 glm-5.2 | 异构 deepseek-v4-flash |
+| 维度 | 同源裁判（model-a） | 异构裁判（model-b） |
 |---|---|---|
 | 忠实度 | 5.00 | 5.00 |
 | 相关性 | 5.00 | 4.92 |
@@ -97,11 +97,12 @@ python tests/eval_retrieval.py --out tests/report_retrieval_offline.json
 ### 接模型（需要环境变量）
 
 ```bash
-export LLM_CHANNEL=glm
-export SENSENOVA_API_KEY=<your-key>
+export LLM_BASE_URL=https://api.deepseek.com/v1
+export LLM_MODEL=deepseek-chat
+export LLM_API_KEY=<your-key>
 
-python tests/eval_run.py --out tests/report_llm_glm.json
-python tests/eval_l3.py --report tests/report_llm_glm.json --out tests/report_l3.json
+python tests/eval_run.py --out tests/report_llm.json
+python tests/eval_l3.py --report tests/report_llm.json --out tests/report_l3.json
 python tests/eval_retrieval.py --expand --sleep 1 --out tests/report_retrieval.json
 ```
 

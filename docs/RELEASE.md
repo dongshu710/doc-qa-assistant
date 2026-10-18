@@ -32,8 +32,8 @@ dist/SHA256SUMS.txt
 
 ```bash
 mkdir -p /tmp/docqa-test && cd /tmp/docqa-test
-unzip <path>/doc-qa-assistant-1.0.0.zip
-cd doc-qa-assistant-1.0.0
+unzip <path>/doc-qa-assistant-1.0.1.zip
+cd doc-qa-assistant-1.0.1
 python -m src.server --port 8021 &
 curl http://127.0.0.1:8021/api/health
 curl -X POST http://127.0.0.1:8021/api/ask \
@@ -51,7 +51,7 @@ curl -X POST http://127.0.0.1:8021/api/ask \
 ```bash
 git init -b main
 git add .
-git commit -m "release: v1.0.0"
+git commit -m "release: v1.0.1"
 git remote add origin https://github.com/<owner>/doc-qa-assistant.git
 git push -u origin main
 ```
@@ -67,11 +67,11 @@ Topics：`rag` `llm` `document-qa` `python` `bm25` `evaluation` `llm-as-judge` `
 GitHub CLI：
 
 ```bash
-gh release create v1.0.0 \
-  dist/doc-qa-assistant-1.0.0.zip \
+gh release create v1.0.1 \
+  dist/doc-qa-assistant-1.0.1.zip \
   dist/SHA256SUMS.txt \
   dist/report.html \
-  --title "v1.0.0 · 可下载的文档问答原型" \
+  --title "v1.0.1 · 可下载的文档问答原型" \
   --notes-file CHANGELOG.md
 ```
 

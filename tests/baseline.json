@@ -1,6 +1,6 @@
 {
-  "channel": "glm",
-  "model": "glm-5.2",
+  "channel": "external",
+  "model": "model-a",
   "total": 26,
   "passed": 26,
   "pass_rate": 1.0,

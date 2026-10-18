@@ -1,13 +1,12 @@
-"""最小可用 Web 服务：三页原型（首页 / 问答 / 评测看板）+ HTTP API。
+"""最小可用 Web 服务：四页原型（首页 / 问答 / 评测看板 / 汇报）+ HTTP API。
 
-  python -m src.server --port 8000                 # 默认通道 deepseek
-  python -m src.server --channel glm --port 8000   # 测试通道 glm
+  python -m src.server --port 8000
 
 路由：
   GET  /                 首页
   GET  /ask              问答（输入/答案/引用/追问/转人工/反馈）
   GET  /dashboard        评测看板（指标/知识库/反馈/最近对话）
-  GET  /api/health       通道 / 模型 / 知识块数
+  GET  /api/health       端点 / 模型 / 知识块数
   GET  /api/metrics      聚合指标
   GET  /api/knowledge    知识库文件与块数
   GET  /api/feedback/list?limit=20
@@ -34,7 +33,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import casegen, evaluator, ingest
-from .config import CHANNELS
 from .metrics import summarize
 from .pipeline import RAGPipeline
 from .report import collect as collect_report, render as render_report
@@ -172,6 +170,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "version": __version__,
                     "channel": pipe.settings.channel,
                     "model": pipe.settings.model,
+                    "llm_ready": pipe.llm_ready,
                     "chunks": len(pipe.chunks),
                 })
             elif path == "/api/metrics":
@@ -509,14 +508,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="文档问答助手 Web 服务")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--channel", choices=list(CHANNELS), help="deepseek(默认) / glm(测试)")
+    ap.add_argument("--model", help="临时指定模型（等价于设置 LLM_MODEL）")
     args = ap.parse_args()
 
-    if args.channel:
-        os.environ["LLM_CHANNEL"] = args.channel
+    if args.model:
+        os.environ["LLM_MODEL"] = args.model
 
     httpd, pipe = create_server(args.host, args.port)
-    print(f"serving http://{args.host}:{args.port}  channel={pipe.settings.channel} model={pipe.settings.model}")
+    print(f"serving http://{args.host}:{args.port}  model={pipe.settings.model} base={pipe.settings.api_base}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

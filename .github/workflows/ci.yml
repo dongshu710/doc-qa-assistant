@@ -19,7 +19,6 @@ jobs:
         python: ["3.11", "3.13"]
 
     env:
-      LLM_CHANNEL: glm
       PYTHONUTF8: "1"
 
     steps:

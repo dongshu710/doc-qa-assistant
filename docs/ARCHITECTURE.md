@@ -27,7 +27,7 @@ flowchart LR
   R --> Q{置信度闸门<br/>min_score=0.3}
   Q -->|未命中| H[转人工<br/>handoff 工单]
   Q -->|命中| L{LLM 通道}
-  L -->|有 Key| M[OpenAI 兼容 API<br/>DeepSeek / glm]
+  L -->|有 Key| M[OpenAI 兼容 API<br/>默认 DeepSeek]
   L -->|无 Key / 失败| E[抽取式降级]
   M --> C[引用校验 / 修复]
   E --> C
@@ -112,6 +112,6 @@ sequenceDiagram
 
 ## 7. 非目标
 
-- 不做多租户、鉴权、限流、审计与灰度——这是本地演示/求职作品，不是生产系统。
+- 不做多租户、鉴权、限流、审计与灰度——这是本地演示项目，不是生产系统。
 - 不做扫描件 OCR。
 - 不提供投资建议，不做收益承诺。

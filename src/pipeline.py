@@ -1,6 +1,6 @@
 """编排层：输入校验 → 检索 → 生成 → 引用校验 → 观测。
 
-判定（C3）：金融制度/产品问答本质是「检索→生成→引用」的固定链路（Chaining），
+设计取舍：文档问答本质是「检索→生成→引用」的固定链路（Prompt Chaining），
 不是自主 Agent。这里如实按工作流实现；只有未来接入多工具动态调用（查利率 API、算 IRR、转工单）
 才升级为有界 Agent。详见 README 的「何时才升级为 Agent」。
 
@@ -60,6 +60,11 @@ class RAGPipeline:
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.log_path = os.path.join(root, "logs", "trace.jsonl")
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+
+    @property
+    def llm_ready(self) -> bool:
+        """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
+        return bool(api_key())
 
     def ask(self, query: str) -> dict:
         trace_id = uuid.uuid4().hex[:12]

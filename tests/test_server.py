@@ -1,7 +1,7 @@
 """Web 服务冒烟测试：起一个临时端口，验证 /api/health 与 /api/ask。
 
 用法：python tests/test_server.py
-（默认走 glm 测试通道；设 SENSENOVA_API_KEY 则为真实 LLM，否则离线抽取。）
+（未配置 LLM_API_KEY 时自动走离线抽取，配置后为真实模型。）
 """
 import json
 import os
@@ -13,7 +13,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-os.environ.setdefault("LLM_CHANNEL", "glm")
 
 from src.server import create_server  # noqa: E402
 
@@ -88,7 +87,7 @@ try:
     print("feedback:", fb)
 
     assert health["status"] == "ok"
-    assert health["channel"] == "glm"
+    assert health["channel"], "health 应返回端点标识"
     assert data["behavior"] == "answer" and data["answer"]
     assert fb.get("ok") is True
     print("SMOKE OK")

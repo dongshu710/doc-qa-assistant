@@ -22,7 +22,7 @@
 | **评测看板** | **汇报页（可独立导出）** |
 | ![](docs/screenshots/dashboard.png) | ![](docs/screenshots/report.png) |
 
-> 截图来自 v1.0.0，使用演示知识库；模型通道为 glm-5.2（测试）或离线抽取。
+> 截图来自 v1.0.1，使用演示知识库与离线抽取模式；接入模型后界面一致。
 
 ## 0. 定位：这是「文档问答助手」，不是只服务金融
 
@@ -36,7 +36,7 @@
 
 ## 0.1 先说清楚：这是工作流，不是 Agent
 
-手册 3.2 讲得很准：**RAG 解决「知道」，Agent 解决「去做」**。
+一句话区分：**RAG 解决「知道」，Agent 解决「去做」**。
 
 本作品的本质是「检索 → 生成 → 引用」的固定链路（Prompt Chaining），分支可穷举，**不需要上自主 Agent**。判定标准很简单：能写出 if/else 穷举分支，就别用 Agent——上 Agent 只会引入不确定性、成本和运维负担。
 
@@ -143,7 +143,7 @@ doc-qa-assistant/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.0.0.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.0.1.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -169,41 +169,32 @@ python -m src.cli
 > `set PYTHONPATH=<项目根目录>`（Windows CMD）
 > 或 `export PYTHONPATH="$PWD"`（Git Bash / macOS / Linux）。
 
-## 4. 双通道接入（DeepSeek 官方默认 + 日日新 glm 测试）
+## 4. 模型接入（任意 OpenAI 兼容端点）
 
 不配 Key 时走「离线抽取模式」，链路照样跑通、可评测；配了 Key 自动切换为大模型生成。**源码不含任何密钥**，只从环境变量读取。
 
-| 通道 | 用途 | `base_url` | `model` | 密钥变量 |
-|---|---|---|---|---|
-| `deepseek` | **项目默认** | `https://api.deepseek.com/v1` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
-| `glm` | 仅测试 | `https://token.sensenova.cn/v1` | `glm-5.2` | `SENSENOVA_API_KEY` |
-
-选择通道（默认 `deepseek`）：
+默认指向 DeepSeek 官方，但代码里没有写死任何一家：改 `LLM_BASE_URL` + `LLM_MODEL` 就能换成你手上的任意兼容端点（自建 vLLM、公司网关、其他云厂商都行）。
 
 ```bash
-python -m src.cli --list-channels                 # 查看两条通道
-python -m src.cli "稳盈系列的起购金额是多少"        # 默认通道 deepseek
-python -m src.cli --channel glm "稳盈系列..."       # 测试通道 glm
-# 或：set LLM_CHANNEL=glm
+export LLM_BASE_URL=https://api.deepseek.com/v1   # 默认值，可换
+export LLM_MODEL=deepseek-chat                    # 默认值，可换
+export LLM_API_KEY=sk-xxxx                        # 不配 = 离线抽取
 ```
 
-密钥（复制 `.env.example` 为 `.env`，或设环境变量）：
+也可以只对一次运行生效：
 
 ```bash
-set DEEPSEEK_API_KEY=sk-xxxx    # 默认通道（DeepSeek 官方）
-set SENSENOVA_API_KEY=sk-xxxx   # 测试通道（日日新）
+python -m src.cli --model deepseek-chat "稳盈系列的起购金额是多少"
+python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 ```
-
-> 通用 `LLM_API_KEY` 优先级最高，任一通道可用；`DEEPSEEK_BASE_URL`/`DEEPSEEK_MODEL`、`GLM_BASE_URL`/`GLM_MODEL` 可按通道覆盖（用于代理或自定义模型）。
 
 可调环境变量：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LLM_CHANNEL` | `deepseek` | `deepseek`(默认) / `glm`(测试) |
-| `DEEPSEEK_API_KEY` | 空 | 默认通道密钥；为空则离线抽取 |
-| `SENSENOVA_API_KEY` | 空 | 测试通道密钥 |
-| `LLM_API_KEY` | 空 | 通用密钥兜底，优先级最高 |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | 端点地址（OpenAI 兼容） |
+| `LLM_MODEL` | `deepseek-chat` | 模型名 |
+| `LLM_API_KEY` | 空 | 密钥；为空则离线抽取（兼容 `DEEPSEEK_API_KEY`） |
 | `TOP_K` | `4` | 召回条数 |
 | `MIN_SCORE` | `0.5` | 检索置信度阈值，低于此值按未命中转人工 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
@@ -214,14 +205,13 @@ set SENSENOVA_API_KEY=sk-xxxx   # 测试通道（日日新）
 ## 4.1 原型（四页 + HTTP API）
 
 ```bash
-python -m src.server --port 8000                 # 默认通道 deepseek（需官方 Key）
-python -m src.server --channel glm --port 8000   # 测试通道 glm
+python -m src.server --port 8000
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
-页面与手册 2.4 的对应：
+页面与使用路径的对应：
 
-| 路由 | 页面 | 覆盖手册页面 |
+| 路由 | 页面 | 覆盖的使用环节 |
 |---|---|---|
 | `/` | 首页 / 入口（3 个示例问题） | ① |
 | `/ask` | 问答：输入 → 答案+引用 → 多轮追问 → 答不出转人工 → 反馈 | ②③④⑤⑥ |
@@ -254,7 +244,7 @@ API：
 - `POST /api/cases/from_feedback` `{"trace_id","keywords","behavior","note"}` → 差评一键转回归用例
 - `POST /api/handoff` `{"trace_id","query","contact"}` → 模拟工单，写 `logs/handoff.jsonl`
 
-> 默认只绑定 `127.0.0.1`；对外暴露前需加鉴权与限流。当前**暂不接入 DeepSeek 官方 Key**，演示走 glm 测试通道或离线抽取。
+> 默认只绑定 `127.0.0.1`；对外暴露前需加鉴权与限流。模型 Key 需自备，未配置时自动走离线抽取。
 
 ## 4.2 换成你自己的文档
 
@@ -365,10 +355,10 @@ python tests/eval_run.py                 # 基础 + 反馈 + 文档用例
 python tests/eval_run.py --include-hard  # 再叠加难题集（诊断用）
 ```
 
-实测（glm-5.2）：给一份 DOCX 制度出 3 条题（`12.6 万元` / `3 个工作日` / `2 年`），
+实测：给一份 DOCX 制度出 3 条题（`12.6 万元` / `3 个工作日` / `2 年`），
 文档用例 **3/3**；「运行全部」基础 25 + 反馈 1 + 文档 3 = **29/29**，耗时约 282s（含查询扩展，`sleep=1`）。
 
-## 4.5 汇报页与独立导出（给面试/评审看的那一页）
+## 4.5 汇报页与独立导出（可分享的那一页）
 
 ```bash
 python -m src.report --out dist/report.html   # 导出独立 HTML（不依赖服务）
@@ -382,14 +372,14 @@ python -m src.report --out dist/report.html   # 导出独立 HTML（不依赖服
 ## 5. 评测
 
 ```bash
-python tests/eval_run.py                                  # 默认通道
+python tests/eval_run.py                                  # 离线或已配 Key
 python tests/eval_run.py --out tests/baseline.json        # 更新基线
-python tests/eval_run.py --channel glm --sleep 2 --out tests/report_llm_glm.json  # 测试通道
+python tests/eval_run.py --sleep 2 --out tests/report_llm.json   # 接模型跑一轮
 ```
 
 - 基础用例 25 条：正常 12 / 边界 7 / 对抗 6；反馈用例由看板「生成用例」写入 `eval_cases_feedback.jsonl`（`regression`）；上传文档的自动出题写入 `eval_cases_docs.jsonl`（`doc`）——**三类默认一起跑**
 - 门禁：**对抗用例 100% 通过**（一条失败即非零退出，阻断发布）+ 总通过率 ≥ 90%
-- 当前基线：**离线 26/26 = 100%**（含 1 条反馈用例 + PDF 知识库）；**测试通道 glm 26/26 = 100%**（`tests/report_llm_glm.json`）
+- 当前基线：**离线 26/26 = 100%**（`tests/baseline.json`）；**接入模型 26/26 = 100%**（`tests/report_llm.json`，由评测者自备模型跑出）
 - L1 断言只锁「行为 / 事实 / 安全」，不绑死措辞（如风险等级接受「R1 / R5 / 五档 / 五级」任一）；语义质量交给 L3。
 
 改动 prompt、换模型、调切分后，**必须重跑并与 `baseline.json` 逐条 diff**，只允许变好不允许变差。
@@ -400,16 +390,16 @@ L1 判不了三件事：**编造**（关键词命中但数字是编的）、**�
 
 ```bash
 # 前提：先用当前版 eval_run 重跑 L1（报告需含 answer/context 字段）
-python tests/eval_run.py --channel glm --sleep 2 --out tests/report_llm_glm.json
-python tests/eval_l3.py --report tests/report_llm_glm.json --channel glm --sleep 1.5
-python tests/eval_l3.py --report tests/report_llm_glm.json --limit 8 --json   # 抽样快跑
+python tests/eval_run.py --sleep 2 --out tests/report_llm.json
+python tests/eval_l3.py --report tests/report_llm.json --sleep 1.5
+python tests/eval_l3.py --report tests/report_llm.json --limit 8 --json   # 抽样快跑
 ```
 
 - **答案类**用例按「忠实度 / 相关性 / 完整性」各 1–5 分；**拒答类**用例用合规 rubric（该不该拒、有没有泄露）。
 - 裁判只看【检索资料】+【回答】，**禁止用自身知识补依据**，避免“裁判比模型还懂”的假高分。
 - 门禁：忠实度均分 ≥ 4.0、无 faithfulness ≤ 2 的疑似编造、语义通过率 ≥ 85%、拒答类 100% 合规。
 - 报告 `tests/report_l3.json` 保留每条分数与理由，便于人工抽检；看板 `/dashboard` 与 `/report` 都会展示。
-- **裁判校准（默认开启，很重要）**：植入 3 条错误答案（编造数字 / 答非所问 / 多问只答一半），若裁判不降分，则整轮 L3 判为**不可信**并门禁失败。实测 glm-5.2 得 1 / 1 / 2 分，区分力有效；`--calibrate-only` 可只补跑校准、复用已有评分省 token。
+- **裁判校准（默认开启，很重要）**：植入 3 条错误答案（编造数字 / 答非所问 / 多问只答一半），若裁判不降分，则整轮 L3 判为**不可信**并门禁失败。实测裁判在三条植入错误上分别得 1 / 1 / 2 分，区分力有效；`--calibrate-only` 可只补跑校准、复用已有评分省 token。
 - **读数提醒**：基础集 26 条曾全部 5.0，说明的是**测试集偏简单**（问题与知识块近乎一一对应），不代表“质量完美”。所以要另跑难题集（见 5.2）。
 - **立场**：L3 结果用于趋势对比，不做逐条绝对判定——裁判本身不确定，把它当“探照灯”而不是“判决书”。
 
@@ -419,8 +409,8 @@ python tests/eval_l3.py --report tests/report_llm_glm.json --limit 8 --json   # 
 
 ```bash
 python tests/build_cases_hard.py                                    # 生成难题集
-python tests/eval_run.py --cases tests/eval_cases_hard.jsonl --channel glm --sleep 2 \
-       --out tests/report_hard_glm.json                             # 单独跑难题
+python tests/eval_run.py --cases tests/eval_cases_hard.jsonl --sleep 2 \
+       --out tests/report_hard.json                                 # 单独跑难题
 python tests/eval_run.py --include-hard                             # 或与基础集一起跑（诊断）
 ```
 
@@ -446,17 +436,17 @@ python tests/eval_run.py --include-hard                             # 或与基�
 
 ### 5.3 异构裁判（换模型判，消自偏好）
 
-同源裁判（用被测模型判自己）会系统性给高分。所以裁判通道与模型可独立指定：
+同源裁判（用被测模型判自己）会系统性给高分。所以裁判模型可以单独指定：
 
 ```bash
-# 被测：glm-5.2；裁判：deepseek-v4-flash（同网关、不同模型家族）
-python tests/eval_l3.py --report tests/report_hard_glm.json \
-       --judge-channel glm --judge-model deepseek-v4-flash \
+# 换一个模型家族做裁判，与被测模型不同即可
+python tests/eval_l3.py --report tests/report_hard.json \
+       --judge-model <另一个模型名> \
        --out tests/report_l3_hard_cross.json
 ```
 
-- `--judge-channel` 决定用哪套 base_url/key，`--judge-model` 决定模型，两者可自由组合。
-- 建议：一个通道跑生成、另一个通道或另一类模型做裁判；报告里会同时记 `judge_channel` 与 `judge_model`。
+- `--judge-model` 指定裁判模型；端点复用 `LLM_BASE_URL`，要换端点就换环境变量。
+- 建议：裁判尽量选与被测不同的模型家族，否则分数会整体偏高；报告里会记录 `judge_channel` 与 `judge_model`。
 - 每次 L3 都会跑**裁判校准**（植入编造/答偏/答半的错误答案），裁判抓不住就直接判该轮结果不可信。
 
 ### 5.4 召回评测（Recall@k / MRR）
@@ -529,7 +519,6 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 
 ## 9. 待核实清单
 
-- `[待核实: 日日新 Token Plan 的模型清单、额度与计费以 platform.sensenova.cn 为准]`
 - `[待核实: 各厂商上下文长度与单价以官方文档为准]`
 - `[待核实: 监管条款摘录来自公开文件，正式使用前以官方原文为准]`
 - `[待核实: 生产环境鉴权、限流方案以实际部署平台为准]`

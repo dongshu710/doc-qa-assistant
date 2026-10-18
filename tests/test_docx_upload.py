@@ -28,7 +28,7 @@ UPLOAD_NAME = "银杏计划采购管理办法.docx"
 HOST = "127.0.0.1"
 
 
-_KEY_ENVS = ("LLM_API_KEY", "SENSENOVA_API_KEY", "DEEPSEEK_API_KEY")
+_KEY_ENVS = ("LLM_API_KEY", "DEEPSEEK_API_KEY")
 
 
 def _force_offline():

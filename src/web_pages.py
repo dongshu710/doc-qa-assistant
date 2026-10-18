@@ -1,7 +1,7 @@
 """原型页面（首页 / 问答 / 评测看板）。
 
-对应《投前补充材料执行手册》2.4 的 7 个页面：
-  首页/入口、提问输入、答案页、多轮追问、答不出转人工、反馈、后台（知识库+评测看板）
+覆盖一条完整使用路径：首页入口、提问输入、答案与引用、多轮追问、
+答不出转人工、反馈回流、后台（知识库 + 评测看板）。
 
 设计系统在 theme.py；本文件只放各页面的结构与交互。全部为内联 HTML/CSS/JS，
 不依赖 CDN、字体文件或前端框架，断网也能完整打开。
@@ -180,7 +180,7 @@ HOME_BODY = """
             <div class="mock-a">首次购买 R3 及以上风险等级产品，须在营业网点临柜办理并完成录音录像<span class="cite">1</span>；
               未完成风险测评或测评过期的客户，不得购买 R2 及以上产品<span class="cite">2</span>。</div>
             <div class="mock-refs"><span>1 销售适当性实施细则 · 四、双录管理</span><span>2 客户适当性管理制度 · 一、风险测评</span></div>
-            <div class="mock-foot"><span>glm-5.2</span><span>1.4s</span><span>2 条引用</span></div>
+            <div class="mock-foot"><span>deepseek-chat</span><span>1.4s</span><span>2 条引用</span></div>
           </div>
         </div>
         <div class="mock-badge"><i></i>引用校验通过</div>
@@ -490,7 +490,7 @@ ASK_BODY = """
         <div class="kb-stat"><b id="sideChunks">—</b><span>个知识块</span></div>
         <div class="kb-lines">
           <div class="row"><span>文档</span><b id="sideFiles">—</b></div>
-          <div class="row"><span>通道 / 模型</span><b id="sideChannel">—</b></div>
+          <div class="row"><span>端点 / 模型</span><b id="sideChannel">—</b></div>
           <div class="row"><span>服务状态</span><span class="pill ok" id="sideState"><span class="dot"></span>连接中</span></div>
         </div>
       </section>
@@ -751,11 +751,12 @@ document.getElementById('health').style.cursor='pointer';
 
 fetch('/api/health').then(function(r){return r.json();}).then(function(h){
   var box=document.getElementById('health');
-  box.querySelector('span').textContent='在线 · '+h.channel+' / '+h.model;
+  box.querySelector('span').textContent=(h.llm_ready?'在线 · ':'离线抽取 · ')+h.model;
   setText('sideChunks',h.chunks);
   setText('sideChannel',h.channel+' / '+h.model);
   var state=document.getElementById('sideState');
-  state.className='pill ok'; state.innerHTML='<span class="dot"></span>正常';
+  if(h.llm_ready){ state.className='pill ok'; state.innerHTML='<span class="dot"></span>正常'; }
+  else { state.className='pill'; state.innerHTML='<span class="dot" style="background:#c58b00"></span>离线抽取'; }
 }).catch(function(){
   var box=document.getElementById('health');
   box.querySelector('span').textContent='服务未就绪';
@@ -1110,7 +1111,7 @@ function renderL3(l3){
     judge.textContent='未运行';
     $('l3').innerHTML='<div class="empty">'+ic('shield',26)
       +'<div>尚未运行 L3 语义评分</div>'
-      +'<div class="mono" style="font-size:11.5px;background:#f7f9fd;border:1px solid var(--line);padding:6px 10px;border-radius:8px;margin-top:6px">python tests/eval_l3.py --report tests/report_llm_glm.json</div>'
+      +'<div class="mono" style="font-size:11.5px;background:#f7f9fd;border:1px solid var(--line);padding:6px 10px;border-radius:8px;margin-top:6px">python tests/eval_l3.py --report tests/report_llm.json</div>'
       +'</div>';
     return;
   }

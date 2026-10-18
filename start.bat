@@ -17,9 +17,11 @@ if errorlevel 1 (
 
 set "PORT=8000"
 if not "%~1"=="" set "PORT=%~1"
+set "VER=dev"
+if exist VERSION set /p VER=<VERSION
 
 echo.
-echo   文档问答助手 v1.0.0
+echo   文档问答助手 v%VER%
 echo   地址: http://127.0.0.1:%PORT%
 echo   未配置模型 Key 时自动进入离线抽取模式，功能与评测仍可用。
 echo   按 Ctrl+C 停止服务。

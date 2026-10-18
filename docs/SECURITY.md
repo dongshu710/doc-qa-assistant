@@ -12,7 +12,7 @@
 ## 密钥处理
 
 - 源码与仓库中**不含任何密钥**；`.env` 已在 `.gitignore` 中。
-- Key 只从环境变量读取：`LLM_API_KEY` 优先，否则 `DEEPSEEK_API_KEY` / `SENSENOVA_API_KEY`。
+- Key 只从环境变量读取：`LLM_API_KEY` 优先，兼容 `DEEPSEEK_API_KEY`。
 - 日志与 trace 不记录请求头、Key、完整系统提示。
 - 前端页面不接触 Key，所有模型调用都在服务端完成。
 

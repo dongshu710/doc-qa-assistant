@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src import evaluator  # noqa: E402
-from src.config import CHANNELS  # noqa: E402
 from src.pipeline import RAGPipeline  # noqa: E402
 
 
@@ -28,13 +27,13 @@ def main() -> int:
                     help="指定单个用例文件；默认加载基础集 + 反馈用例 + 文档用例")
     ap.add_argument("--out", default=str(ROOT / "tests" / "report.json"))
     ap.add_argument("--sleep", type=float, default=0.0, help="每条用例间隔秒数，避免突发 429")
-    ap.add_argument("--channel", choices=list(CHANNELS), help="选择通道：deepseek(默认) / glm(测试)")
+    ap.add_argument("--model", help="临时指定模型（等价于设置 LLM_MODEL）")
     ap.add_argument("--include-hard", action="store_true",
                     help="额外加载难题集（诊断用，不进发布门禁）")
     args = ap.parse_args()
 
-    if args.channel:
-        os.environ["LLM_CHANNEL"] = args.channel
+    if args.model:
+        os.environ["LLM_MODEL"] = args.model
 
     pipe = RAGPipeline(str(ROOT / "data" / "knowledge"))
 

@@ -2,7 +2,7 @@
 
 两个用途：
 1. `GET /report`（服务在线时实时渲染）；
-2. `python -m src.report --out dist/report.html`（导出独立文件，无服务也能打开，可直接发给面试官）。
+2. `python -m src.report --out dist/report.html`（导出独立文件，无服务也能打开，可直接分享或存档）。
 
 关键点：导出的 HTML **不依赖任何 API**，数据在渲染时全部内联，双击即可看。
 """
@@ -132,10 +132,8 @@ def _report_label(report: dict, filename: str) -> str:
     channel = report.get("channel") or "-"
     model = report.get("model") or "-"
     if filename == "baseline.json":
-        return f"离线基线（{channel} / 抽取）"
-    if channel == "glm":
-        return f"glm 测试通道（{model}）"
-    return f"默认通道（{channel} / {model}）"
+        return "离线基线（抽取式，不调模型）"
+    return f"{channel} / {model}"
 
 
 def collect(pipe=None, root: Path | None = None) -> dict:
@@ -161,7 +159,7 @@ def collect(pipe=None, root: Path | None = None) -> dict:
         if (tests_dir / "eval_cases_feedback.jsonl").exists() else 0
 
     l1 = []
-    for name in ("baseline.json", "report_llm_deepseek.json", "report_llm_glm.json"):
+    for name in ("baseline.json", "report_llm.json"):
         path = tests_dir / name
         data = _read_json(path) if path.exists() else None
         if not data or not data.get("total"):
@@ -178,7 +176,7 @@ def collect(pipe=None, root: Path | None = None) -> dict:
         })
 
     l3 = _read_json(tests_dir / "report_l3.json") if (tests_dir / "report_l3.json").exists() else None
-    hard_l1 = _read_json(tests_dir / "report_hard_glm.json") if (tests_dir / "report_hard_glm.json").exists() else None
+    hard_l1 = _read_json(tests_dir / "report_hard.json") if (tests_dir / "report_hard.json").exists() else None
     retrieval = _read_json(tests_dir / "report_retrieval.json") if (tests_dir / "report_retrieval.json").exists() else None
     l3_hard = {}
     for key, name in (("same", "report_l3_hard_same.json"), ("cross", "report_l3_hard_cross.json")):
@@ -364,7 +362,7 @@ def render(data: dict, standalone: bool = False) -> str:
             f'<div>样本 <b>{l3.get("answer_cases")}</b> 条答案类 + <b>{l3.get("safety_cases")}</b> 条拒答类；'
             f'编造告警 <b>{len(l3.get("hallucinations") or [])}</b> 条；裁判消耗 '
             f'<b>{"—" if tokens is None else tokens}</b> tokens。</div>'
-            f'<div style="margin-top:7px">裁判：<b>{_esc(l3.get("judge_model") or l3.get("judge_channel") or "同通道")}</b></div>'
+            f'<div style="margin-top:7px">裁判：<b>{_esc(l3.get("judge_model") or l3.get("judge_channel") or "同源")}</b></div>'
             f'<div style="margin-top:7px"><b>区分力校准</b>（植入错误答案后是否降分）：{_esc(cal_txt)}</div>'
             "</div></div>"
         )
@@ -380,7 +378,7 @@ def render(data: dict, standalone: bool = False) -> str:
         cross = l3_hard.get("cross")
         cols = []
         if same:
-            cols.append((f"同源裁判（{same.get('judge_model') or '同通道'}）", same))
+            cols.append((f"同源裁判（{same.get('judge_model') or '同源'}）", same))
         if cross:
             cols.append((f"异构裁判（{cross.get('judge_model') or '其他模型'}）", cross))
         head = "<tr><th>指标</th>" + "".join(f"<th>{_esc(n)}</th>" for n, _ in cols) + "</tr>" if cols else ""
@@ -408,7 +406,7 @@ def render(data: dict, standalone: bool = False) -> str:
             + '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
             '同一批答案、同一套 rubric，只换裁判模型。两者分数差距即「裁判偏好」的量级——'
             '所以 L3 分数只作趋势对比，门禁取更严的一侧。'
-            + ("" if cols else "（尚未运行难题集 L3，先执行 tests/eval_l3.py --report tests/report_hard_glm.json）")
+            + ("" if cols else "（尚未运行难题集 L3，先执行 tests/eval_l3.py --report tests/report_hard.json）")
             + "</p></section>"
         )
 
@@ -466,13 +464,13 @@ def render(data: dict, standalone: bool = False) -> str:
 <main class="wrap">
 
 <section class="rp-hero">
-  <div class="eyebrow">Project Brief · 投前补充材料</div>
+  <div class="eyebrow">Project Brief · 开源原型</div>
   <h1>一个能跑、能评测、也敢说自己边界的产品原型</h1>
   <p>可自建知识库的「文档问答助手」：把制度、手册、产品说明或任意文档放进知识库，用检索增强生成回答问题，
   每条结论都带出处，答不出来就转人工。当前挂载金融知识库作为第一版示例，换一套文档、切一个 profile 就能复用到别的领域。</p>
   <div class="badges">
     <span class="b solid">v{_esc(__version__)}</span>
-    <span class="b solid">通道 {_esc(data['channel'])} / {_esc(data['model'])}</span>
+    <span class="b solid">端点 {_esc(data['channel'])} / {_esc(data['model'])}</span>
     <span class="b">知识库 {k['chunks']} 块 / {len(k['files'])} 份</span>
     <span class="b">用例 {cases['total']} 条</span>
     <span class="b">零第三方运行时依赖</span>
@@ -513,7 +511,7 @@ def render(data: dict, standalone: bool = False) -> str:
   </div>
   <div class="card">
     <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">02</span><h2>它不是什么</h2></div>
-    <div class="axis"><span class="ic not">✕</span><div><b>不是自主 Agent。</b>分支可穷举，按 C3 判断就该用固定链路，不该上 Agent 自治循环。</div></div>
+    <div class="axis"><span class="ic not">✕</span><div><b>不是自主 Agent。</b>分支可穷举，固定链路就够了，不该上 Agent 自治循环。</div></div>
     <div class="axis"><span class="ic not">✕</span><div><b>不给投资建议。</b>不预测涨跌、不推荐个股、不承诺收益，触发即拒答。</div></div>
     <div class="axis"><span class="ic not">✕</span><div><b>不替代柜面双录。</b>产品要素与制度口径可以答，风险测评和签约必须走线下合规流程。</div></div>
     <div class="axis"><span class="ic not">✕</span><div><b>不是生产系统。</b>缺鉴权、限流、审计与灰度；上线前需补生产八件套。</div></div>
@@ -557,7 +555,7 @@ def render(data: dict, standalone: bool = False) -> str:
   <div class="card">
     <div class="sec-head"><span class="n">08</span><h2>已知边界（不藏）</h2></div>
     <ul class="rp-list">
-      <li>默认 DeepSeek 官方通道<b>尚未接官方 Key</b>，演示走 glm 测试通道或离线抽取。</li>
+      <li>模型 Key 需自备：<b>未配置时自动走离线抽取</b>，页面上的实测数据来自一次外部模型评测。</li>
       <li>L1 用例与知识库自洽，<b>换成真实制度 PDF 后需用真实 badcase 重建</b>。</li>
       <li>扫描件 PDF 不支持，需 OCR；当前只处理文本型 PDF。</li>
       <li>服务默认只绑 127.0.0.1，<b>对外暴露前必须加鉴权与限流</b>。</li>
@@ -584,7 +582,7 @@ python -m src.cli "稳盈系列的起购金额是多少"
 python -m src.server --port 8000
 <span class="c"># L1 确定性断言 + L3 语义评分</span>
 python tests/eval_run.py
-python tests/eval_l3.py --report tests/report_llm_glm.json
+python tests/eval_l3.py --report tests/report_llm.json
 <span class="c"># 导出这份汇报（独立 HTML，无需服务）</span>
 python -m src.report --out dist/report.html</pre>
   <p class="muted" style="font-size:12.5px;margin:10px 0 0">配置 <code>LLM_API_KEY</code> 即切换真实模型；Key 只走环境变量，源码零硬编码。</p>
@@ -593,7 +591,7 @@ python -m src.report --out dist/report.html</pre>
 <div class="foot">
   该页面由项目自身数据生成，导出文件不依赖任何 API。<br>
   评测口径：L1 通过率 = 确定性断言全通过的比例；忠实度 = 回答事实能否在检索资料中找到依据（1-5，裁判模型评分）。<br>
-  生成时间 {_esc(data['generated_at'])} · 通道 {_esc(data['channel'])} / {_esc(data['model'])}
+  生成时间 {_esc(data['generated_at'])} · 端点 {_esc(data['channel'])} / {_esc(data['model'])}
 </div>
 </main>
 {footer(links=not standalone)}

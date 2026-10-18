@@ -1,7 +1,7 @@
-"""生成层：优先调用 DeepSeek；无 key 或调用失败时降级为离线抽取。
+"""生成层：优先调用 OpenAI 兼容端点（默认 DeepSeek）；无 key 或调用失败时降级为离线抽取。
 
 离线抽取不是「假跑」：它保证 检索→引用→校验 链路在没有任何密钥时也能端到端跑通与评测。
-上线时只需注入 DEEPSEEK_API_KEY 即切换为真实大模型生成，其余链路不变。
+上线时只需注入 LLM_API_KEY（或 DEEPSEEK_API_KEY）即切换为真实大模型生成，其余链路不变。
 """
 import json
 import random
@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 
-from .config import api_key, api_key_for, load_settings, settings_for
+from .config import api_key, load_settings
 from .profiles import get_profile
 from .retriever import tokenize
 
@@ -69,16 +69,15 @@ def chat(
     temperature: float = 0.0,
     model: str | None = None,
     timeout_s: float | None = None,
-    channel: str | None = None,
 ) -> tuple[str, dict]:
     """通用 OpenAI 兼容对话调用（生成层与 L3 裁判共用）。
 
-    - 生成层不传 channel，走当前通道；
-    - L3 异构裁判传 channel + model，可用与生成不同家族的模型做裁判。
+    - 生成层不传 model，走配置里的默认模型；
+    - L3 裁判传 model，可用另一个模型做裁判（同一端点即可）。
     显式超时；不在此处重试——重试策略由调用方按场景决定。
     """
-    settings = settings_for(channel) if channel else load_settings()
-    key = api_key_for(channel) if channel else api_key()
+    settings = load_settings()
+    key = api_key()
     if not key:
         raise RuntimeError("LLM_API_KEY 未配置")
     payload = {
