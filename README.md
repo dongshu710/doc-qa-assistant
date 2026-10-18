@@ -5,12 +5,12 @@
 
 不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。
 
-[![CI](https://github.com/dongshu710/fengshanjian/actions/workflows/ci.yml/badge.svg)](https://github.com/dongshu710/fengshanjian/actions/workflows/ci.yml)
+[![CI](https://github.com/dongshu710/doc-qa-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/dongshu710/doc-qa-assistant/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)
 
-**[下载安装包](https://github.com/dongshu710/fengshanjian/releases/latest)** ·
+**[下载安装包](https://github.com/dongshu710/doc-qa-assistant/releases/latest)** ·
 [快速开始](#3-快速开始零依赖python-311) ·
 [架构说明](docs/ARCHITECTURE.md) ·
 [评测方法](docs/EVALUATION.md) ·
@@ -77,7 +77,7 @@ flowchart TD
 ## 2. 目录
 
 ```
-fengshanjian/
+doc-qa-assistant/
 ├─ data/
 │  ├─ raw/                     # 原始 PDF（演示制度 + 监管摘录），离线解析用
 │  └─ knowledge/               # 知识库（3 份手写 md + 3 份 PDF 解析出的 md）
@@ -143,7 +143,7 @@ fengshanjian/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/fengshanjian/releases/latest)，下载 `doc-qa-assistant-1.0.0.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.0.0.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -545,7 +545,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 本地开发、提交前自检、PR 约定 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |
 
-安装包与独立汇报页随 [Releases](https://github.com/dongshu710/fengshanjian/releases/latest) 发布。
+安装包与独立汇报页随 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest) 发布。
 
 ## 11. License
 
