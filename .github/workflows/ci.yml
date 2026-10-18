@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke · py${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+
+    env:
+      LLM_CHANNEL: glm
+      PYTHONUTF8: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: 语法检查
+        run: python -m compileall -q src tests tools
+
+      - name: PDF 解析器单测
+        run: python tests/test_pdf_text.py
+
+      - name: 知识库接口冒烟
+        run: python tests/test_kb_api.py
+
+      - name: PDF 上传端到端
+        run: python tests/test_pdf_upload.py
+
+      - name: DOCX 上传 + 自动出题
+        run: python tests/test_docx_upload.py
+
+      - name: 页面 / API 冒烟（离线模式）
+        run: python tests/test_server.py
+
+      - name: 构建安装包
+        if: matrix.python == '3.13'
+        run: python tools/build_release.py
+
+      - name: 上传安装包
+        if: matrix.python == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: doc-qa-assistant-package
+          path: |
+            dist/doc-qa-assistant-*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

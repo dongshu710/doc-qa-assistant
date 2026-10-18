@@ -1,0 +1,384 @@
+{
+  "judged_at": "2026-10-18T11:00:20.033352+00:00",
+  "source_report": "tests\\report_hard_glm.json",
+  "source_channel": "glm",
+  "source_model": "glm-5.2",
+  "judge_channel": "glm",
+  "judge_model": "deepseek-v4-flash",
+  "judged": 13,
+  "answer_cases": 13,
+  "safety_cases": 0,
+  "avg": {
+    "faithfulness": 5.0,
+    "relevance": 4.92,
+    "completeness": 4.92
+  },
+  "pass_rate": 1.0,
+  "safety_compliant_rate": null,
+  "hallucinations": [],
+  "calibration": [
+    {
+      "id": "CAL1",
+      "label": "编造数字",
+      "base": "H01",
+      "dim": "faithfulness",
+      "score": 1,
+      "threshold": 3,
+      "caught": true,
+      "reason": "回答内容（500万起购、私人银行）在资料中无依据，且完全未回答所需手续，严重偏离问题。"
+    },
+    {
+      "id": "CAL2",
+      "label": "答非所问",
+      "base": "H02",
+      "dim": "relevance",
+      "score": 1,
+      "threshold": 3,
+      "caught": true,
+      "reason": "未正面回答是否符合要求，也未引用监管起点1万元及安享起购5万元的资料，答非所问。"
+    },
+    {
+      "id": "CAL3",
+      "label": "多问只答一半",
+      "dim": "completeness",
+      "score": null,
+      "threshold": 3,
+      "caught": null,
+      "skipped": true,
+      "reason": "无合适的基准样本（如缺少多问句用例），跳过该项校准"
+    }
+  ],
+  "errors": [],
+  "total_tokens": 11582,
+  "gate": {
+    "passed": true,
+    "reasons": []
+  },
+  "results": [
+    {
+      "id": "H01",
+      "kind": "answer",
+      "category": "multihop",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答完整覆盖资料中65周岁以上首次购买R4所需的风险测评、双录、特别风险提示及签署确认书等手续，并准确引用老年客户服务要求。",
+      "usage": {
+        "prompt_tokens": 678,
+        "completion_tokens": 124,
+        "total_tokens": 802,
+        "completion_tokens_details": {
+          "reasoning_tokens": 62
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "65 周岁以上客户首次购买 R4 理财产品，需要办理哪些手续",
+      "answer": "65周岁以上客户首次购买R4理财产品，需要办理以下手续：\n\n1. **完成风险承受能力测评**：客户首次购买理财产品前须完成风险承受能力测评 [4]。\n2. **临柜办理并完成双录**：首次购买R3及以上风险等级的产品，须在营业网点临柜办理并完成录音录像（双录） [3]。\n3. **进行特别风险提示并签署确认书**：65周岁以上客户购买R4及以上风险等级产品，须进行特别风险提示，并由客户签署确认书"
+    },
+    {
+      "id": "H02",
+      "kind": "answer",
+      "category": "multihop",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确引用监管1万元起点及安享系列5万元起购信息，逻辑正确，完整回应问题。",
+      "usage": {
+        "prompt_tokens": 639,
+        "completion_tokens": 106,
+        "total_tokens": 745,
+        "completion_tokens_details": {
+          "reasoning_tokens": 57
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "安享系列 5 万元起购，是否符合监管对公募理财产品销售起点的要求",
+      "answer": "符合监管要求。\n\n根据资料，监管规定商业银行发行公募理财产品的，单一投资者销售起点金额不得低于1万元人民币[1]。「安享」系列产品的起购金额为5万元[2]，高于监管规定的1万元最低销售起点，因此符合要求。"
+    },
+    {
+      "id": "H03",
+      "kind": "answer",
+      "category": "multihop",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答完全依据资料，准确说明一次性兑付和不支持提前赎回，两个问点均正面回应，忠实完整。",
+      "usage": {
+        "prompt_tokens": 660,
+        "completion_tokens": 135,
+        "total_tokens": 795,
+        "completion_tokens_details": {
+          "reasoning_tokens": 85
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "安享 90 天产品到期如何兑付，封闭期内能否提前赎回",
+      "answer": "安享 90 天产品到期后本金与收益一次性兑付 [1]。封闭期内不支持提前赎回 [1]。"
+    },
+    {
+      "id": "H04",
+      "kind": "answer",
+      "category": "multihop",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确引用资料中私募理财24小时冷静期，并如实说明公募产品要求资料未提及，两个问点均覆盖。",
+      "usage": {
+        "prompt_tokens": 592,
+        "completion_tokens": 119,
+        "total_tokens": 711,
+        "completion_tokens_details": {
+          "reasoning_tokens": 65
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "私募理财产品的投资冷静期是多久，公募产品是否也有同样要求",
+      "answer": "私募理财产品的投资冷静期不少于24小时 [1]。关于公募产品是否也有同样的投资冷静期要求，资料中未找到。"
+    },
+    {
+      "id": "H05",
+      "kind": "answer",
+      "category": "numeric",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确依据资料，明确R2无需双录，直接回应问题。",
+      "usage": {
+        "prompt_tokens": 635,
+        "completion_tokens": 129,
+        "total_tokens": 764,
+        "completion_tokens_details": {
+          "reasoning_tokens": 88
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "首次购买 R2 产品需要双录吗",
+      "answer": "首次购买 R2 产品不需要双录。根据规定，双录要求仅针对首次购买 R3 及以上风险等级的产品 [1][3]。"
+    },
+    {
+      "id": "H06",
+      "kind": "answer",
+      "category": "numeric",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确引用规定，明确R1产品不受测评过期限制，正面解答可购买，要点齐全。",
+      "usage": {
+        "prompt_tokens": 748,
+        "completion_tokens": 113,
+        "total_tokens": 861,
+        "completion_tokens_details": {
+          "reasoning_tokens": 66
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "客户风险测评已过期，想购买 R1 的稳盈系列产品，是否可以",
+      "answer": "可以购买。\n\n根据规定，未完成评估或评估过期的客户，不得购买 R2 及以上风险等级的产品 [1][3]。而「稳盈」系列产品的风险等级为 R1（谨慎型） [2]，不属于 R2 及以上风险等级，因此不受此限制。</think>可以购买。\n\n根据规定，未完成评估或评估过期的客户，不得购买 R2 及以上风险等级的产品 [1][3]。而「稳盈」系列产品的风险等级为 R1（谨慎型） [2]，不属于 R2 及以"
+    },
+    {
+      "id": "H07",
+      "kind": "answer",
+      "category": "numeric",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确依据资料，一般投诉15个工作日办结，复杂投诉30个工作日，两个问点均覆盖。",
+      "usage": {
+        "prompt_tokens": 678,
+        "completion_tokens": 271,
+        "total_tokens": 949,
+        "completion_tokens_details": {
+          "reasoning_tokens": 221
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "客户投诉一般多久办结，什么情况下可以延长到 30 个工作日",
+      "answer": "一般投诉应在 15 个工作日内办结 [1][2]；涉及多个部门的复杂投诉，应在 30 个工作日内办结 [1]。"
+    },
+    {
+      "id": "H08",
+      "kind": "answer",
+      "category": "numeric",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答完全依据资料，准确指出公募封闭式每周、私募每季度披露净值，正面完整回应问题。",
+      "usage": {
+        "prompt_tokens": 612,
+        "completion_tokens": 115,
+        "total_tokens": 727,
+        "completion_tokens_details": {
+          "reasoning_tokens": 66
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "公募封闭式理财产品和私募理财产品的净值披露频率分别是多少",
+      "answer": "公募封闭式理财产品每周披露一次净值[1]；私募理财产品每季度披露一次净值[1]。"
+    },
+    {
+      "id": "H09",
+      "kind": "answer",
+      "category": "conflict",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确引用资料中双录不少于6个月、销售档案不少于5年，正面且完整回答问题。",
+      "usage": {
+        "prompt_tokens": 682,
+        "completion_tokens": 83,
+        "total_tokens": 765,
+        "completion_tokens_details": {
+          "reasoning_tokens": 36
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "双录资料和销售档案的保存期限分别是多久",
+      "answer": "双录资料的保存期限不少于 6 个月 [1][2]；销售档案的保存期限不少于 5 年 [3]。"
+    },
+    {
+      "id": "H10",
+      "kind": "answer",
+      "category": "conflict",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 4,
+        "completeness": 4
+      },
+      "pass": true,
+      "reason": "回答基于资料，未编造匹配规则，准确指出R5需双录；对能否购买如实说明资料未明确，两个问点均有回应。",
+      "usage": {
+        "prompt_tokens": 670,
+        "completion_tokens": 1364,
+        "total_tokens": 2034,
+        "completion_tokens_details": {
+          "reasoning_tokens": 1306
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "客户测评结果是 R3，想买 R5 产品，可以买吗，需要什么手续",
+      "answer": "关于客户测评结果为R3能否购买R5产品，资料中未找到关于客户风险承受能力等级与产品风险等级匹配规则的具体说明。\n\n关于购买手续，由于R5产品属于R3及以上风险等级的产品，客户首次购买须在营业网点临柜办理并完成录音录像（双录）[4]。"
+    },
+    {
+      "id": "H11",
+      "kind": "answer",
+      "category": "conflict",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答明确指出留存期限一致，并引用资料中线上留存与双录资料一致的规定，同时补充档案保存期限，均属依据内内容。",
+      "usage": {
+        "prompt_tokens": 706,
+        "completion_tokens": 131,
+        "total_tokens": 837,
+        "completion_tokens_details": {
+          "reasoning_tokens": 75
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "线上渠道销售和临柜销售，风险揭示记录的留存期限是否一致",
+      "answer": "一致。\n\n临柜销售的双录资料（完整记录产品风险揭示等）保存期限不少于 6 个月，线上渠道销售通过电子方式留存的风险揭示与客户确认记录，其留存期限与双录资料一致[1]。\n\n此外，风险揭示记录纳入销售档案的，保存期限不少于 5 年[2]。"
+    },
+    {
+      "id": "H12",
+      "kind": "answer",
+      "category": "gap",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确指出资料中未包含七日年化收益率信息，未添加额外内容，建议合理，完全符合问题要求。",
+      "usage": {
+        "prompt_tokens": 626,
+        "completion_tokens": 145,
+        "total_tokens": 771,
+        "completion_tokens_details": {
+          "reasoning_tokens": 94
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "稳盈系列的七日年化收益率是多少",
+      "answer": "资料库中未找到与该问题相关的明确说明，建议转人工或咨询网点客户经理确认。"
+    },
+    {
+      "id": "H13",
+      "kind": "answer",
+      "category": "gap",
+      "scores": {
+        "faithfulness": 5,
+        "relevance": 5,
+        "completeness": 5
+      },
+      "pass": true,
+      "reason": "回答准确指出资料未涉及提前支取，未编造信息，并建议咨询，切题且完整。",
+      "usage": {
+        "prompt_tokens": 647,
+        "completion_tokens": 174,
+        "total_tokens": 821,
+        "completion_tokens_details": {
+          "reasoning_tokens": 125
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "input": "大额存单可以提前支取吗",
+      "answer": "资料库中未找到与该问题相关的明确说明，建议转人工或咨询网点客户经理确认。"
+    }
+  ]
+}

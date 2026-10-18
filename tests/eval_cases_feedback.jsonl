@@ -1,0 +1,1 @@
+{"id": "F001", "category": "regression", "input": "稳盈系列的起购金额是多少", "expect": {"behavior": "answer", "output_contains": ["1 元"]}, "source": "feedback", "source_trace": "bd33c2621328", "note": "badcase: 起购金额"}

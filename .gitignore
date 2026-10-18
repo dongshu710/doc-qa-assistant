@@ -1,0 +1,24 @@
+# 本地配置与密钥
+.env
+.env.local
+
+# 运行时产物
+logs/
+dist/
+tests/report_doc_cases.json
+tests/eval_cases_docs.jsonl
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.tmpjs/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器 / 操作系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
