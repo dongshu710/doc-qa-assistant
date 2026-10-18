@@ -11,7 +11,7 @@
 - **移除测试通道**：不再内置第二家服务商的端点与密钥变量；保留 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY`，换服务商只改环境变量。
 - **移除 `--channel` 参数**：CLI 与服务端新增 `--model` / `--base-url` 单次覆盖；`eval_l3.py` 的异构裁判改用 `--judge-model`。
 - **文档重写**：README / ARCHITECTURE / EVALUATION / SECURITY / 汇报页不再引用任何外部手册，评测报告中的模型标识改为中性占位（`model-a` / `model-b`）。
-- **评测产物改名**：`report_llm_glm.json` → `report_llm.json`，`report_hard_glm.json` → `report_hard.json`。
+- **评测产物改名**：统一为 `report_llm.json` / `report_hard.json`，文件名不再带服务商标识。
 
 ## [1.0.0] - 2026-10-18
 
