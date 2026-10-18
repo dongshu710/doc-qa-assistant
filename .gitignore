@@ -1,6 +1,7 @@
 # 本地配置与密钥
 .env
 .env.local
+.gh_token
 
 # 运行时产物
 logs/
