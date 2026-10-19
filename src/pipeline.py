@@ -19,11 +19,13 @@ from datetime import datetime, timezone
 from .chunking import load_corpus
 from .config import api_key, load_settings
 from .generator import extractive_answer, generate, repair_citation
-from .query import expand
-from .retriever import build_retriever
 
 # 最外层拦截：通用护栏（注入/越权/隐私）+ profile 附加护栏（金融：荐股/收益承诺）
-from .profiles import get_profile, refuse_patterns as _refuse_patterns
+from .profiles import get_profile
+from .profiles import refuse_patterns as _refuse_patterns
+from .query import expand
+from .retriever import build_retriever
+from .suggest import similar as similar_questions
 
 _ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u2060\ufeff\u00ad]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -66,7 +68,7 @@ class RAGPipeline:
         """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
         return bool(api_key())
 
-    def ask(self, query: str) -> dict:
+    def ask(self, query: str, model: str | None = None, force_extractive: bool = False) -> dict:
         trace_id = uuid.uuid4().hex[:12]
         t0 = time.time()
         raw_query = query or ""
@@ -75,7 +77,8 @@ class RAGPipeline:
             "trace_id": trace_id,
             "query": raw_query,
             "channel": self.settings.channel,
-            "model": self.settings.model,
+            "model": model or self.settings.model,
+            "model_override": model,
             "behavior": "answer",
             "answer": "",
             "citations": [],
@@ -144,15 +147,22 @@ class RAGPipeline:
 
         # 低置信不硬答，转人工，避免“看起来像答案”的幻觉
         if not hits or gate_score < self.settings.min_score:
-            result.update(behavior="no_answer", answer="资料库中未找到与该问题相关的内容，已转人工。")
+            result.update(
+                behavior="no_answer",
+                answer="没有在文档中找到相关问题。",
+                similar_questions=similar_questions(self.chunks, clean, hits, 3),
+            )
             return self._finish(result, t0)
 
         # ---------- 生成 ----------
-        gen = generate(clean, hits)
+        gen = generate(clean, hits, model=model, force_extractive=force_extractive)
         result["mode"] = gen["mode"]
         result["degraded"] = bool(gen["degraded"] or result["degraded"])
         result["answer"] = gen["answer"]
         result["usage"] = gen.get("usage", {})
+        if force_extractive and self.llm_ready:
+            result["degraded"] = True
+            result["degrade_reason"] = "budget_exceeded"
         if gen["mode"] == "extractive_fallback":
             result["degrade_reason"] = "llm_error"
         if gen.get("error"):
@@ -167,6 +177,7 @@ class RAGPipeline:
         _NO_INFO = re.compile(r"(资料中|资料库中)?(未找到|未提供|未提及|未披露|未明确|未规定|没有(相关)?(说明|规定|提及))")
         if gen["mode"] == "llm" and not valid and _NO_INFO.search(gen["answer"]):
             result["citation_exempt_reason"] = "insufficient_info"
+            result["similar_questions"] = similar_questions(self.chunks, clean, hits, 3)
             # 模型常只回一句「资料中未找到。」：诚实但不可用，补上转人工指引（不新增任何事实）
             if len(gen["answer"]) < 40:
                 result["answer"] = (

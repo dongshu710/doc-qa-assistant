@@ -122,13 +122,14 @@ def repair_citation(query: str, hits, answer: str) -> str | None:
     return text.strip() or None
 
 
-def _call_llm(query: str, hits) -> tuple[str, dict]:
+def _call_llm(query: str, hits, model: str | None = None) -> tuple[str, dict]:
     return chat(
         [
             {"role": "system", "content": system_prompt()},
             {"role": "user", "content": f"【资料】\n{_build_context(hits)}\n\n【问题】{query}"},
         ],
         temperature=0.1,
+        model=model,
     )
 
 
@@ -151,11 +152,12 @@ def _retry_after(exc: Exception) -> float | None:
     return None
 
 
-def generate(query: str, hits) -> dict:
+def generate(query: str, hits, model: str | None = None, force_extractive: bool = False) -> dict:
+    """生成答案。force_extractive 用于成本上限触发时跳过模型调用。"""
     settings = load_settings()
     t0 = time.time()
 
-    if not api_key():
+    if force_extractive or not api_key():
         return {
             "mode": "extractive",
             "answer": extractive_answer(query, hits),
@@ -172,7 +174,7 @@ def generate(query: str, hits) -> dict:
             last_err = TimeoutError("超出墙钟预算")
             break
         try:
-            answer, usage = _call_llm(query, hits)
+            answer, usage = _call_llm(query, hits, model=model)
             return {
                 "mode": "llm",
                 "answer": answer,

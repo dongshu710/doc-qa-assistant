@@ -7,14 +7,20 @@
   GET  /ask              问答（输入/答案/引用/追问/转人工/反馈）
   GET  /kb               知识库（上传/检索/出题/删除）
   GET  /dashboard        评测看板（指标/语义质量/用例/反馈/最近对话）
-  GET  /api/health       端点 / 模型 / 知识块数
+  GET  /api/health       端点 / 模型 / 检索模式 / 防护状态
+  GET  /api/examples     按当前知识库生成示例问题
   GET  /api/metrics      聚合指标
   GET  /api/knowledge    知识库文件与块数
   GET  /api/feedback/list?limit=20
   GET  /api/trace?limit=20
-  POST /api/ask          {"query": "..."}
+  GET  /api/audit?limit=20       审计日志（需 admin）
+  GET  /api/admin/config         灰度配置（需 admin）
+  GET  /api/admin/cost           成本上限状态（需 admin）
+  POST /api/ask          {"query": "..."}；支持 Idempotency-Key
   POST /api/feedback     {"trace_id","useful","comment"}
   POST /api/reload       重新加载知识库
+  POST /api/admin/config {"canary_percent","canary_model"} 调整灰度（需 admin）
+  POST /api/admin/rollback {} 回滚上一版配置（需 admin）
   POST /api/knowledge/upload      {"name","content"} 上传 .md/.txt
   POST /api/knowledge/upload_file {"name","data_b64"} 上传 PDF/DOCX（服务端解析成 Markdown）
   POST /api/knowledge/upload_pdf  同上（兼容旧名）
@@ -33,10 +39,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import casegen, evaluator, ingest
+from . import casegen, evaluator, ingest, suggest
+from .guards import Guards
 from .metrics import summarize
 from .pipeline import RAGPipeline
-from .report import collect as collect_report, render as render_report
+from .report import collect as collect_report
+from .report import render as render_report
 from .version import __version__
 from .web_pages import ASK_HTML, DASHBOARD_HTML, HOME_HTML, KB_HTML
 
@@ -103,7 +111,9 @@ def _read_jsonl(path: str, limit: int) -> list[dict]:
 
 def create_server(host: str, port: int, knowledge_dir: str | None = None):
     pipe = RAGPipeline(knowledge_dir or _knowledge_dir())
-    feedback_path = os.path.join(os.path.dirname(pipe.log_path), "feedback.jsonl")
+    log_dir = os.path.dirname(pipe.log_path)
+    guards = Guards(pipe.settings, log_dir)
+    feedback_path = os.path.join(log_dir, "feedback.jsonl")
     handoff_path = os.path.join(os.path.dirname(pipe.log_path), "handoff.jsonl")
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
@@ -113,16 +123,28 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
     run_report_path = os.path.join(project_root, "tests", "report_doc_cases.json")
 
     class Handler(BaseHTTPRequestHandler):
-        def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8") -> None:
+        def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8",
+                  extra_headers: dict | None = None) -> None:
             data = body.encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, str(value))
             self.end_headers()
             self.wfile.write(data)
 
-        def _json(self, obj, code: int = 200) -> None:
-            self._send(code, json.dumps(obj, ensure_ascii=False))
+        def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
+            self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers)
+
+        def _client(self) -> str:
+            return self.client_address[0] if self.client_address else "unknown"
+
+        def _is_admin(self) -> bool:
+            token = pipe.settings.admin_token
+            if token:
+                return self.headers.get("X-Admin-Token", "") == token
+            return self._client() in ("127.0.0.1", "::1")
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -175,7 +197,33 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "model": pipe.settings.model,
                     "llm_ready": pipe.llm_ready,
                     "chunks": len(pipe.chunks),
+                    "retrieval": pipe.settings.retrieval,
+                    "guards": guards.status(),
                 })
+            elif path == "/api/admin/config":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                self._json({
+                    "ok": True,
+                    "runtime": guards.runtime.status(),
+                    "model": pipe.settings.model,
+                    "retrieval": pipe.settings.retrieval,
+                })
+            elif path == "/api/admin/cost":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                self._json({"ok": True, "cost": guards.cost.status()})
+            elif path == "/api/audit":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                try:
+                    limit = max(1, min(200, int(qs.get("limit", ["20"])[0])))
+                except (TypeError, ValueError):
+                    limit = 20
+                self._json({"items": guards.audit.tail(limit)})
             elif path == "/api/metrics":
                 self._json(summarize(pipe.log_path))
             elif path == "/api/cases":
@@ -202,6 +250,22 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     } for c in doc_cases[-20:]],
                     "last_run": last_run,
                 })
+            elif path == "/api/examples":
+                try:
+                    n = max(1, min(8, int(qs.get("n", ["4"])[0])))
+                except (TypeError, ValueError):
+                    n = 4
+                # 新上传的文档优先出现在示例里：按文件 mtime 倒序排 doc
+                mtimes = {}
+                if os.path.isdir(kb_dir):
+                    for name in os.listdir(kb_dir):
+                        if name.lower().endswith(ALLOWED_EXT):
+                            try:
+                                mtimes[name.rsplit(".", 1)[0]] = os.path.getmtime(os.path.join(kb_dir, name))
+                            except OSError:
+                                pass
+                ordered = sorted(pipe.chunks, key=lambda c: (-mtimes.get(c.doc_id, 0), c.doc_id))
+                self._json({"items": suggest.examples(ordered, n)})
             elif path == "/api/knowledge":
                 counts = Counter(c.doc_id for c in pipe.chunks)
                 files = []
@@ -239,7 +303,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if path not in ("/api/ask", "/api/feedback", "/api/reload", "/api/cases/from_feedback",
                             "/api/handoff", "/api/knowledge/upload", "/api/knowledge/upload_pdf",
                             "/api/knowledge/upload_file", "/api/knowledge/delete",
-                            "/api/cases/from_doc", "/api/cases/run"):
+                            "/api/cases/from_doc", "/api/cases/run",
+                            "/api/admin/config", "/api/admin/rollback"):
                 self._json({"error": "not found"}, 404)
                 return
             try:
@@ -262,6 +327,36 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._json({"error": "invalid json"}, 400)
                 return
 
+            if path == "/api/admin/config":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                percent = payload.get("canary_percent")
+                if percent is not None:
+                    try:
+                        percent = max(0, min(100, int(percent)))
+                    except (TypeError, ValueError):
+                        self._json({"ok": False, "error": "canary_percent 需为 0-100 的整数"}, 400)
+                        return
+                updated = guards.runtime.update(
+                    canary_percent=percent,
+                    canary_model=payload.get("canary_model"),
+                    note=str(payload.get("note") or "")[:200],
+                )
+                guards.audit.write("admin.config", client=self._client(), **updated)
+                self._json({"ok": True, "runtime": updated})
+                return
+
+            if path == "/api/admin/rollback":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                res = guards.runtime.rollback()
+                guards.audit.write("admin.rollback", client=self._client(),
+                                   rolled_back=res.get("rolled_back"), revision=res.get("revision"))
+                self._json({"ok": True, **res})
+                return
+
             if path == "/api/knowledge/upload":
                 name = _safe_kb_name(payload.get("name"))
                 content = str(payload.get("content") or "")
@@ -280,6 +375,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     return
                 self._json({"ok": True, "name": name, "chunks": total,
                             "files": len([n for n in os.listdir(kb_dir) if n.lower().endswith(ALLOWED_EXT)])})
+                guards.audit.write("kb.upload", client=self._client(), name=name,
+                                   kind="text", chunks=total, chars=len(content))
                 return
 
             if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
@@ -345,6 +442,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "added_chunks": total - before,
                     "files": len([n for n in os.listdir(kb_dir) if n.lower().endswith(ALLOWED_EXT)]),
                 })
+                guards.audit.write("kb.upload", client=self._client(), name=name,
+                                   kind=res.get("format") or ext.lstrip("."), chunks=total,
+                                   bytes=len(data), engine=res.get("engine"))
                 return
 
             if path == "/api/knowledge/delete":
@@ -359,6 +459,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     return
                 os.remove(target)
                 total = pipe.reload()
+                guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
                 self._json({"ok": True, "name": name, "chunks": total})
                 return
 
@@ -417,6 +518,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 }
                 with open(run_report_path, "w", encoding="utf-8") as f:
                     json.dump(report, f, ensure_ascii=False, indent=2)
+                guards.audit.write("cases.run", client=self._client(), scope=scope,
+                                   total=summary["total"], passed=summary["passed"],
+                                   duration_ms=report["duration_ms"])
                 self._json({
                     "ok": True,
                     "scope": scope,
@@ -441,12 +545,15 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 }
                 with open(feedback_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
+                                   useful=record["useful"])
                 self._json({"ok": True})
                 return
 
             if path == "/api/reload":
                 try:
                     total = pipe.reload()
+                    guards.audit.write("kb.reload", client=self._client(), chunks=total)
                     self._json({"ok": True, "chunks": total})
                 except Exception as exc:  # noqa: BLE001
                     self._json({"ok": False, "error": str(exc)}, 500)
@@ -494,11 +601,55 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 }
                 with open(handoff_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                guards.audit.write("handoff", client=self._client(), ticket=ticket,
+                                   trace_id=record["trace_id"])
                 self._json({"ok": True, "ticket": ticket})
                 return
 
-            result = pipe.ask(str(payload.get("query", "")))
-            self._json(result)
+            query = str(payload.get("query", ""))
+            client = self._client()
+
+            # 限流：按客户端 IP 令牌桶
+            decision = guards.rate.allow(client)
+            if not decision.allowed:
+                guards.audit.write("ask.rate_limited", client=client, query=query[:200],
+                                   retry_after=decision.retry_after)
+                self._json(
+                    {"error": "rate limited", "retry_after": decision.retry_after},
+                    429, extra_headers={"Retry-After": decision.retry_after},
+                )
+                return
+
+            # 幂等：同一 Idempotency-Key 复用首次结果，避免重试重复计费
+            idem_key = (self.headers.get("Idempotency-Key") or str(payload.get("request_id") or "")).strip()
+            cached = guards.idem.get(idem_key)
+            if cached is not None:
+                guards.audit.write("ask.idempotent_replay", client=client,
+                                   key=idem_key, trace_id=cached.get("trace_id"))
+                self._json(cached, extra_headers={"X-Idempotent-Replay": "true"})
+                return
+
+            # 灰度 + 成本上限
+            model = guards.runtime.pick_model(f"{client}|{query}")
+            budget_blocked = guards.cost.blocked
+            result = pipe.ask(query, model=model, force_extractive=budget_blocked)
+            result["canary"] = bool(model)
+            result["budget_blocked"] = budget_blocked
+
+            tokens = (result.get("usage") or {}).get("total_tokens") or 0
+            guards.cost.add(tokens)
+            guards.idem.put(idem_key, result)
+            guards.audit.write(
+                "ask", client=client, query=query[:200], trace_id=result.get("trace_id"),
+                behavior=result.get("behavior"), mode=result.get("mode"),
+                retrieval_score=result.get("retrieval_score"), model=result.get("model"),
+                canary=bool(model), budget_blocked=budget_blocked, tokens=int(tokens or 0),
+                latency_ms=result.get("latency_ms"),
+            )
+            self._json(result, extra_headers={
+                "X-RateLimit-Remaining": decision.remaining,
+                "X-Retrieval": pipe.settings.retrieval,
+            })
 
         def log_message(self, fmt: str, *args) -> None:
             pass

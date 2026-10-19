@@ -1,7 +1,7 @@
 # 文档问答助手（RAG）
 
 把你的制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
-资料不足时明确说不知道并转人工。金融制度是首版示例，换一套文档 + `APP_PROFILE=generic` 就是另一个领域的助手。
+资料不足时明确说不知道，并给出相似问题或转人工入口。金融制度是首版示例，换一套文档 + `APP_PROFILE=generic` 就是另一个领域的助手。
 
 不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。
 
@@ -32,7 +32,7 @@
 
 - **换知识库**：把文档放进 `data/knowledge/`，或直接在**知识库页上传**（支持 `.md` / `.txt` / `.pdf` / `.docx`，可一次多选，上传后立即重建索引）；
 - **换领域**：设 `APP_PROFILE=generic` 即可去掉金融专属护栏（荐股/收益承诺拒绝），只保留注入、越权、隐私这些通用安全规则；
-- **换检索策略**：`RETRIEVAL=bm25|hybrid`，`QUERY_EXPANSION=off|auto|llm`。
+- **换检索策略**：`RETRIEVAL=vector|bm25|hybrid`（默认向量召回 + 重排），`QUERY_EXPANSION=off|auto|llm`。
 
 为什么默认还是金融 profile：当前语料就是制度与产品说明，金融合规红线（不荐股、不承诺收益）在这套语料上是必要约束；换成你自己的文档时切 `generic` 即可。
 
@@ -53,11 +53,11 @@ flowchart TD
   V -->|合法| QE{查询扩展<br/>QUERY_EXPANSION}
   QE -->|auto/llm| EXP[用章节词表改写检索词]
   QE -->|off| RET
-  EXP --> RET[BM25 / Hybrid 检索 top_k]
-  RET -->|无命中| R2[no_answer 转人工]
+  EXP --> RET[向量召回 + 重排 top_k]
+  RET -->|无命中| R2[no_answer + 相似问题]
   RET -->|命中| GEN{生成层}
   GEN -->|有 API Key| LLM[LLM 生成 OpenAI 兼容]
-  GEN -->|无 Key / 调用失败| EXT[抽取式降级]
+  GEN -->|无 Key / 调用失败 / 超预算| EXT[抽取式降级]
   LLM --> CITE[引用校验 [n] 对齐命中块]
   EXT --> CITE
   CITE --> LOG[(trace.jsonl 观测)]
@@ -69,7 +69,9 @@ flowchart TD
 | 组件 | 职责 | 失败处理 |
 |---|---|---|
 | `chunking` | 标题/条款感知切分，保证语义完整、可回溯 | 目录缺失即报错；空库拒绝启动 |
-| `retriever` | BM25（词法）/ Hybrid（+哈希 n-gram 向量，RRF 融合+重排） | 检索异常 → 降级不检索并标注 |
+| `retriever` | 向量召回 + 多信号重排（默认）；BM25 / Hybrid 保留为对照 | 检索异常 → 降级不检索并标注 |
+| `suggest` | 按知识库章节生成示例问题、未命中时的相似问题 | 无候选 → 回退文档级问题 |
+| `guards` | 限流、幂等、成本上限、审计、灰度、回滚 | 状态落盘 `logs/`，失败不阻塞主流程 |
 | `query` | 语料自适应查询扩展：把章节标题当词表，让改写贴合文档术语 | 超时/异常静默回退原问题 |
 | `profiles` | finance / generic 两套提示词与合规护栏 | 未知 profile 回退默认 |
 | `generator` | LLM 生成 / 无 Key 抽取式 | 超时·重试·退避·抖动；最终降级抽取并标 `degraded` |
@@ -86,7 +88,9 @@ doc-qa-assistant/
 ├─ src/
 │  ├─ config.py                # 通道/超时/重试/阈值配置
 │  ├─ chunking.py              # 标题/条款感知切分
-│  ├─ retriever.py             # BM25 / hybrid（零依赖）
+│  ├─ retriever.py             # 向量召回 + 重排 / BM25 / Hybrid（零依赖）
+│  ├─ suggest.py               # 示例问题与相似问题（按文档章节生成）
+│  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚
 │  ├─ query.py                 # 语料自适应查询扩展
 │  ├─ generator.py             # LLM + 抽取式降级
 │  ├─ pipeline.py              # 编排 + 校验 + 引用 + trace
@@ -128,6 +132,7 @@ doc-qa-assistant/
 │  ├─ test_docx_upload.py      # DOCX 上传 + 自动出题 + 一起跑
 │  ├─ test_pdf_text.py         # 内置 PDF 解析器单测（对象流/拒绝路径）
 │  ├─ test_kb_api.py           # 知识库上传/删除接口冒烟
+│  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
 │  ├─ fixtures/                # 上传测试用 PDF / DOCX（可复现生成）
 │  └─ baseline.json            # 离线基线（26/26）
 ├─ .github/workflows/ci.yml    # 离线冒烟 + 打包（Python 3.11 / 3.13）
@@ -145,7 +150,7 @@ doc-qa-assistant/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.0.1.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.2.0.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -197,12 +202,20 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | 端点地址（OpenAI 兼容） |
 | `LLM_MODEL` | `deepseek-chat` | 模型名 |
 | `LLM_API_KEY` | 空 | 密钥；为空则离线抽取（兼容 `DEEPSEEK_API_KEY`） |
+| `RETRIEVAL` | `vector` | `vector`（向量召回 + 重排）/ `bm25` / `hybrid` |
 | `TOP_K` | `4` | 召回条数 |
-| `MIN_SCORE` | `0.5` | 检索置信度阈值，低于此值按未命中转人工 |
+| `MIN_SCORE` | `0.30` | 检索置信度阈值（`bm25` 模式为 `0.5`），低于此值按未命中处理 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
 | `WALL_CLOCK_BUDGET_S` | `60` | 重试总墙钟上限 |
+| `RATE_LIMIT_RPS` | `5` | 每 IP 每秒补充的令牌数 |
+| `RATE_LIMIT_BURST` | `10` | 每 IP 的令牌桶容量 |
+| `IDEMPOTENCY_TTL_S` | `300` | `Idempotency-Key` 结果复用窗口 |
+| `DAILY_TOKEN_BUDGET` | `200000` | 每日 token 上限，超限跳过模型调用 |
+| `CANARY_PERCENT` | `0` | 灰度比例（0-100） |
+| `CANARY_MODEL` | 空 | 灰度模型名 |
+| `ADMIN_TOKEN` | 空 | 设置后 `/api/admin/*` 需带 `X-Admin-Token`；为空仅本机可调用 |
 
 ## 4.1 原型（五页 + HTTP API）
 
@@ -216,38 +229,58 @@ python -m src.server --port 8000
 | 路由 | 页面 | 覆盖的使用环节 |
 |---|---|---|
 | `/` | 首页 / 入口 | ① |
-| `/ask` | 问答：输入 → 答案+引用 → 多轮追问 → 答不出转人工 → 反馈 | ②③④⑤⑥ |
+| `/ask` | 问答：按文档生成的示例问题 → 答案 + 引用 → 未命中提示 + 相似问题 → 反馈 | ②③④⑤⑥ |
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
 | `/dashboard` | 评测看板：概览 KPI / 行为与生成模式 / 语义质量 L3 / 用例运行 / 反馈 / 对话日志 | ⑦ |
-| `/report` | 项目汇报页：是什么·不是什么 / 链路闸门 / 评测结果 / 边界 / 怎么跑 | 汇报材料 |
+| `/report` | 项目汇报：关键指标 / 功能 / 链路闸门 / 评测结果 / 生产控制 / 怎么跑 | 汇报材料 |
 
 页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。
 
 API：
 
-- `GET /api/health` → 通道 / 模型 / 知识块数
-- `POST /api/ask` `{"query": "..."}` → 结构化结果（answer/citations/behavior/mode/degrade_reason）
+- `GET /api/health` → 端点 / 模型 / 检索模式 / 知识块数 / 限流与预算状态
+- `GET /api/examples?n=4` → 按当前知识库生成的示例问题
+- `POST /api/ask` `{"query": "..."}` → 结构化结果（answer / citations / behavior / mode / similar_questions）
+  - 可选请求头 `Idempotency-Key: <key>`：TTL 内重复请求返回首次结果，并带 `X-Idempotent-Replay: true`
 - `GET /api/metrics` → 聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
-- `GET /api/l3` → L3 语义评分摘要（忠实度/相关性/完整性、门禁结论）
-- `GET /api/report/export` → 下载**独立 HTML 汇报文件**（内联全部数据，无服务也能打开）
+- `GET /api/l3` → L3 语义评分摘要（忠实度 / 相关性 / 完整性、门禁结论）
+- `GET /api/report/export` → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开）
 - `GET /api/knowledge` → 知识库文件与块数
 - `POST /api/knowledge/upload` `{"name","content"}` → 上传 `.md`/`.txt` 并立即重建索引（上限 512KB）
+- `POST /api/knowledge/upload_file` `{"name","data_b64"}` → 上传 PDF/DOCX（服务端解析入库；`upload_pdf` 保留为别名）
 - `POST /api/knowledge/delete` `{"name"}` → 删除文件并重建索引（至少保留一份）
 - `GET /api/feedback/list?limit=20` → 反馈 / badcase
 - `GET /api/trace?limit=20` → 最近对话
 - `POST /api/feedback` `{"trace_id","useful","comment"}` → 写入 `logs/feedback.jsonl`
-- `POST /api/reload` → 重新加载知识库（看板按钮）
-- `POST /api/knowledge/upload` `{"name","content"}` → 上传 `.md`/`.txt`
-- `POST /api/knowledge/upload_file` `{"name","data_b64"}` → 上传 PDF/DOCX（服务端解析入库；`upload_pdf` 保留为别名）
+- `POST /api/reload` → 重新加载知识库
 - `POST /api/cases/from_doc` `{"name","n","use_llm"}` → 为某份文档自动生成用例
-- `POST /api/cases/run` `{"scope":"docs"|"all","sleep"}` → 跑用例，回传通过率/失败原因/耗时
-- `POST /api/knowledge/delete` `{"name"}` → 删除并重建索引
-- `GET /api/cases` → 评测用例数（基础 + 反馈）
+- `POST /api/cases/run` `{"scope":"docs"|"all","sleep"}` → 跑用例，回传通过率 / 失败原因 / 耗时
+- `GET /api/cases` → 评测用例数（基础 + 反馈 + 文档）
 - `POST /api/cases/from_feedback` `{"trace_id","keywords","behavior","note"}` → 差评一键转回归用例
 - `POST /api/handoff` `{"trace_id","query","contact"}` → 模拟工单，写 `logs/handoff.jsonl`
+- `GET /api/audit?limit=20` → 审计日志（需 admin）
+- `GET /api/admin/config` → 灰度配置（需 admin）
+- `POST /api/admin/config` `{"canary_percent","canary_model"}` → 调整灰度比例 / 模型（需 admin）
+- `POST /api/admin/rollback` `{}` → 恢复上一版运行配置（需 admin）
+- `GET /api/admin/cost` → 当日 token 用量与剩余额度（需 admin）
 
-> 默认只绑定 `127.0.0.1`；对外暴露前需加鉴权与限流。模型 Key 需自备，未配置时自动走离线抽取。
+> **admin 鉴权**：设置 `ADMIN_TOKEN` 后，`/api/admin/*` 与 `/api/audit` 需带 `X-Admin-Token`；未设置时仅允许本机 `127.0.0.1` 调用。
+
+### 4.1.1 生产防护
+
+| 能力 | 行为 |
+|---|---|
+| 幂等 | `Idempotency-Key` 在 `IDEMPOTENCY_TTL_S`（默认 300s）内复用首次结果，避免重试重复计费 |
+| 限流 | 按客户端 IP 令牌桶，默认 5 rps / burst 10；超限返回 `429` + `Retry-After` |
+| 审计 | 问答摘要、上传/删除、用例运行、灰度变更写入 `logs/audit.jsonl` |
+| 成本上限 | 按天累计 token，超过 `DAILY_TOKEN_BUDGET` 后跳过模型调用、降级为抽取式（`budget_exceeded`） |
+| 灰度 | 按 `IP + query` 哈希稳定分流到 `CANARY_MODEL`，比例可在运行时调整 |
+| 回滚 | 每次配置变更保留快照，`POST /api/admin/rollback` 恢复上一版 |
+
+加上已有的 `trace.jsonl` / `/api/metrics` 观测与 `/api/health` 健康检查，共八项生产控制。
+
+> 默认只绑定 `127.0.0.1`。已内置按 IP 限流与 `ADMIN_TOKEN` 管理接口保护；对外部署仍建议由网关统一做鉴权、HTTPS 与访问日志。模型 Key 需自备，未配置时自动走离线抽取。
 
 ## 4.2 换成你自己的文档
 
@@ -457,7 +490,7 @@ python tests/eval_l3.py --report tests/report_hard.json \
 L3 看不见检索缺口（裁判只看检索到的资料），所以召回必须单独测。
 
 ```bash
-python tests/eval_retrieval.py                        # 离线：bm25 vs hybrid
+python tests/eval_retrieval.py                        # 离线：bm25 / vector / hybrid
 python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需 Key）
 ```
 
@@ -467,33 +500,42 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 |---|---|---|---|---|
 | bm25 | 72.7% | 90.9% | 0.883 | H10 |
 | bm25 + 查询扩展 | **81.8%** | **100%** | **0.909** | — |
+| vector（默认，向量召回 + 重排） | 72.7% | 90.9% | 0.883 | H10 |
 | hybrid | 72.7% | 90.9% | 0.900 | H10 |
 | hybrid + 查询扩展 | 72.7% | 100% | 0.864 | — |
 
-三个结论，都反直觉但都有数据支撑：
+结论：
 
-1. **查询扩展是真正的增益点**：H10（「测评 R3 想买 R5」）靠它从「漏召回」变成「第 1 名命中」——因为扩展把章节术语「风险不匹配确认书」引进了检索词。
-2. **Hybrid 在这套语料上没有增益，甚至拖低 R@1**：31 个块、术语密集型语料，BM25 本来就强；哈希 n-gram 向量提供的额外信号反而在融合时稀释了精确匹配。因此**默认 `RETRIEVAL=bm25`**，hybrid 保留为可选项（换大语料/换释义多的文档时可再测）。
-3. **召回与重排必须分开**：第一版把扩展词也算进重排覆盖率，H10 修好了但 R@1 从 72.7% 掉到 63.6%。改成「扩展只用于召回、重排只看原问题」后恢复。
+1. **默认链路已切到向量召回 + 重排**：`VectorRerankRetriever` 只用向量做候选召回，再用原问题词覆盖、长片段命中、BM25 和标题命中重排；接口在 `build_retriever` 工厂后面，可继续替换为真 embedding 向量库。
+2. **在本语料上，向量召回与 BM25 的 R@1 / R@4 持平**（72.7% / 90.9%），差异主要在排序细节。没有为了「向量」二字虚构增益。
+3. **查询扩展仍是补齐同义改写的有效手段**：H10（「测评 R3 想买 R5」）靠它从漏召回变成第 1 名命中；未配置 Key 时不会启用。
+4. **召回与重排必须分开**：扩展词只用于召回，重排只看用户原问题，否则会把原本最相关的块压下去。
 
-> 样本只有 11 条，单个 query 就是 9pp，结论是方向性的，不是统计显著的。要继续扩标注。
+> 样本只有 11 条，单个 query 就是 9pp，结论是方向性的，不是统计显著的。
 
-## 6. 升级路径（从竖切片到可上线）
+## 6. 落地清单（已实现 / 可扩展）
 
-按收益/成本排序：
+已实现：
 
-1. **切分升级**：接入 PDF/DOCX 解析（`pypdf` / `python-docx`，写清版本），保留「按标题+条款」策略，别退回固定窗口。
-2. **检索升级**：BM25 → 向量召回（embedding + FAISS/Chroma），再加一层重排；保留 BM25 作为兜底。`retriever.py` 已隔离接口，替换不影响上层。
-3. **生成升级**：接入真实模型（OpenAI 兼容），补 token 计费统计；`temperature` 保持低值。
-4. **可观测升级**：`trace.jsonl` → OpenTelemetry，接四大指标（成功率 / P95 / 单次成本 / 工具失败率）。
-5. **评测升级**：加 L3 LLM-as-Judge（rubric 分维打分），与人工标注做 ≥30 条一致性校验。
-6. **上线**：加限流、鉴权、灰度和回滚开关；知识库版本化，答案可回溯到文档版本。
+1. **切分与入库**：标题/条款感知切分；PDF / DOCX 由服务端解析为 Markdown；知识库可上传、删除、重建索引。
+2. **检索**：向量召回 + 重排为默认；BM25 / Hybrid 保留为对照；查询扩展可选，`build_retriever` 工厂隔离实现。
+3. **生成与引用**：OpenAI 兼容端点；超时、重试、退避；引用强制与降级抽取；未命中返回相似问题。
+4. **评测**：L1 确定性断言、L3 语义评分、Recall@k / MRR 召回评测；差评与上传文档可转用例。
+5. **可观测**：`logs/trace.jsonl`、`/api/metrics`、`/api/health`、`/api/audit`。
+6. **生产控制**：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚。
+
+可继续扩展：
+
+- 用真 embedding（bge / OpenAI embedding）替换字符 n-gram 向量，接 FAISS / Chroma。
+- 多实例部署时把幂等缓存与限流状态迁到 Redis；审计与成本接集中日志/监控。
+- 知识库版本目录与审批流，支持文档级回滚。
 
 ## 7. 回滚
 
-- 代码：Git tag + `git revert`；`baseline.json` 是回滚后的验收基线。
-- 知识库：`data/knowledge/` 走版本目录（如 `2026-10-18/`），切换目录即回滚。
-- 模型：`LLM_MODEL` 环境变量切换备用模型；失败自动降级抽取（`degraded=True`）。
+- **灰度配置**：每次 `POST /api/admin/config` 都会把上一版快照写入 `logs/runtime.json`；`POST /api/admin/rollback` 恢复上一版（灰度比例与模型）。
+- **代码**：Git tag + `git revert`；`baseline.json` 是回滚后的验收基线。
+- **知识库**：`data/knowledge/` 走版本目录（如 `2026-10-18/`），切换目录后调用 `POST /api/reload` 即回滚。
+- **模型**：`LLM_MODEL` 环境变量切换备用模型；失败自动降级抽取（`degraded=True`）。
 
 ## 8. 已知风险与边界
 
@@ -507,13 +549,13 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - **引用强制**：LLM 回答若不含有效 `[n]`，自动降级为抽取式并标记 `degrade_reason=no_citation`，杜绝无出处答案。
 - **零宽注入**：输入先做零宽/控制字符归一化，避免用零宽字符绕过注入检测；并按合规拒绝「必涨/稳赚/荐股」类请求。
 - **L3 裁判偏差**：裁判与被测模型同源时存在自偏好，分数系统性偏高；基础集 26 条曾全 5.0，更可能反映“测试集太简单”。缓解手段：校准样本（默认跑）+ 异构裁判（`--judge-model` 换家族）。
-- **检索召回是当前最大瓶颈（难题集实测）**：H10「测评 R3 想买 R5」时，BM25 只召回《客户适当性管理制度》，漏掉《销售适当性管理实施细则》第三条「签署风险不匹配确认书」与监管第二十九条「只能销售等于或低于」，模型只能答「资料中未找到」。原因是问题措辞（R3/R5）与制度措辞（「超出其风险承受能力等级」）字面重合度低。**下一步：向量召回 + 重排**。
+- **检索的同义改写仍是主要缺口**：H10「测评 R3 想买 R5」时，问题措辞（R3/R5）与制度措辞（「超出其风险承受能力等级」）字面重合度低，检索器无法仅靠 n-gram 向量召回。已切换到向量召回 + 重排，并保留查询扩展作为同义改写手段；要彻底解决需要真 embedding 模型。
 - **L3 的盲区（重要）**：裁判只拿到检索到的 4 块资料。条款没被召回时，「资料中未找到」对裁判来说是**忠实且相关**的，会给 5 分——所以 H10 这种检索失败，L3 完全看不见（实测同源/异构裁判都给了高分）。**结论：L3 评的是「对给定资料的忠实度」，不能替代召回质量评测**；召回缺口必须用 `retrieval_contains*` 断言或人工抽检来测。
 - **引用强制曾误伤短答案（已修）**：模型给出正确但未标 `[n]` 的短答案时，原先直接降级为抽取式，答案反而更差（如「资料未提及收益率」被替换成无关段落）。现改为**先补引用**（`repair_citation`，只允许加标注/删无据句），补不上再降级；「资料未提供」类回答天然无出处，予以豁免并标记 `citation_exempt_reason`。
 - **抽取式兜底不会说“不知道”**：降级后只复述最相关段落，无法表达“资料没有”，L3 会判 relevance 1-2 分。这是兜底策略的固有短板，只能靠豁免与更好的降级文案缓解。
 - **裁判侧限流**：推理型裁判模型配额更紧，实测 2s 间隔下 9/13 被 429；`_judge_call` 已尊重 `Retry-After` 并把退避拉到 5/10/20/30 秒，批量跑建议 `--sleep 5`。
 - **校准基准要挑对**：「多问只答一半」的校准必须用**真多问句**（按分句判定），否则单问句截断后仍完整，会得出“裁判无区分力”的错误结论。
-- **Hybrid 检索在本语料没有增益**：31 个块、术语密集，BM25 已很强；哈希 n-gram 向量补的是字面重合，融合时反而稀释精确匹配（R@1 72.7% 持平，MRR 略降）。默认用 bm25，hybrid 作为可选项保留。要真正解决语义改写，需要**真 embedding**，不是字符 n-gram。
+- **向量召回在本语料 R@1 与 BM25 持平**：31 个块、术语密集，字符 n-gram 向量补的是字面重合，不是语义；默认仍切到 `vector` 是为了保留可替换的向量接口与重排链路，但不应据此宣称效果提升。Hybrid 作为历史对照保留。要真正解决语义改写，需要**真 embedding**，不是字符 n-gram。
 - **查询扩展有延迟成本**：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。
 - **上传支持 `.md` / `.txt` / `.pdf` / `.docx`**：PDF 与 DOCX 都由服务端解析，上传即入库。`.doc` 老格式需先另存为 `.docx`。
 - **DOCX 解析边界**：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。
@@ -524,7 +566,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 
 - `[待核实: 各厂商上下文长度与单价以官方文档为准]`
 - `[待核实: 监管条款摘录来自公开文件，正式使用前以官方原文为准]`
-- `[待核实: 生产环境鉴权、限流方案以实际部署平台为准]`
+- `[待核实: 生产环境的统一鉴权、网关限流与密钥托管以实际部署平台为准；当前仅有 ADMIN_TOKEN 保护管理接口]`
 
 ## 10. 文档与发布
 

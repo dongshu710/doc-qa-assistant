@@ -42,7 +42,7 @@ class Settings:
     # 检索
     top_k: int = 4
     min_score: float = 0.3      # 检索置信度阈值：低于此值按“未命中”转人工（阈值随检索模式不同）
-    retrieval: str = "bm25"     # bm25 | hybrid；默认 bm25——实测 hybrid 在本语料 R@1 无增益
+    retrieval: str = "vector"   # vector（默认，向量召回+重排）| bm25 | hybrid
     rrf_k: int = 60
     query_expansion: str = "auto"  # off | auto | llm：auto=有 Key 时启用 LLM 查询扩展
     profile: str = "finance"       # finance | generic（领域提示词与合规护栏）
@@ -57,19 +57,27 @@ class Settings:
     # 模型与端点（可被 LLM_BASE_URL / LLM_MODEL 覆盖）
     model: str = DEFAULT_MODEL
     api_base: str = DEFAULT_BASE_URL
+    # 生产防护
+    rate_limit_rps: float = 5.0
+    rate_limit_burst: int = 10
+    daily_token_budget: int = 200_000
+    idempotency_ttl_s: int = 300
+    canary_percent: int = 0
+    canary_model: str = ""
+    admin_token: str = ""
 
 
 def load_settings() -> Settings:
-    retrieval = (_first_env("RETRIEVAL", default="bm25") or "bm25").strip().lower()
-    if retrieval not in ("bm25", "hybrid"):
-        retrieval = "bm25"
+    retrieval = (_first_env("RETRIEVAL", default="vector") or "vector").strip().lower()
+    if retrieval not in ("bm25", "hybrid", "vector"):
+        retrieval = "vector"
     expansion = (_first_env("QUERY_EXPANSION", default="auto") or "auto").strip().lower()
     if expansion not in ("off", "auto", "llm"):
         expansion = "auto"
     base = (_first_env("LLM_BASE_URL", default=DEFAULT_BASE_URL) or DEFAULT_BASE_URL).rstrip("/")
-    # 两种检索器的分数尺度不同：BM25 是 0~20+ 的原始分，hybrid 归一化到 0~1。
+    # 两种检索器的分数尺度不同：BM25 是 0~20+ 的原始分，vector/hybrid 归一化到 0~1。
     # 因此阈值必须分模式给默认值，否则换检索器会把所有问题打成“转人工”。
-    default_min = "0.30" if retrieval == "hybrid" else "0.5"
+    default_min = "0.30" if retrieval in ("hybrid", "vector") else "0.5"
     return Settings(
         channel=endpoint_label(base),
         top_k=int(_first_env("TOP_K", default="4")),
@@ -84,6 +92,13 @@ def load_settings() -> Settings:
         wall_clock_budget_s=float(_first_env("WALL_CLOCK_BUDGET_S", default="60")),
         model=_first_env("LLM_MODEL", default=DEFAULT_MODEL) or DEFAULT_MODEL,
         api_base=base,
+        rate_limit_rps=float(_first_env("RATE_LIMIT_RPS", default="5")),
+        rate_limit_burst=int(_first_env("RATE_LIMIT_BURST", default="10")),
+        daily_token_budget=int(_first_env("DAILY_TOKEN_BUDGET", default="200000")),
+        idempotency_ttl_s=int(_first_env("IDEMPOTENCY_TTL_S", default="300")),
+        canary_percent=max(0, min(100, int(_first_env("CANARY_PERCENT", default="0")))),
+        canary_model=_first_env("CANARY_MODEL", default=""),
+        admin_token=_first_env("ADMIN_TOKEN", default=""),
     )
 
 

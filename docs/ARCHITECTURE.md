@@ -5,7 +5,7 @@
 本项目的控制流是固定的「检索 → 生成 → 引用校验」，分支可以穷举：
 
 - 输入不合法 → 拒答 / 追问；
-- 检索分低于阈值 → 转人工；
+- 检索分低于阈值 → 返回未命中提示与相似问题；
 - 模型超时或限流 → 重试，仍失败则降级为抽取式；
 - 答案没有有效引用 → 修复引用，修不好则降级并标记。
 
@@ -20,12 +20,12 @@
 
 ```mermaid
 flowchart LR
-  B[浏览器<br/>首页 / 问答 / 看板 / 汇报] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
+  B[浏览器<br/>首页 / 问答 / 知识库 / 看板 / 汇报] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
   S --> P[RAGPipeline]
   P --> G[输入校验<br/>归一化 / 注入 / 越权 / 合规]
-  G --> R[Retriever<br/>BM25 + 二元组]
-  R --> Q{置信度闸门<br/>min_score=0.3}
-  Q -->|未命中| H[转人工<br/>handoff 工单]
+  G --> R[Retriever<br/>向量召回 + 重排]
+  R --> Q{置信度闸门<br/>min_score=0.30}
+  Q -->|未命中| H[未命中提示<br/>相似问题 / handoff 工单]
   Q -->|命中| L{LLM 通道}
   L -->|有 Key| M[OpenAI 兼容 API<br/>默认 DeepSeek]
   L -->|无 Key / 失败| E[抽取式降级]
@@ -57,8 +57,8 @@ sequenceDiagram
   else 正常问题
     P->>R: search(query, top_k=4)
     R-->>P: hits + scores
-    alt 最高分 < 0.3
-      P-->>S: no_answer（转人工）
+    alt 最高分 < 0.30
+      P-->>S: no_answer（未命中 + 相似问题）
     else 置信度足够
       P->>L: chat(system + 资料 + 问题)
       L-->>P: answer（含 [n]）或超时/限流
@@ -76,7 +76,9 @@ sequenceDiagram
 |---|---|---|---|
 | 配置 | `src/config.py` | 通道、超时、重试、阈值、profile | 缺失 Key → 离线模式；非法通道 → 回退默认 |
 | 切分 | `src/chunking.py` | 标题/条款感知切块，中文二元组检索单元 | 目录不存在 → 启动失败并明确报错 |
-| 检索 | `src/retriever.py` | BM25（默认）/ hybrid（可选） | 异常 → 不检索并标 `degraded` |
+| 检索 | `src/retriever.py` | 向量召回 + 多信号重排（默认）；BM25 / Hybrid 对照 | 异常 → 不检索并标 `degraded` |
+| 示例问题 | `src/suggest.py` | 按文档章节生成示例问题与相似问题 | 无候选 → 回退文档级问题 |
+| 生产防护 | `src/guards.py` | 限流、幂等、成本上限、审计、灰度、回滚 | 状态落盘 `logs/`，失败不阻塞主流程 |
 | 查询扩展 | `src/query.py` | 用语料词表扩展问题，提升召回 | 失败自动回退原问题（重试一次） |
 | 生成 | `src/generator.py` | LLM 调用、抽取式兜底、引用修复 | 超时/429 → 退避重试；最终降级 |
 | 编排 | `src/pipeline.py` | 校验、闸门、生成、引用、trace | 任一步失败都有明确行为（见下表） |
@@ -92,7 +94,7 @@ sequenceDiagram
 |---|---|---|---|
 | 输入 | 空 / 超长（>500 字） | `ask_clarify` | 提示补充或缩短问题 |
 | 输入 | 提示注入 / 越权 / 荐股 | `refuse` | 明确拒绝，不进检索 |
-| 检索 | 最高分 < 0.3 | `no_answer` | 说明资料不足，可提交工单 |
+| 检索 | 最高分 < 0.30 | `no_answer` | 提示未找到，并展示相似问题 / 工单入口 |
 | 检索 | 检索器异常 | 空结果 + `degraded=true` | 转人工，不硬答 |
 | LLM | 超时（30s）/ 429 | 指数退避重试 3 次，尊重 `Retry-After` | 延迟增加，最终可能降级 |
 | LLM | 未配置 Key | 抽取式回答 | 标注「离线抽取模式」 |
@@ -101,17 +103,20 @@ sequenceDiagram
 | 上传 | 假后缀 / 路径穿越 | 400 | 明确错误原因 |
 | 上传 | 扫描件 / 加密 PDF | 422 | 提示先 OCR / 解密 |
 | 上传 | 超过大小限制 | 413 | 提示上限（文本 512KB / PDF 与 DOCX 6MB） |
+| 接入 | 超过限流 | 429 + `Retry-After` | 客户端按建议时间重试 |
+| 成本 | 当日 token 超预算 | 跳过模型、抽取式回答 | `degraded=true` / `budget_exceeded` |
 
 ## 6. 扩展点
 
 1. **换领域**：`APP_PROFILE=generic` 去掉金融合规护栏；或新增 profile（提示词 + 拒答规则）。
 2. **换语料**：把文档放进 `data/knowledge/`，或在看板拖拽上传；上传后自动重建索引。
-3. **换检索**：`RETRIEVAL=hybrid` 启用哈希向量 + RRF + 重排；接口已隔离，可替换为真实 embedding。
+3. **换检索**：`RETRIEVAL=vector|bm25|hybrid`；`build_retriever` 是唯一工厂，替换为真 embedding 向量库不影响上层。
 4. **换通道**：任何 OpenAI 兼容网关，改 `base_url` / `model` / Key 环境变量即可。
-5. **升级为 Agent**：在 `pipeline.py` 的生成层外挂有界工具调用循环，保留现有闸门与引用校验作为最终出口。
+5. **灰度与回滚**：`POST /api/admin/config` 调整 `canary_percent` / `canary_model`，`POST /api/admin/rollback` 恢复上一版。
+6. **升级为 Agent**：在 `pipeline.py` 的生成层外挂有界工具调用循环，保留现有闸门与引用校验作为最终出口。
 
-## 7. 非目标
+## 7. 不在范围内
 
-- 不做多租户、鉴权、限流、审计与灰度——这是本地演示项目，不是生产系统。
-- 不做扫描件 OCR。
-- 不提供投资建议，不做收益承诺。
+- 多租户与统一 SSO：当前只有可选的 `ADMIN_TOKEN` 保护管理接口，业务接口鉴权交给网关。
+- 扫描件 OCR：仅处理文本型 PDF。
+- 投资建议与收益承诺：触发即拒答。

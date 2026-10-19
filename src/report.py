@@ -1,4 +1,4 @@
-"""汇报页：把「是什么 / 怎么跑 / 跑成什么样 / 边界在哪」汇总成一页自包含 HTML。
+"""汇报页：把功能、链路、评测结果与生产控制汇总成一页自包含 HTML。
 
 两个用途：
 1. `GET /report`（服务在线时实时渲染）；
@@ -239,14 +239,14 @@ ARCH_SVG = """
     <rect x="345" y="18" width="270" height="64" rx="11" fill="#fff" stroke="#dfe5f1"/>
     <circle cx="366" cy="40" r="9" fill="#eef2ff"/>
     <text x="366" y="43.6" font-size="10" font-weight="700" fill="#2f5cf6" text-anchor="middle">2</text>
-    <text x="382" y="44" font-size="12.5" font-weight="600" fill="#0a1020">BM25 检索</text>
-    <text x="382" y="62" font-size="10.5" fill="#6b7280">标题感知切分 · 中文二元组 · 查询扩展</text>
+    <text x="382" y="44" font-size="12.5" font-weight="600" fill="#0a1020">向量召回 + 重排</text>
+    <text x="382" y="62" font-size="10.5" fill="#6b7280">字符 n-gram 向量 · 词覆盖 / 长片段重排</text>
 
     <rect x="672" y="18" width="270" height="64" rx="11" fill="#fffaef" stroke="#f2dcb0"/>
     <circle cx="693" cy="40" r="9" fill="#fdeccc"/>
     <text x="693" y="43.6" font-size="10" font-weight="700" fill="#b26a00" text-anchor="middle">3</text>
     <text x="709" y="44" font-size="12.5" font-weight="600" fill="#0a1020">置信度闸门</text>
-    <text x="709" y="62" font-size="10.5" fill="#92703a">最高分低于阈值不硬答 · 转人工</text>
+    <text x="709" y="62" font-size="10.5" fill="#92703a">低于阈值返回未命中 · 附相似问题</text>
 
     <rect x="672" y="150" width="270" height="64" rx="11" fill="#eef2ff" stroke="#cfd9fb"/>
     <circle cx="693" cy="172" r="9" fill="#dfe6ff"/>
@@ -264,7 +264,7 @@ ARCH_SVG = """
     <circle cx="39" cy="172" r="9" fill="#d3f4e4"/>
     <text x="39" y="175.6" font-size="10" font-weight="700" fill="#0a7a4d" text-anchor="middle">6</text>
     <text x="55" y="176" font-size="12.5" font-weight="600" fill="#0a1020">答案 · 引用 · 观测</text>
-    <text x="55" y="194" font-size="10.5" fill="#2f7d5e">trace.jsonl · 反馈 · 指标看板</text>
+    <text x="55" y="194" font-size="10.5" fill="#2f7d5e">trace · 审计 · 指标看板</text>
 
     <line x1="292" y1="50" x2="338" y2="50" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
     <line x1="619" y1="50" x2="665" y2="50" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
@@ -426,15 +426,19 @@ def render(data: dict, standalone: bool = False) -> str:
                 f'<td class="muted">{_esc("、".join(rconf.get("misses") or []) or "—")}</td></tr>'
             )
         ret_cases = ret.get("cases") or max((c.get("cases") or 0) for c in ret["configs"].values())
+        vec = ret["configs"].get("vector") or {}
+        vec_txt = ""
+        if vec:
+            vec_txt = (f"默认使用 vector（向量召回 + 重排）：R@1 {format(vec.get('recall_at_1') or 0, '.1%')}、"
+                       f"R@4 {format(vec.get('recall_at_4') or 0, '.1%')}、MRR {format(vec.get('mrr') or 0, '.3f')}。")
         ret_block = (
             '<section class="sec card" id="s-ret"><div class="sec-head"><span class="n">05</span><h2>检索策略对比</h2>'
             f'<span class="note">Recall@1 / Recall@4 / MRR · {ret_cases} 条带召回标签的难题</span></div>'
             '<div class="table-wrap"><table><thead><tr><th>策略</th><th>R@1</th><th>R@4</th><th>MRR</th><th>未命中</th></tr></thead>'
             f"<tbody>{rows}</tbody></table></div>"
             '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
-            "结论：<b>查询扩展是真正的增益点</b>（H10 从漏召回变成第 1 名命中）；"
-            "<b>Hybrid 在本语料没有增益</b>，因此默认仍是 BM25——不为架构而架构。"
-            "样本量小，结论是方向性的。</p></section>"
+            f"{vec_txt}未命中项多为同义改写（如「测评 R3 想买 R5」），由查询扩展补充召回；"
+            "样本量较小，结果用于版本间对比。</p></section>"
         )
 
     _kb_total = max(1, k["chunks"])
@@ -464,10 +468,11 @@ def render(data: dict, standalone: bool = False) -> str:
 <main class="wrap">
 
 <section class="rp-hero">
-  <div class="eyebrow">Project Brief · 开源原型</div>
-  <h1>一个能跑、能评测、也敢说自己边界的产品原型</h1>
-  <p>可自建知识库的「文档问答助手」：把制度、手册、产品说明或任意文档放进知识库，用检索增强生成回答问题，
-  每条结论都带出处，答不出来就转人工。当前挂载金融知识库作为第一版示例，换一套文档、切一个 profile 就能复用到别的领域。</p>
+  <div class="eyebrow">Project Brief · 文档问答</div>
+  <h1>文档问答系统：检索、引用与评测</h1>
+  <p>把文档放入知识库后，系统用向量召回与重排找到相关段落，由模型生成答案并标注出处；
+  检索置信度不足时返回「没有在文档中找到相关问题」，同时给出相似问题。
+  当前知识库为金融制度与产品说明示例，替换文档即可用于其他领域。</p>
   <div class="badges">
     <span class="b solid">v{_esc(__version__)}</span>
     <span class="b solid">端点 {_esc(data['channel'])} / {_esc(data['model'])}</span>
@@ -481,13 +486,13 @@ def render(data: dict, standalone: bool = False) -> str:
 
 <nav class="rp-nav" id="rpNav">
   <a href="#s-kpi" class="active">关键指标</a>
-  <a href="#s-scope">定位</a>
+  <a href="#s-scope">功能</a>
   <a href="#s-arch">链路与闸门</a>
   <a href="#s-eval">评测结果</a>
   {('<a href="#s-ret">检索策略</a>' if ret_block else '')}
   {('<a href="#s-hard">难题集</a>' if hard_block else '')}
   <a href="#s-kb">知识库</a>
-  <a href="#s-limits">边界</a>
+  <a href="#s-limits">生产控制</a>
   <a href="#s-run">怎么跑</a>
 </nav>
 
@@ -496,25 +501,25 @@ def render(data: dict, standalone: bool = False) -> str:
     <span class="note">实时聚合自 trace 与评测报告</span></div>
   <div class="kpis six">{kpis}</div>
   <p class="muted" style="font-size:12.5px;margin:10px 0 0;line-height:1.8">
-    L1 = 确定性断言（行为 / 事实 / 安全）；L3 = 裁判模型语义评分（忠实度 / 相关性 / 完整性）。
-    L1 是对抗零容忍的发布门禁，L3 用于发现「关键词对了但答案是编的」这类隐性质量问题。
+    L1 = 确定性断言（行为 / 事实 / 安全）；L3 = 裁判模型按忠实度 / 相关性 / 完整性打分（1-5）。
+    引用覆盖率 = 答案中有效 <code>[n]</code> 占全部标注的比例。
   </p>
 </section>
 
 <section class="sec two-col" id="s-scope">
   <div class="card">
-    <div class="sec-head"><span class="n">02</span><h2>它是什么</h2></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>一条可复现的 RAG 工作流。</b>切分 → 检索 → 生成 → 引用校验 → 观测，每步都能单独测。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>有出处的答案。</b>强制 <code>[n]</code> 引用；模型不给出处，就降级成可追溯的抽取式答案。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>会承认不知道。</b>检索置信度不足时转人工，不硬答。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>坏了能看见。</b>降级、限流、超时都会写进 trace，并在看板上暴露。</div></div>
+    <div class="sec-head"><span class="n">02</span><h2>问答能力</h2></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>多格式入库。</b>支持 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code>，PDF 与 Word 在服务端转换为 Markdown 后切分索引。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>向量召回 + 重排。</b>字符 n-gram 向量召回候选，再按原问题词覆盖、长片段命中、BM25 与标题命中重排。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>引用校验。</b>答案必须包含有效 <code>[n]</code>；模型未给出处时先补引用，补不上则降级为抽取式答案。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>未命中处理。</b>置信度低于阈值时返回「没有在文档中找到相关问题」，并列出相似问题；可提交转人工工单。</div></div>
   </div>
   <div class="card">
-    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">02</span><h2>它不是什么</h2></div>
-    <div class="axis"><span class="ic not">✕</span><div><b>不是自主 Agent。</b>分支可穷举，固定链路就够了，不该上 Agent 自治循环。</div></div>
-    <div class="axis"><span class="ic not">✕</span><div><b>不给投资建议。</b>不预测涨跌、不推荐个股、不承诺收益，触发即拒答。</div></div>
-    <div class="axis"><span class="ic not">✕</span><div><b>不替代柜面双录。</b>产品要素与制度口径可以答，风险测评和签约必须走线下合规流程。</div></div>
-    <div class="axis"><span class="ic not">✕</span><div><b>不是生产系统。</b>缺鉴权、限流、审计与灰度；上线前需补生产八件套。</div></div>
+    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">02</span><h2>工程能力</h2></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>三层评测。</b>L1 确定性断言、L3 语义评分、Recall@1/@4 与 MRR 召回评测。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>生产控制。</b>幂等键、按 IP 限流、审计日志、每日 token 上限、按比例灰度、配置回滚。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>可观测。</b>每次问答写入 <code>logs/trace.jsonl</code>，<code>/api/metrics</code> 聚合指标，<code>/api/health</code> 返回检索模式与防护状态。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>零第三方运行时依赖。</b>BM25、向量索引、PDF/DOCX 解析、HTTP 服务均使用标准库。</div></div>
   </div>
 </section>
 
@@ -523,11 +528,13 @@ def render(data: dict, standalone: bool = False) -> str:
     <span class="note">每一层都有明确的失败动作</span></div>
   {ARCH_SVG}
   <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>环节</th><th>策略</th><th>失败时怎么办</th></tr></thead><tbody>
+    <tr><td>接入</td><td>幂等键去重 · 按 IP 令牌桶限流 · 按比例灰度到 CANARY_MODEL</td><td>重复请求回放首次结果；超限返回 <code>429</code> + <code>Retry-After</code></td></tr>
     <tr><td>输入</td><td>归一化去零宽 / 控制字符；注入、越权、荐股关键词拦截</td><td>直接拒答，不进检索与生成</td></tr>
-    <tr><td>检索</td><td>BM25 + 中文二元组，top_k={cfg['top_k']}</td><td>异常时降级为不检索，并标 <code>degraded</code></td></tr>
-    <tr><td>置信度</td><td>最高分低于 {cfg['min_score']} 视为未命中</td><td>转人工，不给“看起来像”的答案</td></tr>
-    <tr><td>生成</td><td>OpenAI 兼容 LLM，温度 0.1，超时 {int(cfg['timeout'])}s，重试 {cfg['retries']} 次并尊重 Retry-After</td><td>降级为抽取式，并把 error 透传到结果</td></tr>
+    <tr><td>检索</td><td>向量召回 + 多信号重排，top_k={cfg['top_k']}；查询扩展可选</td><td>异常时降级为不检索，并标 <code>degraded</code></td></tr>
+    <tr><td>置信度</td><td>最高分低于 {cfg['min_score']} 视为未命中</td><td>返回「没有在文档中找到相关问题」+ 相似问题</td></tr>
+    <tr><td>生成</td><td>OpenAI 兼容 LLM，温度 0.1，超时 {int(cfg['timeout'])}s，重试 {cfg['retries']} 次并尊重 Retry-After；每日 token 上限</td><td>降级为抽取式，把 error / <code>budget_exceeded</code> 透传到结果</td></tr>
     <tr><td>引用</td><td>答案必须含有效 <code>[n]</code></td><td>无出处则降级为可追溯答案，标 <code>no_citation</code></td></tr>
+    <tr><td>记录</td><td>trace、审计、成本与指标落盘</td><td>写盘失败不阻塞响应</td></tr>
   </tbody></table></div>
 </section>
 
@@ -553,22 +560,25 @@ def render(data: dict, standalone: bool = False) -> str:
 
 <section class="sec two-col" id="s-limits">
   <div class="card">
-    <div class="sec-head"><span class="n">08</span><h2>已知边界（不藏）</h2></div>
-    <ul class="rp-list">
-      <li>模型 Key 需自备：<b>未配置时自动走离线抽取</b>，页面上的实测数据来自一次外部模型评测。</li>
-      <li>L1 用例与知识库自洽，<b>换成真实制度 PDF 后需用真实 badcase 重建</b>。</li>
-      <li>扫描件 PDF 不支持，需 OCR；当前只处理文本型 PDF。</li>
-      <li>服务默认只绑 127.0.0.1，<b>对外暴露前必须加鉴权与限流</b>。</li>
-      <li>L3 裁判本身不确定，分数用于趋势对比，不作逐条绝对判定。</li>
-    </ul>
+    <div class="sec-head"><span class="n">08</span><h2>生产控制</h2></div>
+    <div class="table-wrap"><table><thead><tr><th>能力</th><th>实现与配置</th></tr></thead><tbody>
+      <tr><td>幂等</td><td><code>Idempotency-Key</code> 复用首次结果，TTL <code>IDEMPOTENCY_TTL_S</code>（300s）</td></tr>
+      <tr><td>限流</td><td>按客户端 IP 令牌桶，<code>RATE_LIMIT_RPS</code> / <code>RATE_LIMIT_BURST</code>（5 / 10）</td></tr>
+      <tr><td>审计</td><td>写入 <code>logs/audit.jsonl</code>，<code>GET /api/audit</code> 读取</td></tr>
+      <tr><td>成本上限</td><td>每日 token 预算 <code>DAILY_TOKEN_BUDGET</code>，超限跳过模型调用</td></tr>
+      <tr><td>灰度</td><td><code>CANARY_PERCENT</code> / <code>CANARY_MODEL</code>，<code>POST /api/admin/config</code> 调整</td></tr>
+      <tr><td>回滚</td><td><code>POST /api/admin/rollback</code> 恢复上一版配置</td></tr>
+    </tbody></table></div>
+    <p class="muted" style="font-size:11.5px;margin:9px 0 0;line-height:1.7">加上 trace / metrics 观测与 <code>/api/health</code> 健康检查，共八项。</p>
   </div>
   <div class="card">
-    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">08</span><h2>下一步</h2></div>
+    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">08</span><h2>运行约束</h2></div>
     <ul class="rp-list">
-      <li>接真实制度 PDF，用真实差评重建评测集（看板已支持差评一键转用例）。</li>
-      <li>检索从 BM25 升级为向量召回 + 重排，接口已隔离。</li>
-      <li>补生产八件套：幂等、限流、审计、成本上限、灰度、回滚。</li>
-      <li>L3 扩到全量与多裁判投票，降低单模型偏好。</li>
+      <li>未配置 <code>LLM_API_KEY</code> 时使用抽取式答案，检索、引用与评测链路仍可运行。</li>
+      <li>扫描件 PDF 未做 OCR，仅处理文本型 PDF。</li>
+      <li>默认绑定 <code>127.0.0.1</code>；对外部署需设置 <code>ADMIN_TOKEN</code>，并通过反向代理提供 HTTPS。</li>
+      <li>幂等缓存位于单进程内存，多实例部署需替换为 Redis。</li>
+      <li>L3 分数受裁判模型影响，用于版本间趋势对比。</li>
     </ul>
   </div>
 </section>
@@ -578,11 +588,14 @@ def render(data: dict, standalone: bool = False) -> str:
     <span class="note">未配置 Key 时自动走离线抽取，全链路仍可跑通</span></div>
 <pre class="cmd"><span class="c"># 单次问答</span>
 python -m src.cli "稳盈系列的起购金额是多少"
-<span class="c"># 启动 Web：首页 / 问答 / 看板 / 汇报</span>
+<span class="c"># 启动 Web：首页 / 问答 / 知识库 / 看板 / 汇报</span>
 python -m src.server --port 8000
 <span class="c"># L1 确定性断言 + L3 语义评分</span>
 python tests/eval_run.py
 python tests/eval_l3.py --report tests/report_llm.json
+<span class="c"># 灰度与回滚（需 ADMIN_TOKEN，未设置时仅本机可调用）</span>
+curl -X POST /api/admin/config -d '{{"canary_percent":10,"canary_model":"<model>"}}'
+curl -X POST /api/admin/rollback -d '{{}}'
 <span class="c"># 导出这份汇报（独立 HTML，无需服务）</span>
 python -m src.report --out dist/report.html</pre>
   <p class="muted" style="font-size:12.5px;margin:10px 0 0">配置 <code>LLM_API_KEY</code> 即切换真实模型；Key 只走环境变量，源码零硬编码。</p>

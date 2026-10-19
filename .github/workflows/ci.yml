@@ -31,6 +31,9 @@ jobs:
       - name: 语法检查
         run: python -m compileall -q src tests tools
 
+      - name: 生产防护单测
+        run: python tests/test_guards.py
+
       - name: PDF 解析器单测
         run: python tests/test_pdf_text.py
 

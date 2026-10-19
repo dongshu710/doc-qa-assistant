@@ -1,4 +1,4 @@
-"""原型页面（首页 / 问答 / 评测看板）。
+"""原型页面（首页 / 问答 / 知识库 / 评测看板）。
 
 覆盖一条完整使用路径：首页入口、提问输入、答案与引用、多轮追问、
 答不出转人工、反馈回流、后台（知识库 + 评测看板）。
@@ -7,7 +7,6 @@
 不依赖 CDN、字体文件或前端框架，断网也能完整打开。
 """
 from .theme import BRAND, JS_UTIL, shell
-
 
 # ======================================================================
 # 首页
@@ -63,7 +62,7 @@ HOME_CSS = """
 
 /* 指标条，压在 hero 上 */
 .stat-strip{position:relative;z-index:3;margin-top:-40px;background:#fff;border:1px solid var(--line);border-radius:16px;
-  box-shadow:var(--sh-2);display:grid;grid-template-columns:repeat(4,1fr);padding:20px 6px;}
+  box-shadow:var(--sh-2);display:grid;grid-template-columns:repeat(3,1fr);padding:20px 6px;}
 .stat{padding:2px 20px;border-left:1px solid var(--line);min-width:0;}
 .stat:first-child{border-left:none;}
 .stat .v{font-size:25px;font-weight:700;color:var(--ink);letter-spacing:-.035em;line-height:1.2;font-variant-numeric:tabular-nums;}
@@ -75,9 +74,10 @@ HOME_CSS = """
   .mock-wrap{max-width:520px;}
 }
 @media (max-width:760px){
-  .stat-strip{grid-template-columns:1fr 1fr;row-gap:16px;padding:18px 4px;}
-  .stat{padding:2px 16px;}
-  .stat:nth-child(3){border-left:none;}
+  .stat-strip{grid-template-columns:repeat(3,1fr);row-gap:16px;padding:18px 4px;}
+  .stat{padding:2px 10px;}
+  .stat .v{font-size:21px;}
+  .stat .k{font-size:11px;}
   .mock-float{left:-6px;bottom:-16px;}
   .mock-badge{right:-4px;}
 }
@@ -124,7 +124,6 @@ HOME_BODY = """
 
   <div class="wrap">
     <section class="stat-strip" aria-label="项目实时指标">
-      <div class="stat"><div class="v"><span id="s-chunks">—</span><small id="s-files"></small></div><div class="k">知识块</div></div>
       <div class="stat"><div class="v" id="s-cases">—</div><div class="k">评测用例</div></div>
       <div class="stat"><div class="v" id="s-cov">—</div><div class="k">引用覆盖率</div></div>
       <div class="stat"><div class="v" id="s-faith">—</div><div class="k">L3 忠实度</div></div>
@@ -141,15 +140,11 @@ function fmtScore(v){
   return s.indexOf('.')<0?s+'.0':s;
 }
 Promise.all([
-  fetch('/api/health').then(function(r){return r.json();}).catch(function(){return null;}),
-  fetch('/api/knowledge').then(function(r){return r.json();}).catch(function(){return null;}),
   fetch('/api/cases').then(function(r){return r.json();}).catch(function(){return null;}),
   fetch('/api/metrics').then(function(r){return r.json();}).catch(function(){return null;}),
   fetch('/api/l3').then(function(r){return r.json();}).catch(function(){return null;})
 ]).then(function(res){
-  var h=res[0],k=res[1],c=res[2],m=res[3],l3=res[4];
-  if(h){ setT('s-chunks', h.chunks); }
-  if(k){ setT('s-files',' / '+k.files.length+' 份'); }
+  var c=res[0],m=res[1],l3=res[2];
   if(c){ setT('s-cases', c.total); }
   if(m&&m.avg_citation_coverage!=null){ setT('s-cov', Math.round(m.avg_citation_coverage*100)+'%'); }
   if(l3&&l3.available&&l3.avg&&l3.avg.faithfulness!=null){ setT('s-faith', fmtScore(l3.avg.faithfulness)); }
@@ -163,21 +158,9 @@ HOME_HTML = shell("home", BRAND + " · 有出处的文档问答", HOME_BODY, HOM
 # 问答页
 # ======================================================================
 ASK_CSS = """
-.ask-wrap{max-width:1180px;}
-.ask-grid{display:grid;grid-template-columns:276px minmax(0,1fr);gap:16px;align-items:start;}
-.side{position:sticky;top:calc(var(--nav-h) + 16px);display:flex;flex-direction:column;gap:12px;}
-.side .card{padding:16px;}
-.side .side-title{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8b95a8;margin-bottom:11px;display:flex;align-items:center;gap:6px;}
-.side .side-title .ic{color:#a9b3c6;}
-.kb-stat{display:flex;align-items:baseline;gap:6px;}
-.kb-stat b{font-size:28px;letter-spacing:-.035em;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1;}
-.kb-stat span{font-size:12px;color:var(--muted);}
-.kb-stat i{font-style:normal;color:var(--text);font-weight:600;}
-.side-link{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid var(--line);
-  border-radius:11px;background:#fff;font-size:12.5px;color:var(--muted);box-shadow:var(--sh-1);transition:color .15s,border-color .15s;}
-.side-link:hover{color:var(--brand-600);border-color:#dbe3f7;}
+.ask-wrap{max-width:920px;}
 .chat-shell{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-1);
-  display:flex;flex-direction:column;height:min(calc(100vh - var(--nav-h) - 92px),880px);min-height:560px;overflow:hidden;}
+  display:flex;flex-direction:column;height:min(calc(100vh - var(--nav-h) - 92px),820px);min-height:560px;overflow:hidden;}
 
 .chat-list{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:16px;}
 .chat-list::-webkit-scrollbar{width:8px;}
@@ -188,6 +171,12 @@ ASK_CSS = """
 .empty-chat .art{width:88px;height:88px;border-radius:24px;background:linear-gradient(160deg,#eef3ff,#f9fbff);
   border:1px solid #e2e9fd;display:flex;align-items:center;justify-content:center;color:var(--brand);
   box-shadow:inset 0 1px 0 #fff,0 18px 34px -26px rgba(47,92,246,.6);}
+.ex-wrap{margin-top:24px;width:100%;max-width:600px;}
+.ex-label{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);}
+.ex-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
+.ex-card{text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;
+  font-size:12.5px;color:#475467;line-height:1.55;transition:border .15s,box-shadow .15s,transform .15s;font-family:inherit;}
+.ex-card:hover{border-color:#c3d0f8;box-shadow:0 8px 20px -14px rgba(47,92,246,.7);transform:translateY(-1px);}
 
 .msg{display:flex;gap:10px;max-width:100%;animation:rise .24s ease both;}
 @keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
@@ -245,6 +234,12 @@ details.src[open] summary .ic{transform:rotate(90deg);}
   outline:none;background:#fff;font-family:inherit;}
 .handoff input:focus{border-color:#d9a94a;box-shadow:0 0 0 3px rgba(217,169,74,.16);}
 .handoff .hint{font-size:10.5px;color:#a97a33;margin-top:9px;line-height:1.6;}
+.sim{margin-top:14px;padding-top:12px;border-top:1px dashed #eddbb9;}
+.sim-title{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a97a33;margin-bottom:7px;}
+.sim-list{display:flex;flex-direction:column;gap:5px;}
+.sim-q{text-align:left;border:1px solid #eddbb9;background:#fff;color:#7a4b00;border-radius:8px;padding:8px 10px;
+  font-size:12.5px;line-height:1.55;font-family:inherit;cursor:pointer;transition:border-color .15s,background .15s;}
+.sim-q:hover{border-color:#d9a94a;background:#fffdf7;}
 
 .thinking{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);}
 .dots{display:inline-flex;gap:3px;}
@@ -274,21 +269,18 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 .clear-link:hover{color:var(--brand-600);text-decoration:underline;}
 
 @media (max-width:960px){
-  .ask-grid{grid-template-columns:1fr;}
-  .side{position:static;order:2;display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-  .side .card{grid-column:1 / -1;}
   .chat-shell{height:calc(100vh - var(--nav-h) - 88px);max-height:none;min-height:520px;}
 }
 @media (max-width:640px){
   .ask-wrap{padding:14px 12px 40px;}
-  .side{grid-template-columns:1fr;}
-  .chat-shell{height:calc(100vh - 190px);max-height:none;min-height:480px;}
+  .chat-shell{height:calc(100vh - 150px);max-height:none;min-height:480px;}
   .chat-list{padding:14px;gap:14px;}
   .bubble{max-width:86%;}
   .composer{padding:9px 12px 11px;}
   .composer textarea{font-size:16px;}
   .composer-hint{justify-content:flex-end;}
   .composer-hint .kbd-hint{display:none;}
+  .ex-cards{grid-template-columns:1fr;}
   .msg-body{max-width:calc(100% - 36px);}
 }
 """
@@ -304,33 +296,21 @@ _ASK_ART = (
 
 ASK_BODY = """
 <main class="wrap ask-wrap">
-  <div class="ask-grid">
-    <aside class="side">
-      <section class="card">
-        <div class="side-title">知识库</div>
-        <div class="kb-stat"><b id="sideChunks">—</b><span>个知识块 · <i id="sideFiles">—</i> 份文档</span></div>
-        <a class="btn ghost sm" href="/kb" style="margin-top:12px;width:100%">管理知识库</a>
-      </section>
-      <a class="side-link" href="/dashboard">评测看板 <span aria-hidden="true">→</span></a>
-      <a class="side-link" href="/report">汇报页 <span aria-hidden="true">→</span></a>
-    </aside>
-
-    <section class="chat-shell">
-      <div id="list" class="chat-list" aria-live="polite"></div>
-      <div class="composer">
-        <div class="composer-box">
-          <textarea id="q" rows="1" placeholder="输入问题…" autocomplete="off"></textarea>
-          <button class="send" id="send" type="button" aria-label="发送">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
-          </button>
-        </div>
-        <div class="composer-hint">
-          <span class="kbd-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
-          <button class="clear-link" id="clear" type="button">清空对话</button>
-        </div>
+  <section class="chat-shell">
+    <div id="list" class="chat-list" aria-live="polite"></div>
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="q" rows="1" placeholder="输入问题…" autocomplete="off"></textarea>
+        <button class="send" id="send" type="button" aria-label="发送">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
       </div>
-    </section>
-  </div>
+      <div class="composer-hint">
+        <span class="kbd-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+        <button class="clear-link" id="clear" type="button">清空对话</button>
+      </div>
+    </div>
+  </section>
 </main>
 """
 
@@ -341,12 +321,27 @@ var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级�
 var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['转人工','warn'],refuse:['拒答','bad']};
 var ART='""" + _ASK_ART.replace("'", "\\'") + """';
 
-function setText(id,v){ var e=document.getElementById(id); if(e) e.textContent=(v==null||v==='')?'—':v; }
 function scrollBottom(){ list.scrollTop=list.scrollHeight; }
 function autoGrow(){ qEl.style.height='auto'; qEl.style.height=Math.min(qEl.scrollHeight,124)+'px'; }
 
 function renderEmpty(){
-  list.innerHTML='<div class="empty-chat"><div class="art">'+ART+'</div></div>';
+  list.innerHTML='<div class="empty-chat"><div class="art">'+ART+'</div>'
+    +'<div class="ex-wrap"><div class="ex-label">可以这样问</div>'
+    +'<div class="ex-cards" id="exCards"></div></div></div>';
+  loadExamples();
+}
+async function loadExamples(){
+  var box=document.getElementById('exCards');
+  if(!box) return;
+  try{
+    var r=await (await fetch('/api/examples?n=4')).json();
+    (r.items||[]).forEach(function(t){
+      var b=document.createElement('button'); b.type='button'; b.className='ex-card';
+      b.textContent=t;
+      b.onclick=function(){ qEl.value=t; autoGrow(); ask(); };
+      box.appendChild(b);
+    });
+  }catch(e){}
 }
 
 /* ---------- 渲染 ---------- */
@@ -386,8 +381,15 @@ function footHTML(d){
   html+=pill('模式 '+(MODE[d.mode]||d.mode||'-'))
     +pill((d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms');
   if(d.degraded){ html+=pill('降级','warn'); }
+  if(d.degrade_reason==='budget_exceeded'){ html+=pill('预算上限','warn'); }
   if(d.citation_exempt_reason){ html+=pill('引用豁免'); }
   return html+'</div>';
+}
+function similarHTML(items){
+  if(!items||!items.length) return '';
+  return '<div class="sim"><div class="sim-title">相似问题</div><div class="sim-list">'
+    +items.map(function(t){ return '<button type="button" class="sim-q">'+esc(t)+'</button>'; }).join('')
+    +'</div></div>';
 }
 function answerHTML(d){
   var h='<div class="ans-card"><div class="ans-label"><span>回答</span>'
@@ -409,17 +411,19 @@ function answerHTML(d){
           +'<span>'+esc(x.title)+' · '+esc(x.section)+'</span><span class="sc">score '+sc+'</span></div>';
       }).join('')+'</div></details>';
   }
+  h+=similarHTML(d.similar_questions);
   h+=footHTML(d)+'</div>';
   return h;
 }
 function handoffHTML(d){
   return '<div class="handoff"><h4>'
     +'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>'
-    +'这个问题资料里没有确切答案</h4>'
-    +'<p>'+esc(d.answer)+'</p>'
+    +'没有在文档中找到相关问题</h4>'
+    +'<p>可以换个问法，或从下面的相似问题开始；也可以留个联系方式转人工。</p>'
+    +similarHTML(d.similar_questions)
     +'<form><input name="contact" placeholder="联系方式（选填，便于回电）" autocomplete="off">'
     +'<button class="btn sm" type="submit">提交工单</button></form>'
-    +'<div class="hint">已按「答不出就转人工」处理：不编造答案，工单会带上本次 trace 供同事复核。</div></div>';
+    +'<div class="hint">工单会带上本次 trace 供同事复核。</div></div>';
 }
 function bindHandoff(body,d,query){
   var form=body.querySelector('.handoff form');
@@ -497,7 +501,10 @@ async function ask(){
     var resp=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})});
     var data=await resp.json();
     clearTimeout(timer);
-    if(!resp.ok) throw new Error(data.error||('HTTP '+resp.status));
+    if(!resp.ok){
+      if(resp.status===429) throw new Error('请求太频繁，请 '+(data.retry_after||1)+' 秒后重试');
+      throw new Error(data.error||('HTTP '+resp.status));
+    }
     if(LLM_READY===null && window.healthP){ try{ await healthP; }catch(e){} }
     if(data.behavior==='answer'){
       body.innerHTML=answerHTML(data);
@@ -527,12 +534,13 @@ document.getElementById('clear').onclick=function(){
 
 var healthP=fetch('/api/health').then(function(r){return r.json();}).then(function(h){
   LLM_READY=!!h.llm_ready;
-  setText('sideChunks',h.chunks);
-}).catch(function(){});
-fetch('/api/knowledge').then(function(r){return r.json();}).then(function(k){
-  setText('sideFiles',k.files.length);
 }).catch(function(){});
 
+list.addEventListener('click',function(e){
+  var b=e.target.closest('.sim-q');
+  if(!b) return;
+  qEl.value=b.textContent; autoGrow(); ask();
+});
 renderEmpty();
 var pre=new URLSearchParams(location.search).get('q');
 if(pre){ qEl.value=pre; autoGrow(); ask(); }
@@ -901,6 +909,10 @@ DASH_CSS = """
 .mode-item .top{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#475467;margin-bottom:5px;}
 .mode-item .top b{margin-left:auto;color:var(--ink);font-variant-numeric:tabular-nums;}
 .mode-item .bar{height:7px;}
+.guard-row{display:flex;flex-wrap:wrap;gap:8px;}
+.guard-item{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;
+  font-size:11.5px;color:var(--muted);background:#fff;}
+.guard-item b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;}
 
 .l3-body{display:grid;grid-template-columns:1.15fr .85fr;gap:24px;align-items:center;}
 .score-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
@@ -987,6 +999,13 @@ DASHBOARD_BODY = """
         </div>
         <div id="mode"></div>
       </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="card-head">
+        <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-2.9 7.4-7 9-4.1-1.6-7-4.6-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>生产防护</h3><span class="hint">/api/health 实时状态</span>
+      </div>
+      <div class="guard-row" id="guard"></div>
     </div>
   </section>
 
@@ -1249,6 +1268,16 @@ function renderTrace(tr){
   }).join('');
 }
 
+function renderGuard(h){
+  var g=(h&&h.guards)||{}, b=g.budget||{}, c=g.canary||{};
+  function item(k,v){ return '<span class="guard-item">'+k+' <b>'+esc(v==null?'—':v)+'</b></span>'; }
+  $('guard').innerHTML=
+    item('检索', h&&h.retrieval||'—')
+    +item('限流', (g.rate_limit_rps||'—')+' rps / '+ (g.rate_limit_burst||'—'))
+    +item('今日 tokens', (b.used||0)+' / '+(b.limit||0))
+    +item('灰度', (c.canary_percent||0)+'%'+(c.canary_model?(' · '+c.canary_model):''));
+}
+
 /* ---------- 加载 ---------- */
 async function loadAll(){
   try{
@@ -1257,7 +1286,8 @@ async function loadAll(){
       fetch('/api/cases').then(function(r){return r.json();}),
       fetch('/api/l3').then(function(r){return r.json();}).catch(function(){return {};}),
       fetch('/api/feedback/list?limit=20').then(function(r){return r.json();}),
-      fetch('/api/trace?limit=20').then(function(r){return r.json();})
+      fetch('/api/trace?limit=20').then(function(r){return r.json();}),
+      fetch('/api/health').then(function(r){return r.json();}).catch(function(){return {};})
     ]);
     renderKpis(res[0],res[1],res[2]);
     renderBehavior(res[0]);
@@ -1266,6 +1296,7 @@ async function loadAll(){
     renderCases(res[1]);
     renderFeedback(res[3]);
     renderTrace(res[4]);
+    renderGuard(res[5]);
     var d=new Date();
     $('stamp').textContent='更新于 '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
   }catch(e){ toast('看板加载失败：'+(e.message||e),true); }

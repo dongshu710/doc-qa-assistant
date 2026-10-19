@@ -23,10 +23,17 @@ try:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=10) as resp:
         health = json.loads(resp.read().decode("utf-8"))
     print("health:", health)
+    assert health.get("retrieval") == "vector"
+    assert health.get("guards", {}).get("budget", {}).get("limit", 0) > 0
 
-    for page, needle in (("/", "有出处的答案"), ("/ask", "管理知识库"), ("/kb", "拖拽或点击上传"),
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/examples?n=4", timeout=10) as resp:
+        examples = json.loads(resp.read().decode("utf-8"))["items"]
+    assert len(examples) >= 1
+    print("examples:", examples)
+
+    for page, needle in (("/", "有出处的答案"), ("/ask", "可以这样问"), ("/kb", "拖拽或点击上传"),
                          ("/dashboard", "评测看板"),
-                         ("/report", "它不是什么"), ("/report", "链路与闸门")):
+                         ("/report", "工程能力"), ("/report", "链路与闸门")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             html = resp.read().decode("utf-8")
         assert needle in html, page
@@ -45,13 +52,37 @@ try:
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/ask",
         data=json.dumps({"query": "稳盈系列的起购金额是多少"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Idempotency-Key": "smoke-ask"},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     print("ask:", {k: data.get(k) for k in ("channel", "model", "behavior", "mode", "degraded", "latency_ms")})
     print("answer:", data["answer"])
+
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        replay = json.loads(resp.read().decode("utf-8"))
+        replay_header = resp.headers.get("X-Idempotent-Replay")
+    assert replay["trace_id"] == data["trace_id"] and replay_header == "true"
+    print("idempotency: replay OK")
+
+    miss_req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/ask",
+        data=json.dumps({"query": "今天天气怎么样"}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(miss_req, timeout=30) as resp:
+        miss = json.loads(resp.read().decode("utf-8"))
+    assert miss["behavior"] == "no_answer"
+    assert miss["answer"] == "没有在文档中找到相关问题。"
+    assert miss.get("similar_questions")
+    print("no-answer:", miss["answer"], "| similar:", len(miss["similar_questions"]))
+
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/admin/config", timeout=10) as resp:
+        admin = json.loads(resp.read().decode("utf-8"))
+    assert admin.get("ok") is True and "runtime" in admin
+    print("admin config:", admin["runtime"])
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/metrics", timeout=10) as resp:
         metrics = json.loads(resp.read().decode("utf-8"))

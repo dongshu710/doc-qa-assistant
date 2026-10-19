@@ -1,20 +1,16 @@
-"""检索层：BM25（词法）+ 哈希向量（n-gram）+ RRF 融合 + 轻量重排。
+"""检索层：向量召回 + 重排（默认），并保留 BM25 / Hybrid 作为对照。
 
-为什么升到 Hybrid：
-- 纯 BM25 在术语密集型文档上很稳，但**问法与文档措辞不一致时会漏召**
-  （实测：「测评 R3 想买 R5」漏掉「客户主动要求购买超出其风险承受能力等级」这一条）。
-- 字符 n-gram 向量能补上「部分字面重合」的召回，两个信号互补。
+当前默认链路：
+1. **向量召回**：字符 2/3-gram + 词元的 hashing TF-IDF 向量，取 topN 候选；
+2. **重排**：对候选综合「向量相似度 + 原问题词覆盖 + 长片段命中 + BM25 分 + 标题/章节命中」，
+   输出 0~1 的归一化分数，供 pipeline 的置信度闸门使用；
+3. BM25 与 Hybrid 仍保留，可通过 `RETRIEVAL=bm25|hybrid|vector` 切换。
 
 诚实说明（不要被「向量」二字误导）：
 这里的向量是 **hashing TF-IDF 向量**（字符 2/3-gram 哈希到固定维度），
 是**词法相似度**，不是语义 embedding。同义改写（「起购」vs「起点」）仍然靠
-查询扩展（`src/query.py`，可选 LLM 改写）来补。接口已隔离，将来可直接换真 embedding。
-
-融合与重排：
-1. BM25 与向量各取 topN，用 RRF（Reciprocal Rank Fusion）融合——只用名次不用分数量纲，
-   避免两类分数不可比的问题；
-2. 对候选做轻量重排：RRF 名次 + 查询词覆盖率 + 长片段匹配（4-gram 命中）；
-3. 输出分数归一化到 0~1，供 pipeline 的置信度闸门使用（阈值与 BM25 不同，见 config）。
+查询扩展（`src/query.py`，可选 LLM 改写）来补。`VectorIndex` 的接口已隔离，
+将来可直接替换为真 embedding 向量库，不影响召回/重排调用方。
 """
 import math
 import re
@@ -204,8 +200,62 @@ class HybridRetriever:
         return [(self.chunks[i], s) for s, i in reranked[:top_k]]
 
 
-def build_retriever(chunks, mode: str = "hybrid", rrf_k: int = 60):
-    """按配置构建检索器。mode: bm25 | hybrid。"""
+class VectorRerankRetriever:
+    """向量召回 + 多信号重排（项目默认检索器）。
+
+    召回只走向量索引，保证「问法与原文不完全一致」时也能进入候选；
+    重排再引入原问题词覆盖、长片段命中、BM25 与标题命中，避免向量分
+    把「字面像但答非所问」的块排到前面。
+
+    分数归一化到 0~1，语义是「相对置信度」，不是概率。
+    """
+
+    def __init__(self, chunks, dim: int = 8192, recall_k: int = 48):
+        self.chunks = chunks
+        self.vector = VectorIndex(chunks, dim=dim)
+        self.bm25 = BM25(chunks)
+        self.recall_k = max(24, recall_k)
+
+    def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
+        """query 用于向量召回（可含扩展词），focus_query 用于重排（原问题）。"""
+        candidates = self.vector.search(query, max(self.recall_k, top_k * 8))
+        if not candidates:
+            return []
+
+        focus = focus_query or query
+        q_tokens = set(tokenize(focus))
+        lex = {id(c): s for c, s in self.bm25.search(query, len(self.chunks))}
+        max_vec = candidates[0][1] or 1.0
+        max_lex = max(lex.values()) if lex else 1.0
+
+        reranked: list[tuple[float, int]] = []
+        index = {id(c): i for i, c in enumerate(self.chunks)}
+        for chunk, vec_score in candidates:
+            text = chunk.section + " " + chunk.text
+            lex_score = lex.get(id(chunk), 0.0)
+            score = (
+                0.45 * (vec_score / max_vec)
+                + 0.25 * _coverage(q_tokens, text)
+                + 0.15 * (lex_score / max_lex if max_lex else 0.0)
+                + 0.10 * _long_match(focus, text)
+                + 0.05 * _coverage(q_tokens, chunk.title + " " + chunk.section)
+            )
+            reranked.append((round(score, 4), index[id(chunk)]))
+
+        reranked.sort(key=lambda x: x[0], reverse=True)
+        return [(self.chunks[i], s) for s, i in reranked[:top_k]]
+
+
+def build_retriever(chunks, mode: str = "vector", rrf_k: int = 60):
+    """检索器工厂（唯一入口，调用方不感知具体实现）。
+
+    mode:
+      - `vector`（默认）：向量召回 + 重排
+      - `bm25`：纯词法，用于对照与降级
+      - `hybrid`：BM25 + 向量 RRF 融合 + 重排，用于历史对照
+    """
     if mode == "bm25":
         return BM25(chunks)
-    return HybridRetriever(chunks, rrf_k=rrf_k)
+    if mode == "hybrid":
+        return HybridRetriever(chunks, rrf_k=rrf_k)
+    return VectorRerankRetriever(chunks)

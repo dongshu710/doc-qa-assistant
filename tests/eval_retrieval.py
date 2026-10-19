@@ -5,10 +5,10 @@ H10 就是典型：条款没被召回，模型只能答「资料中未找到」�
 把召回单独量化，才能判断该改检索还是改生成。
 
 对比策略：
-- bm25              纯词法（原基线）
-- hybrid            BM25 + 字符 n-gram 哈希向量，RRF 融合 + 轻量重排
-- bm25+expand       BM25 + LLM 查询扩展（语料自适应）
-- hybrid+expand     两者叠加（项目默认）
+- bm25              纯词法（旧基线）
+- vector            向量召回 + 多信号重排（项目默认）
+- hybrid            BM25 + 向量 RRF 融合 + 重排（历史对照）
+- 各策略 + expand   叠加查询扩展（语料自适应）
 
 用法：
   python tests/eval_retrieval.py                       # 离线跑 bm25 / hybrid
@@ -112,7 +112,7 @@ def main() -> int:
     vocab = _build_vocabulary(chunks) if args.expand else None
 
     configs = {}
-    for mode in ("bm25", "hybrid"):
+    for mode in ("bm25", "vector", "hybrid"):
         retriever = build_retriever(chunks, mode)
         configs[mode] = evaluate(cases, retriever, ks)
         if vocab is not None:
