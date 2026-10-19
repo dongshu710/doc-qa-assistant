@@ -4,7 +4,6 @@
 （未配置 LLM_API_KEY 时自动走离线抽取，配置后为真实模型。）
 """
 import json
-import os
 import sys
 import threading
 import urllib.request
@@ -25,7 +24,8 @@ try:
         health = json.loads(resp.read().decode("utf-8"))
     print("health:", health)
 
-    for page, needle in (("/", "有出处的答案"), ("/ask", "评测看板"), ("/dashboard", "评测看板"),
+    for page, needle in (("/", "有出处的答案"), ("/ask", "管理知识库"), ("/kb", "拖拽或点击上传"),
+                         ("/dashboard", "评测看板"),
                          ("/report", "它不是什么"), ("/report", "链路与闸门")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             html = resp.read().decode("utf-8")

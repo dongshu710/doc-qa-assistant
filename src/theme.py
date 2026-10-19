@@ -135,10 +135,12 @@ main{flex:1 0 auto;}
   padding:3px 9px;border-radius:999px;white-space:nowrap;
 }
 @media (max-width:640px){
-  .nav-inner{padding:0 14px;gap:10px;}
+  .nav-inner{padding:0 14px;gap:8px;}
   .brand-text i{display:none;}
   .nav-tag{display:none;}
-  .nav nav a{padding:7px 9px;font-size:12.5px;}
+  .nav nav{gap:0;min-width:0;overflow-x:auto;scrollbar-width:none;}
+  .nav nav::-webkit-scrollbar{display:none;}
+  .nav nav a{padding:7px 8px;font-size:12.5px;white-space:nowrap;}
 }
 @media (max-width:430px){
   .nav-inner{padding:0 10px;gap:6px;}
@@ -309,7 +311,8 @@ pre.cmd .c{color:#7d8db3;}
 
 
 def nav(active: str = "", links: bool = True) -> str:
-    items = [("home", "/", "首页"), ("ask", "/ask", "问答"), ("dash", "/dashboard", "评测看板"), ("report", "/report", "汇报")]
+    items = [("home", "/", "首页"), ("ask", "/ask", "问答"), ("kb", "/kb", "知识库"),
+             ("dash", "/dashboard", "看板"), ("report", "/report", "汇报")]
     nav_html = ""
     if links:
         nav_html = "<nav>%s</nav>" % "".join(
@@ -330,7 +333,7 @@ def nav(active: str = "", links: bool = True) -> str:
 def footer(links: bool = True) -> str:
     nav_links = (
         '<div class="foot-links"><a href="/">首页</a><a href="/ask">问答</a>'
-        '<a href="/dashboard">评测看板</a><a href="/report">汇报</a></div>'
+        '<a href="/kb">知识库</a><a href="/dashboard">看板</a><a href="/report">汇报</a></div>'
         if links else '<div class="foot-links"><span>独立导出 · 离线可看</span></div>'
     )
     return (

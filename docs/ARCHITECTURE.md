@@ -83,8 +83,8 @@ sequenceDiagram
 | 指标 | `src/metrics.py` | 从 trace 聚合 P50/P95、行为分布、降级率 | 无 trace → 返回空指标 |
 | 文档解析 | `src/pdf_text.py` / `src/docx_text.py` | 纯标准库解析 PDF / DOCX | 扫描件 / 加密 / 假后缀 → 4xx 明确报错 |
 | 评测 | `src/evaluator.py` | L1 断言内核，CLI 与服务端共用 | 用例引用文档已删 → skip，不算失败 |
-| Web | `src/server.py` | 四页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
-| 页面 | `src/theme.py` / `src/web_pages.py` / `src/report.py` | 设计系统、四页、独立汇报导出 | 无 API 时首页指标显示 `—`，页面仍可打开 |
+| Web | `src/server.py` | 五页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
+| 页面 | `src/theme.py` / `src/web_pages.py` / `src/report.py` | 设计系统、五页、独立汇报导出 | 无 API 时首页指标显示 `—`，页面仍可打开 |
 
 ## 5. 失败处理矩阵
 

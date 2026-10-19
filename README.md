@@ -19,16 +19,18 @@
 | 首页 | 问答（带引用） |
 |---|---|
 | ![](docs/screenshots/home.png) | ![](docs/screenshots/ask.png) |
-| **评测看板** | **汇报页（可独立导出）** |
-| ![](docs/screenshots/dashboard.png) | ![](docs/screenshots/report.png) |
+| **知识库** | **评测看板** |
+| ![](docs/screenshots/kb.png) | ![](docs/screenshots/dashboard.png) |
+| **汇报页（可独立导出）** | |
+| ![](docs/screenshots/report.png) | |
 
-> 截图来自 v1.0.1，使用演示知识库与离线抽取模式；接入模型后界面一致。
+> 截图使用演示知识库与离线抽取模式；接入模型后界面一致。
 
 ## 0. 定位：这是「文档问答助手」，不是只服务金融
 
 同一个引擎可以挂任意文档，金融只是当前这套知识库的**第一个实例**：
 
-- **换知识库**：把文档放进 `data/knowledge/`，或直接在**看板页拖拽上传**（支持 `.md` / `.txt` / `.pdf` / `.docx`，上传后立即重建索引）；
+- **换知识库**：把文档放进 `data/knowledge/`，或直接在**知识库页上传**（支持 `.md` / `.txt` / `.pdf` / `.docx`，可一次多选，上传后立即重建索引）；
 - **换领域**：设 `APP_PROFILE=generic` 即可去掉金融专属护栏（荐股/收益承诺拒绝），只保留注入、越权、隐私这些通用安全规则；
 - **换检索策略**：`RETRIEVAL=bm25|hybrid`，`QUERY_EXPANSION=off|auto|llm`。
 
@@ -96,9 +98,9 @@ doc-qa-assistant/
 │  ├─ ingest.py                # 按扩展名分派：PDF / DOCX → Markdown
 │  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
-│  ├─ server.py                # Web 服务（四页原型 + API）
-│  ├─ theme.py                 # 设计系统（令牌 / 组件 / 页头页脚），四页共用
-│  ├─ web_pages.py             # 页面模板（首页/问答/看板）
+│  ├─ server.py                # Web 服务（五页原型 + API）
+│  ├─ theme.py                 # 设计系统（令牌 / 组件 / 页头页脚），五页共用
+│  ├─ web_pages.py             # 页面模板（首页/问答/知识库/看板）
 │  ├─ report.py                # 汇报页 + 独立 HTML 导出
 │  ├─ version.py               # 版本号（读根目录 VERSION）
 │  └─ cli.py                   # 命令行入口
@@ -107,7 +109,7 @@ doc-qa-assistant/
 │  ├─ EVALUATION.md            # 数据集、口径、结果与局限
 │  ├─ SECURITY.md              # 威胁模型与已知缺口
 │  ├─ RELEASE.md               # 打包、验证、发布流程
-│  └─ screenshots/             # README 用的四页截图
+│  └─ screenshots/             # README 用的五页截图
 ├─ tools/
 │  ├─ build_release.py         # 构建可下载的 zip + SHA256
 │  └─ make_policy_pdfs.py      # 生成演示制度 PDF（fpdf2）
@@ -202,7 +204,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
 | `WALL_CLOCK_BUDGET_S` | `60` | 重试总墙钟上限 |
 
-## 4.1 原型（四页 + HTTP API）
+## 4.1 原型（五页 + HTTP API）
 
 ```bash
 python -m src.server --port 8000
@@ -213,9 +215,10 @@ python -m src.server --port 8000
 
 | 路由 | 页面 | 覆盖的使用环节 |
 |---|---|---|
-| `/` | 首页 / 入口（3 个示例问题） | ① |
+| `/` | 首页 / 入口 | ① |
 | `/ask` | 问答：输入 → 答案+引用 → 多轮追问 → 答不出转人工 → 反馈 | ②③④⑤⑥ |
-| `/dashboard` | 评测看板：概览 KPI / 行为与生成模式 / 语义质量 L3 / 知识库（拖拽上传）/ 用例运行 / 反馈 / 对话日志 | ⑦ |
+| `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
+| `/dashboard` | 评测看板：概览 KPI / 行为与生成模式 / 语义质量 L3 / 用例运行 / 反馈 / 对话日志 | ⑦ |
 | `/report` | 项目汇报页：是什么·不是什么 / 链路闸门 / 评测结果 / 边界 / 怎么跑 | 汇报材料 |
 
 页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
@@ -252,8 +255,8 @@ API：
 
 | 方式 | 怎么做 | 适用 |
 |---|---|---|
-| 看板上传 | `/dashboard` → 知识库管理 → 选择 `.md` / `.txt` / `.pdf` / `.docx` → 上传（立即重建索引） | 几份到几十份，含 PDF/Word |
-| 直接放文件 | 把 `.md` 放进 `data/knowledge/`，再点「重新加载知识库」 | 批量导入、版本管理 |
+| 页面上传 | `/kb` → 拖拽或选择 `.md` / `.txt` / `.pdf` / `.docx`（可多选）→ 上传（立即重建索引） | 几份到几十份，含 PDF/Word |
+| 直接放文件 | 把 `.md` 放进 `data/knowledge/`，再点「重建索引」 | 批量导入、版本管理 |
 | 命令行批量 | `python -m src.pdf_ingest --raw data/raw`（见 4.3） | 一次性导入大量 PDF |
 
 注意：
@@ -265,7 +268,7 @@ API：
 
 ## 4.3 PDF / DOCX 接入（上传即用，运行时仍零依赖）
 
-**不需要你手动转换**：看板上传后，服务端按扩展名分派解析器，转成 Markdown 再入库。
+**不需要你手动转换**：在知识库页上传后，服务端按扩展名分派解析器，转成 Markdown 再入库。
 
 ```
 浏览器选文件 → base64 → POST /api/knowledge/upload_file

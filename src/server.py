@@ -1,11 +1,12 @@
-"""最小可用 Web 服务：四页原型（首页 / 问答 / 评测看板 / 汇报）+ HTTP API。
+"""最小可用 Web 服务：五页原型（首页 / 问答 / 知识库 / 评测看板 / 汇报）+ HTTP API。
 
   python -m src.server --port 8000
 
 路由：
   GET  /                 首页
   GET  /ask              问答（输入/答案/引用/追问/转人工/反馈）
-  GET  /dashboard        评测看板（指标/知识库/反馈/最近对话）
+  GET  /kb               知识库（上传/检索/出题/删除）
+  GET  /dashboard        评测看板（指标/语义质量/用例/反馈/最近对话）
   GET  /api/health       端点 / 模型 / 知识块数
   GET  /api/metrics      聚合指标
   GET  /api/knowledge    知识库文件与块数
@@ -37,7 +38,7 @@ from .metrics import summarize
 from .pipeline import RAGPipeline
 from .report import collect as collect_report, render as render_report
 from .version import __version__
-from .web_pages import ASK_HTML, DASHBOARD_HTML, HOME_HTML
+from .web_pages import ASK_HTML, DASHBOARD_HTML, HOME_HTML, KB_HTML
 
 MAX_BODY_BYTES = 8192
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
@@ -132,6 +133,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._send(200, HOME_HTML, "text/html; charset=utf-8")
             elif path == "/ask":
                 self._send(200, ASK_HTML, "text/html; charset=utf-8")
+            elif path == "/kb":
+                self._send(200, KB_HTML, "text/html; charset=utf-8")
             elif path == "/dashboard":
                 self._send(200, DASHBOARD_HTML, "text/html; charset=utf-8")
             elif path == "/report":
