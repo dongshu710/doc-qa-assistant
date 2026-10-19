@@ -8,7 +8,7 @@
 """
 import json
 
-from .theme import BASE_CSS, BRAND, JS_UTIL, MARK, TOPIC, icon, shell  # noqa: F401
+from .theme import BASE_CSS, BRAND, JS_UTIL, MARK, TOPIC, shell  # noqa: F401
 
 EXAMPLES = [
     "稳盈系列的起购金额是多少",
@@ -38,19 +38,16 @@ HOME_CSS = """
   -webkit-mask-image:radial-gradient(680px 420px at 26% 18%,#000 10%,transparent 78%);
   mask-image:radial-gradient(680px 420px at 26% 18%,#000 10%,transparent 78%);
 }
-.hero .wrap{position:relative;display:grid;grid-template-columns:1.06fr .94fr;gap:52px;align-items:center;padding-top:62px;padding-bottom:82px;}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.06fr .94fr;gap:52px;align-items:center;padding-top:64px;padding-bottom:86px;}
 .hero-eyebrow{color:#9db4ff;}
 .hero-eyebrow::before{background:#7f9cff;}
 .hero h1{color:#fff;font-size:clamp(31px,3.5vw,46px);line-height:1.16;letter-spacing:-.035em;font-weight:750;margin-top:16px;}
 .hero h1 span{background:linear-gradient(100deg,#a9bcff 0%,#cdbbff 52%,#8fe6e0 100%);-webkit-background-clip:text;background-clip:text;color:transparent;}
-.hero .lead{color:#a7b6d6;font-size:15px;line-height:1.85;max-width:520px;margin:18px 0 26px;}
+.hero .lead{color:#a7b6d6;font-size:15px;line-height:1.85;max-width:470px;margin:18px 0 26px;}
 .hero-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .btn.ghost-dark{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.2);color:#e6ecff;box-shadow:none;}
 .btn.ghost-dark:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.34);color:#fff;}
-.hero-meta{list-style:none;display:flex;flex-wrap:wrap;gap:16px;margin:24px 0 0;padding:0;font-size:12px;color:#8b9bbb;}
-.hero-meta li{display:flex;align-items:center;gap:6px;}
-.hero-meta svg{color:#5eead4;flex:none;}
-.hero-examples{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:22px;font-size:12.5px;color:#7d8dae;}
+.hero-examples{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:26px;font-size:12.5px;color:#7d8dae;}
 .hero-examples a{color:#a8b8dc;border-bottom:1px dashed rgba(168,184,220,.32);padding-bottom:1px;transition:color .15s,border-color .15s;}
 .hero-examples a:hover{color:#fff;border-color:rgba(255,255,255,.6);}
 
@@ -87,63 +84,18 @@ HOME_CSS = """
 .stat .v small{font-size:12px;font-weight:500;color:var(--faint);letter-spacing:0;margin-left:3px;}
 .stat .k{font-size:11.5px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-/* 特性 */
-.features{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.feat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:var(--sh-1);
-  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
-.feat:hover{transform:translateY(-2px);box-shadow:var(--sh-2);border-color:#e0e6f5;}
-.feat .tile{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-  background:var(--brand-soft);color:var(--brand);margin-bottom:13px;}
-.feat h3{font-size:14px;margin-bottom:6px;}
-.feat p{font-size:12.5px;color:var(--muted);line-height:1.8;}
-
-/* 三步 */
-.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-.step{position:relative;padding:22px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#fff,#fbfcff);}
-.step .n{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;color:var(--brand);}
-.step h4{font-size:14px;margin:9px 0 6px;}
-.step p{font-size:12.5px;color:var(--muted);line-height:1.8;}
-.step .foot{margin-top:12px;font-size:11px;color:var(--faint);display:flex;align-items:center;gap:6px;}
-
-/* 任意文档 */
-.band{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;padding:28px;border-radius:18px;
-  border:1px solid #dde4fb;background:linear-gradient(135deg,#f6f8ff 0%,#fff 52%,#f6fbff 100%);}
-.band h2{font-size:22px;letter-spacing:-.025em;}
-.band p{color:var(--muted);font-size:13px;line-height:1.85;margin-top:9px;max-width:440px;}
-.types{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-.type{display:flex;gap:10px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 12px;box-shadow:var(--sh-1);}
-.type .ext{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:3px 6px;border-radius:5px;flex:none;}
-.type b{display:block;font-size:12.5px;font-weight:600;color:var(--ink);}
-.type span{display:block;font-size:10.5px;color:var(--faint);margin-top:1px;}
-
-/* CTA */
-.cta{position:relative;overflow:hidden;margin-top:34px;border-radius:18px;padding:32px 30px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;
-  background:linear-gradient(115deg,#0a1124 0%,#131f48 55%,#1b2a63 100%);color:#fff;box-shadow:var(--sh-2);}
-.cta::after{content:"";position:absolute;right:-70px;top:-100px;width:340px;height:340px;border-radius:50%;
-  background:radial-gradient(circle,rgba(122,92,251,.5),transparent 66%);}
-.cta h2{color:#fff;font-size:21px;letter-spacing:-.02em;position:relative;}
-.cta p{color:#9fb0d4;font-size:12.5px;margin-top:6px;position:relative;}
-.cta .btn{position:relative;}
-
 @media (max-width:960px){
   .hero .wrap{grid-template-columns:1fr;gap:40px;padding-top:44px;padding-bottom:78px;}
   .mock-wrap{max-width:520px;}
-  .features{grid-template-columns:repeat(2,1fr);}
-  .band{grid-template-columns:1fr;gap:20px;}
 }
 @media (max-width:760px){
   .stat-strip{grid-template-columns:1fr 1fr;row-gap:16px;padding:18px 4px;}
   .stat{padding:2px 16px;}
   .stat:nth-child(3){border-left:none;}
-  .steps{grid-template-columns:1fr;}
-  .hero-meta{gap:10px 14px;}
   .mock-float{left:-6px;bottom:-16px;}
   .mock-badge{right:-4px;}
-  .cta{padding:26px 22px;}
 }
 @media (max-width:560px){
-  .features{grid-template-columns:1fr;}
-  .types{grid-template-columns:1fr;}
   .hero h1{font-size:29px;}
   .mock{padding:10px;border-radius:16px;}
   .mock-card{padding:13px;}
@@ -156,20 +108,14 @@ HOME_BODY = """
   <section class="hero">
     <div class="wrap">
       <div class="hero-copy">
-        <div class="eyebrow hero-eyebrow">RAG · 文档问答 · 可评测</div>
-        <h1>用有出处的答案，<br><span>接住每一个问题</span></h1>
-        <p class="lead">把制度、产品说明，或你自己的任何文档放进知识库。助手只依据资料作答，
-          每条结论标注来源；资料里没有的，明确说不知道并转人工——不猜，也不编。</p>
+        <div class="eyebrow hero-eyebrow">RAG · 文档问答</div>
+        <h1>把文档变成<br><span>有出处的答案</span></h1>
+        <p class="lead">放进一份文档，就能用自然语言提问。答案逐条标注来源；资料里没有的，直接说不知道。</p>
         <div class="hero-actions">
           <a class="btn lg" href="/ask">开始提问 <span aria-hidden="true">→</span></a>
-          <a class="btn ghost-dark lg" href="/report">看评测与边界</a>
+          <a class="btn ghost-dark lg" href="/dashboard">评测看板</a>
         </div>
-        <ul class="hero-meta">
-          <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>强制 [n] 引用</li>
-          <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>答不出转人工</li>
-          <li><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>零第三方运行时依赖</li>
-        </ul>
-        <div class="hero-examples"><span>试着问：</span><span id="examples" style="display:contents"></span></div>
+        <div class="hero-examples"><span>试试：</span><span id="examples" style="display:contents"></span></div>
       </div>
 
       <div class="mock-wrap" aria-hidden="true">
@@ -186,7 +132,7 @@ HOME_BODY = """
         <div class="mock-badge"><i></i>引用校验通过</div>
         <div class="mock-float">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>
-          低置信度 → 转人工，不硬答
+          低置信度 → 转人工
         </div>
       </div>
     </div>
@@ -194,95 +140,14 @@ HOME_BODY = """
 
   <div class="wrap">
     <section class="stat-strip" aria-label="项目实时指标">
-      <div class="stat"><div class="v"><span id="s-chunks">—</span><small id="s-files"></small></div><div class="k">知识块 · 已索引文档</div></div>
-      <div class="stat"><div class="v" id="s-cases">—</div><div class="k">评测用例 · 基础 / 反馈 / 文档</div></div>
-      <div class="stat"><div class="v" id="s-cov">—</div><div class="k">引用覆盖率 · 近 500 次请求</div></div>
-      <div class="stat"><div class="v" id="s-faith">—</div><div class="k">语义忠实度 L3 · 裁判模型评分</div></div>
-    </section>
-
-    <div class="section-head">
-      <div><div class="eyebrow">为什么可信</div><h2 style="margin-top:10px">不是一个聊天框，是一条可验收的链路</h2></div>
-      <p>每个环节都有明确的失败动作，<br>而不是「看起来答得不错」。</p>
-    </div>
-    <section class="features">
-      <div class="feat">
-        <div class="tile">{ic_doc}</div>
-        <h3>答案有出处</h3>
-        <p>强制 [n] 引用到条款。模型不给来源，就降级成可追溯的抽取式答案。</p>
-      </div>
-      <div class="feat">
-        <div class="tile">{ic_alert}</div>
-        <h3>答不出就转人工</h3>
-        <p>检索置信度低于阈值不硬答，生成带 trace 的工单，留痕可回访。</p>
-      </div>
-      <div class="feat">
-        <div class="tile">{ic_chart}</div>
-        <h3>效果可评测</h3>
-        <p>L1 确定性断言 + L3 语义裁判；差评可一键转为回归用例。</p>
-      </div>
-      <div class="feat">
-        <div class="tile">{ic_bolt}</div>
-        <h3>坏了能看见</h3>
-        <p>超时、限流、降级都写进 trace，看板直接暴露 P95 与降级数。</p>
-      </div>
-    </section>
-
-    <div class="section-head">
-      <div><div class="eyebrow">怎么用</div><h2 style="margin-top:10px">三步，从一份文档到可验收的问答</h2></div>
-      <p>不写代码也能跑通：<br>上传、提问、看结果。</p>
-    </div>
-    <section class="steps">
-      <div class="step">
-        <div class="n">STEP 01</div>
-        <h4>放进文档</h4>
-        <p>支持 .md / .txt / .pdf / .docx。上传后服务端解析、切块、重建索引，全程无需重启。</p>
-        <div class="foot">PDF / DOCX 由内置解析器处理，零第三方运行时依赖</div>
-      </div>
-      <div class="step">
-        <div class="n">STEP 02</div>
-        <h4>直接提问</h4>
-        <p>用自然语言问，答案带引用、可展开检索依据；资料没有的会转人工。</p>
-        <div class="foot">可切金融 / 通用两套回答口径</div>
-      </div>
-      <div class="step">
-        <div class="n">STEP 03</div>
-        <h4>持续评测</h4>
-        <p>看板跑 L1 断言与 L3 语义评分；把差评变成新用例，防止改坏。</p>
-        <div class="foot">支持从上传文档自动出题</div>
-      </div>
-    </section>
-
-    <section class="band" style="margin-top:34px">
-      <div>
-        <div class="eyebrow">不止金融</div>
-        <h2 style="margin-top:10px">换一套文档，就是另一个助手</h2>
-        <p>引擎与领域解耦：当前挂载的是金融制度与产品说明（第一版示例），换成员工手册、产品文档或客服话术，
-          同一套链路照样成立。切换 profile 只改回答口径与合规红线，不改代码。</p>
-        <div class="row" style="margin-top:16px;gap:8px;flex-wrap:wrap">
-          <span class="pill brand">APP_PROFILE=finance</span>
-          <span class="pill">APP_PROFILE=generic</span>
-        </div>
-      </div>
-      <div class="types">
-        <div class="type"><span class="ext">PDF</span><div><b>制度与监管文件</b><span>内置解析 · 保留条款结构</span></div></div>
-        <div class="type"><span class="ext">DOCX</span><div><b>手册与操作规程</b><span>标题层级识别 · 表格转 Markdown</span></div></div>
-        <div class="type"><span class="ext">MD</span><div><b>知识库与 FAQ</b><span>按标题切分 · 即时生效</span></div></div>
-        <div class="type"><span class="ext">TXT</span><div><b>话术与要点</b><span>轻量导入 · 适合快速验证</span></div></div>
-      </div>
-    </section>
-
-    <section class="cta">
-      <div class="spacer">
-        <h2>现在就用你自己的文档试一次</h2>
-        <p>不需要配置模型 Key 也能跑：未接入时自动走离线抽取模式，全链路仍然可评测。</p>
-      </div>
-      <a class="btn lg" href="/ask">开始提问 <span aria-hidden="true">→</span></a>
-      <a class="btn ghost-dark lg" href="/dashboard">打开评测看板</a>
+      <div class="stat"><div class="v"><span id="s-chunks">—</span><small id="s-files"></small></div><div class="k">知识块</div></div>
+      <div class="stat"><div class="v" id="s-cases">—</div><div class="k">评测用例</div></div>
+      <div class="stat"><div class="v" id="s-cov">—</div><div class="k">引用覆盖率</div></div>
+      <div class="stat"><div class="v" id="s-faith">—</div><div class="k">L3 忠实度</div></div>
     </section>
   </div>
 </main>
-""".replace("{ic_doc}", icon("doc", 17)).replace("{ic_alert}", icon("alert", 17)) \
-   .replace("{ic_chart}", icon("chart", 17)).replace("{ic_bolt}", icon("bolt", 17))
+"""
 
 HOME_SCRIPT = _EXAMPLES_JS + """
 var exBox=document.getElementById('examples');
@@ -327,10 +192,14 @@ ASK_CSS = """
 .kb-stat{display:flex;align-items:baseline;gap:6px;}
 .kb-stat b{font-size:28px;letter-spacing:-.035em;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1;}
 .kb-stat span{font-size:12px;color:var(--muted);}
+.kb-stat i{font-style:normal;color:var(--text);font-weight:600;}
 .kb-lines{margin-top:12px;display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--muted);}
 .kb-lines .row{justify-content:space-between;gap:8px;}
 .kb-lines b{color:var(--text);font-weight:600;font-size:11.5px;text-align:right;word-break:break-all;}
 .kb-lines .pill{font-size:10.5px;padding:2px 7px;}
+.side-link{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1px solid var(--line);
+  border-radius:11px;background:#fff;font-size:12.5px;color:var(--muted);box-shadow:var(--sh-1);transition:color .15s,border-color .15s;}
+.side-link:hover{color:var(--brand-600);border-color:#dbe3f7;}
 .ex-list{display:flex;flex-direction:column;gap:1px;margin:0 -6px;}
 .ex-list button{display:flex;align-items:flex-start;gap:7px;width:100%;text-align:left;padding:8px;border:none;background:none;
   border-radius:8px;font-size:12.5px;color:#475467;cursor:pointer;line-height:1.55;transition:background .14s,color .14s;}
@@ -486,30 +355,25 @@ ASK_BODY = """
   <div class="ask-grid">
     <aside class="side">
       <section class="card">
-        <div class="side-title">当前知识库</div>
-        <div class="kb-stat"><b id="sideChunks">—</b><span>个知识块</span></div>
+        <div class="side-title">知识库</div>
+        <div class="kb-stat"><b id="sideChunks">—</b><span>个知识块 · <i id="sideFiles">—</i> 份文档</span></div>
         <div class="kb-lines">
-          <div class="row"><span>文档</span><b id="sideFiles">—</b></div>
-          <div class="row"><span>端点 / 模型</span><b id="sideChannel">—</b></div>
-          <div class="row"><span>服务状态</span><span class="pill ok" id="sideState"><span class="dot"></span>连接中</span></div>
+          <div class="row"><span>端点</span><b id="sideChannel">—</b></div>
+          <div class="row"><span>状态</span><span class="pill ok" id="sideState"><span class="dot"></span>连接中</span></div>
         </div>
       </section>
       <section class="card">
         <div class="side-title">示例问题</div>
         <div class="ex-list" id="sideExamples"></div>
       </section>
-      <section class="card" style="background:linear-gradient(180deg,#fffdf7,#fff)">
-        <div class="side-title">能力边界</div>
-        <p style="font-size:11.8px;color:#7a6533;line-height:1.75">只依据知识库作答。资料里没有的，助手会明确说不知道并转人工，不会给出「看起来像」的答案。</p>
-        <a class="btn ghost sm" href="/report" style="margin-top:11px;width:100%">看完整评测 <span aria-hidden="true">→</span></a>
-      </section>
+      <a class="side-link" href="/dashboard">评测看板 <span aria-hidden="true">→</span></a>
     </aside>
 
     <section class="chat-shell">
       <header class="chat-head">
         <div class="t">
           <h1>对话</h1>
-          <div class="sub">单轮问答 · 引用强制 · 答不出转人工</div>
+          <div class="sub">只依据知识库作答，逐条标注出处</div>
         </div>
         <span class="live" id="health"><i></i><span>连接中…</span></span>
         <span class="spacer"></span>
@@ -526,7 +390,6 @@ ASK_BODY = """
         </div>
         <div class="composer-hint">
           <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
-          <span class="hint-r">回答仅依据知识库，逐条标注出处</span>
         </div>
       </div>
     </section>
@@ -765,7 +628,7 @@ fetch('/api/health').then(function(r){return r.json();}).then(function(h){
   state.className='pill bad'; state.innerHTML='<span class="dot"></span>未连接';
 });
 fetch('/api/knowledge').then(function(r){return r.json();}).then(function(k){
-  setText('sideFiles',k.files.length+' 份');
+  setText('sideFiles',k.files.length);
 }).catch(function(){});
 
 bindExamples();
@@ -791,7 +654,8 @@ DASH_CSS = """
 .tabs a{padding:6px 12px;border-radius:8px;font-size:12.5px;color:var(--muted);white-space:nowrap;transition:background .15s,color .15s;}
 .tabs a:hover{background:#eef1f9;color:var(--ink);}
 .tabs a.active{background:#fff;color:var(--brand-600);font-weight:600;box-shadow:var(--sh-1);border:1px solid var(--line);}
-.panel{margin-bottom:20px;scroll-margin-top:calc(var(--nav-h) + 58px);}
+.panel{display:none;margin-bottom:20px;}
+.panel.on{display:block;}
 .panel.card{padding:20px;}
 .kpis{margin-bottom:14px;}
 .donut-wrap{display:flex;align-items:center;gap:24px;flex-wrap:wrap;}
@@ -876,7 +740,7 @@ DASHBOARD_BODY = """
     <div>
       <div class="eyebrow">Operations</div>
       <h1>评测看板</h1>
-      <p class="sub">线上运行指标 + 离线评测结果，一处看全。数据实时聚合自 trace 与评测报告。</p>
+      <p class="sub">运行指标与评测结果，实时聚合。</p>
     </div>
     <div class="head-actions">
       <span class="pill" id="stamp">加载中…</span>
@@ -929,7 +793,7 @@ DASHBOARD_BODY = """
   <section class="panel card" id="p-kb">
     <div class="card-head">
       <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 3v18"/></svg>
-      <h3>知识库</h3><span class="hint">上传后立即重建索引</span>
+      <h3>知识库</h3>
       <span class="spacer"></span><span class="pill" id="kbMeta">—</span>
     </div>
     <div class="drop" id="drop">
@@ -940,10 +804,10 @@ DASHBOARD_BODY = """
       <span>.md / .txt / .pdf / .docx · 文本 ≤ 512 KB，PDF/DOCX ≤ 6 MB<br>PDF 与 Word 由服务端解析成 Markdown 后入库</span>
       <input type="file" id="kbFile" accept=".md,.txt,.pdf,.docx" hidden>
     </div>
-    <div class="kb-status" id="kbMsg">支持 .md / .txt / .pdf / .docx，上传后立即重建索引；扫描件 PDF 需先 OCR</div>
+    <div class="kb-status" id="kbMsg"></div>
     <div class="table-wrap" style="margin-top:12px">
       <table>
-        <thead><tr><th>文件</th><th class="num">知识块</th><th>大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
+        <thead><tr><th>文件</th><th class="num">知识块</th><th style="text-align:right">操作</th></tr></thead>
         <tbody id="kbBody"></tbody>
       </table>
     </div>
@@ -1065,11 +929,7 @@ function renderKpis(m,cs,l3){
     kpi('chat','请求数',req,'累计处理')+
     kpi('check','答案率',req?pct(rate):'—','正常作答占比',true)+
     kpi('alert','转人工',bb.no_answer||0,'置信度不足')+
-    kpi('shield','拒答',bb.refuse||0,'注入 / 越权 / 荐股')+
-    kpi('target','引用覆盖率',m.avg_citation_coverage==null?'—':m.avg_citation_coverage,'近 500 条均值')+
-    kpi('clock','P95 延迟',Math.round((m.latency_ms&&m.latency_ms.p95)||0)+'ms','端到端')+
-    kpi('layers','评测用例',cs.total,'基础 '+(cs.curated||0)+' · 反馈 '+(cs.feedback||0)+' · 文档 '+(cs.docs||0))+
-    kpi('bolt','降级 / 抽取式',(m.degraded||0)+' / '+ext,'模型不可用时的兜底路径');
+    kpi('target','引用覆盖率',m.avg_citation_coverage==null?'—':m.avg_citation_coverage,'近 500 条均值');
 }
 function renderBehavior(m){
   var bb=m.by_behavior||{}, keys=Object.keys(bb);
@@ -1146,17 +1006,14 @@ function renderKb(kb){
   var files=kb.files||[];
   $('kbMeta').textContent=files.length+' 份 / '+(kb.total_chunks||0)+' 块';
   if(!files.length){
-    $('kbBody').innerHTML=emptyRow(5,'还没有文档，先上传一份 .md 或 .pdf');
+    $('kbBody').innerHTML=emptyRow(3,'还没有文档，先上传一份 .md 或 .pdf');
     return;
   }
   $('kbBody').innerHTML=files.map(function(f){
     var t=typeOf(f.name);
-    var size=f.size?(f.size<1024?f.size+' B':(Math.round(f.size/102.4)/10+' KB')):'—';
     return '<tr><td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
       +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span></div></td>'
       +'<td class="num"><span class="pill">'+f.chunks+'</span></td>'
-      +'<td class="mono" style="font-size:11.5px;color:var(--muted)">'+size+'</td>'
-      +'<td class="ts">'+esc(f.mtime||'—')+'</td>'
       +'<td><div class="row-actions">'
       +'<button class="btn ghost sm gen" data-name="'+esc(f.name)+'">出题</button>'
       +'<button class="btn danger-ghost sm del" data-name="'+esc(f.name)+'">删除</button>'
@@ -1397,26 +1254,26 @@ $('fbBody').onclick=function(ev){
   openModal(b.dataset.trace,b.dataset.note);
 };
 
-/* 标签页高亮 */
+/* 标签页：一次只显示一个面板 */
+var tabs=[].slice.call(document.querySelectorAll('#tabs a'));
 var panels=[].slice.call(document.querySelectorAll('.panel'));
-function syncTabs(){
-  var y=window.scrollY+170, cur=panels[0];
-  panels.forEach(function(p){ if(p.offsetTop<=y) cur=p; });
-  [].slice.call(document.querySelectorAll('#tabs a')).forEach(function(a){
-    a.classList.toggle('active', a.getAttribute('href')==='#'+cur.id);
-  });
+function showPanel(id,scroll){
+  var hit=false;
+  panels.forEach(function(p){ var on=('#'+p.id)===id; p.classList.toggle('on',on); if(on) hit=true; });
+  if(!hit){ panels[0].classList.add('on'); id='#'+panels[0].id; }
+  tabs.forEach(function(a){ a.classList.toggle('active', a.getAttribute('href')===id); });
+  if(scroll!==false) window.scrollTo({top:0,behavior:'auto'});
 }
-window.addEventListener('scroll',syncTabs,{passive:true});
-[].slice.call(document.querySelectorAll('#tabs a')).forEach(function(a){
-  a.onclick=function(){ [].slice.call(document.querySelectorAll('#tabs a')).forEach(function(x){x.classList.remove('active');}); a.classList.add('active'); };
+tabs.forEach(function(a){
+  a.onclick=function(e){
+    e.preventDefault();
+    var id=a.getAttribute('href');
+    showPanel(id);
+    history.replaceState(null,'',id);
+  };
 });
-
-loadAll().then(function(){
-  if(location.hash){
-    var t=document.querySelector(location.hash);
-    if(t){ setTimeout(function(){ window.scrollTo({top:Math.max(0,t.offsetTop-132),behavior:'auto'}); },60); }
-  }
-});
+window.addEventListener('hashchange',function(){ showPanel(location.hash); });
+loadAll().then(function(){ showPanel(location.hash||'#p-overview',false); });
 """
 
 DASHBOARD_HTML = shell("dash", "评测看板 · " + BRAND, DASHBOARD_BODY, DASHBOARD_SCRIPT, DASH_CSS)

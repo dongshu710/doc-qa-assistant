@@ -76,6 +76,7 @@ html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
 body{
   margin:0;font-family:var(--font);color:var(--text);background:var(--bg);
   font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  min-height:100vh;display:flex;flex-direction:column;
   background-image:radial-gradient(900px 420px at 50% -180px,#e9edff 0%,rgba(246,247,251,0) 70%);
   background-repeat:no-repeat;
 }
@@ -88,7 +89,8 @@ code{font-family:var(--mono);font-size:.9em;background:#f2f4f9;border:1px solid 
 :focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:8px;}
 
 /* ============ 布局 ============ */
-.wrap{max-width:1120px;margin:0 auto;padding:28px 22px 72px;}
+.wrap{width:100%;max-width:1120px;margin:0 auto;padding:28px 22px 72px;}
+main{flex:1 0 auto;}
 .wrap.narrow{max-width:980px;}
 .muted{color:var(--muted);}
 .faint{color:var(--faint);}

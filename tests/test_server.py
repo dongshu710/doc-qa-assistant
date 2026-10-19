@@ -25,7 +25,7 @@ try:
         health = json.loads(resp.read().decode("utf-8"))
     print("health:", health)
 
-    for page, needle in (("/", "用有出处的答案"), ("/ask", "评测看板"), ("/dashboard", "评测看板"),
+    for page, needle in (("/", "有出处的答案"), ("/ask", "评测看板"), ("/dashboard", "评测看板"),
                          ("/report", "它不是什么"), ("/report", "链路与闸门")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             html = resp.read().decode("utf-8")
