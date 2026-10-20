@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: doc-qa
+    metrics_path: /metrics
+    # 多实例：把每个实例的 host:port 都列进来，Prometheus 会按 instance 聚合。
+    # 容器部署时可换成 dns_sd_configs 或 kubernetes_sd_configs。
+    static_configs:
+      - targets:
+          - 127.0.0.1:8000
+          - 127.0.0.1:8001
+        labels:
+          service: doc-qa
+
+# 建议在 Prometheus 侧配置的告警（示例阈值，需按流量校准）：
+# - rag_ask_total 的 5xx/限流比例 > 5%
+# - histogram_quantile(0.95, rate(rag_ask_duration_seconds_bucket[5m])) > 3s
+# - increase(rag_retrieval_degraded_total[10m]) > 0（embedding 或检索在降级）
+# - increase(rag_rate_limited_total[5m]) > 0（容量不足或被刷）
+# - rag_kb_version 变化时通知（知识库发布）

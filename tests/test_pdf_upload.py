@@ -39,7 +39,7 @@ def _restore_env(saved):
 
 
 def _start():
-    httpd, _pipe = create_server(HOST, 0)
+    httpd, _pipe = create_server(HOST, 0, str(ROOT / "data" / "knowledge"))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, httpd.server_address[1]
 

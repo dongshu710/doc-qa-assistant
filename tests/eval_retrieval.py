@@ -6,12 +6,14 @@ H10 就是典型：条款没被召回，模型只能答「资料中未找到」�
 
 对比策略：
 - bm25              纯词法（旧基线）
-- vector            向量召回 + 多信号重排（项目默认）
+- vector            字符 n-gram 向量召回 + 重排（零依赖基线）
 - hybrid            BM25 + 向量 RRF 融合 + 重排（历史对照）
+- embedding         真 embedding 召回 + 重排（--embedding，需配置端点）
 - 各策略 + expand   叠加查询扩展（语料自适应）
 
 用法：
-  python tests/eval_retrieval.py                       # 离线跑 bm25 / hybrid
+  python tests/eval_retrieval.py                       # 离线跑 bm25 / vector / hybrid
+  python tests/eval_retrieval.py --embedding           # 同时评测真 embedding
   python tests/eval_retrieval.py --expand --sleep 1    # 加上查询扩展（需 Key）
 """
 import argparse
@@ -26,9 +28,25 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.chunking import load_corpus  # noqa: E402
+from src.config import load_settings  # noqa: E402
+from src.embeddings import EmbeddingError  # noqa: E402
 from src.pipeline import _build_vocabulary  # noqa: E402
 from src.query import expand  # noqa: E402
 from src.retriever import build_retriever  # noqa: E402
+
+
+def _default_knowledge() -> str:
+    """优先活动版本目录，其次种子目录。"""
+    state = ROOT / "data" / "kb" / "state.json"
+    if state.exists():
+        try:
+            active = json.loads(state.read_text(encoding="utf-8")).get("active")
+            path = ROOT / "data" / "kb" / "versions" / str(active) / "files"
+            if path.is_dir():
+                return str(path)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return str(ROOT / "data" / "knowledge")
 
 
 def _norm(text: str) -> str:
@@ -99,9 +117,10 @@ def evaluate(cases, retriever, ks, expand_vocab=None, sleep_s: float = 0.0) -> d
 def main() -> int:
     ap = argparse.ArgumentParser(description="召回评测（Recall@k / MRR）")
     ap.add_argument("--cases", default=str(ROOT / "tests" / "eval_cases_hard.jsonl"))
-    ap.add_argument("--knowledge", default=str(ROOT / "data" / "knowledge"))
+    ap.add_argument("--knowledge", default=_default_knowledge())
     ap.add_argument("--ks", default="1,4")
     ap.add_argument("--expand", action="store_true", help="加入 LLM 查询扩展（需 API Key）")
+    ap.add_argument("--embedding", action="store_true", help="额外评测真 embedding（需配置端点）")
     ap.add_argument("--sleep", type=float, default=1.0, help="扩展时每条间隔秒数")
     ap.add_argument("--out", default=str(ROOT / "tests" / "report_retrieval.json"))
     args = ap.parse_args()
@@ -111,9 +130,21 @@ def main() -> int:
     chunks = load_corpus(args.knowledge)
     vocab = _build_vocabulary(chunks) if args.expand else None
 
+    settings = load_settings()
+    modes = ["bm25", "vector", "hybrid"]
+    if args.embedding:
+        modes.insert(0, "embedding")
+    index_dir = settings.embedding_index_dir
+    if not Path(index_dir).is_absolute():
+        index_dir = str(ROOT / index_dir)
+
     configs = {}
-    for mode in ("bm25", "vector", "hybrid"):
-        retriever = build_retriever(chunks, mode)
+    for mode in modes:
+        try:
+            retriever = build_retriever(chunks, mode, settings=settings, index_dir=index_dir)
+        except EmbeddingError as exc:
+            print(f"[skip] {mode}: {exc}")
+            continue
         configs[mode] = evaluate(cases, retriever, ks)
         if vocab is not None:
             configs[f"{mode}+expand"] = evaluate(cases, retriever, ks, expand_vocab=vocab, sleep_s=args.sleep)

@@ -13,7 +13,18 @@ from .pipeline import RAGPipeline
 
 
 def _knowledge_dir() -> str:
+    """优先使用版本库的活动版本，未初始化时回退种子目录。"""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    state_path = os.path.join(root, "data", "kb", "state.json")
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, encoding="utf-8") as f:
+                active = json.load(f).get("active")
+            path = os.path.join(root, "data", "kb", "versions", str(active), "files")
+            if active and os.path.isdir(path):
+                return path
+        except (OSError, json.JSONDecodeError):
+            pass
     return os.path.join(root, "data", "knowledge")
 
 

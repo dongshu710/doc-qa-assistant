@@ -42,10 +42,28 @@ class Settings:
     # 检索
     top_k: int = 4
     min_score: float = 0.3      # 检索置信度阈值：低于此值按“未命中”转人工（阈值随检索模式不同）
-    retrieval: str = "vector"   # vector（默认，向量召回+重排）| bm25 | hybrid
+    retrieval: str = "vector"   # embedding | vector（零依赖基线）| bm25 | hybrid
     rrf_k: int = 60
     query_expansion: str = "auto"  # off | auto | llm：auto=有 Key 时启用 LLM 查询扩展
     profile: str = "finance"       # finance | generic（领域提示词与合规护栏）
+    # embedding（OpenAI 兼容 /embeddings；bge 同协议）
+    embedding_provider: str = "none"   # none | openai | bge
+    embedding_base_url: str = ""
+    embedding_model: str = ""
+    embedding_api_key: str = ""
+    embedding_dim: int = 0             # 0=构建时探测；配置后做一致性校验
+    embedding_batch: int = 16
+    embedding_timeout_s: float = 8.0
+    embedding_max_retries: int = 2
+    embedding_backoff_base_s: float = 0.5
+    embedding_backoff_max_s: float = 4.0
+    embedding_wall_clock_s: float = 30.0
+    embedding_index_dir: str = "data/index"
+    embedding_recall_k: int = 48
+    # 向量存储
+    vector_store: str = "auto"         # auto | pure | numpy | faiss | faiss-ivf
+    vector_ivf_nlist: int = 64
+    vector_ivf_nprobe: int = 8
     # 输入
     max_input_chars: int = 500
     # LLM：超时与重试必须显式，禁止依赖默认值
@@ -65,19 +83,31 @@ class Settings:
     canary_percent: int = 0
     canary_model: str = ""
     admin_token: str = ""
+    # 多实例状态（为空则用进程内本地状态）
+    redis_url: str = ""
+    redis_timeout_s: float = 1.5
+    redis_prefix: str = "rag"
+    # 知识库版本与审批
+    kb_store: str = "on"              # on | off
+    kb_approval: str = "auto"         # auto=本机管理员直通，其他走审批 | on | off
+    kb_dir: str = "data/kb"
+    kb_seed_dir: str = "data/knowledge"   # 首次初始化版本库时的种子目录
+    # 日志与成本
+    log_sink: str = "file"            # file | stdout | both（stdout 供 Fluent Bit/Vector 采集）
+    token_price_per_1k: float = 0.0   # 单价需按供应商当期价格页填写；0=不计算金额
 
 
 def load_settings() -> Settings:
     retrieval = (_first_env("RETRIEVAL", default="vector") or "vector").strip().lower()
-    if retrieval not in ("bm25", "hybrid", "vector"):
+    if retrieval not in ("bm25", "hybrid", "vector", "embedding"):
         retrieval = "vector"
     expansion = (_first_env("QUERY_EXPANSION", default="auto") or "auto").strip().lower()
     if expansion not in ("off", "auto", "llm"):
         expansion = "auto"
     base = (_first_env("LLM_BASE_URL", default=DEFAULT_BASE_URL) or DEFAULT_BASE_URL).rstrip("/")
-    # 两种检索器的分数尺度不同：BM25 是 0~20+ 的原始分，vector/hybrid 归一化到 0~1。
-    # 因此阈值必须分模式给默认值，否则换检索器会把所有问题打成“转人工”。
-    default_min = "0.30" if retrieval in ("hybrid", "vector") else "0.5"
+    # 各检索器的分数尺度不同：BM25 是 0~20+ 原始分，hashing/embedding 归一化到 0~1。
+    # 阈值必须分模式给默认值，否则换检索器会把所有问题打成“转人工”。
+    default_min = {"embedding": "0.38", "hybrid": "0.30", "vector": "0.30"}.get(retrieval, "0.5")
     return Settings(
         channel=endpoint_label(base),
         top_k=int(_first_env("TOP_K", default="4")),
@@ -99,6 +129,31 @@ def load_settings() -> Settings:
         canary_percent=max(0, min(100, int(_first_env("CANARY_PERCENT", default="0")))),
         canary_model=_first_env("CANARY_MODEL", default=""),
         admin_token=_first_env("ADMIN_TOKEN", default=""),
+        redis_url=_first_env("REDIS_URL", default=""),
+        redis_timeout_s=float(_first_env("REDIS_TIMEOUT_S", default="1.5")),
+        redis_prefix=_first_env("REDIS_PREFIX", default="rag"),
+        kb_store=(_first_env("KB_STORE", default="on") or "on").strip().lower(),
+        kb_approval=(_first_env("KB_APPROVAL", default="auto") or "auto").strip().lower(),
+        kb_dir=_first_env("KB_DIR", default="data/kb"),
+        kb_seed_dir=_first_env("KB_SEED_DIR", default="data/knowledge"),
+        log_sink=(_first_env("LOG_SINK", default="file") or "file").strip().lower(),
+        token_price_per_1k=float(_first_env("TOKEN_PRICE_PER_1K", default="0")),
+        embedding_provider=(_first_env("EMBEDDING_PROVIDER", default="none") or "none").strip().lower(),
+        embedding_base_url=_first_env("EMBEDDING_BASE_URL", default=""),
+        embedding_model=_first_env("EMBEDDING_MODEL", default=""),
+        embedding_api_key=_first_env("EMBEDDING_API_KEY", "LLM_API_KEY", "DEEPSEEK_API_KEY", default=""),
+        embedding_dim=int(_first_env("EMBEDDING_DIM", default="0")),
+        embedding_batch=int(_first_env("EMBEDDING_BATCH", default="16")),
+        embedding_timeout_s=float(_first_env("EMBEDDING_TIMEOUT_S", default="8")),
+        embedding_max_retries=int(_first_env("EMBEDDING_MAX_RETRIES", default="2")),
+        embedding_backoff_base_s=float(_first_env("EMBEDDING_BACKOFF_BASE_S", default="0.5")),
+        embedding_backoff_max_s=float(_first_env("EMBEDDING_BACKOFF_MAX_S", default="4")),
+        embedding_wall_clock_s=float(_first_env("EMBEDDING_WALL_CLOCK_S", default="30")),
+        embedding_index_dir=_first_env("EMBEDDING_INDEX_DIR", default="data/index"),
+        embedding_recall_k=int(_first_env("EMBEDDING_RECALL_K", default="48")),
+        vector_store=(_first_env("VECTOR_STORE", default="auto") or "auto").strip().lower(),
+        vector_ivf_nlist=int(_first_env("VECTOR_IVF_NLIST", default="64")),
+        vector_ivf_nprobe=int(_first_env("VECTOR_IVF_NPROBE", default="8")),
     )
 
 

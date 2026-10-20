@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 
-INCLUDE_DIRS = ("src", "data", "docs", "tests", "tools")
+INCLUDE_DIRS = ("src", "data", "docs", "tests", "tools", "deploy")
 INCLUDE_FILES = (
     "README.md",
     "LICENSE",
@@ -34,7 +34,8 @@ INCLUDE_FILES = (
 )
 
 # 运行时产物与本地环境不进包
-EXCLUDE_DIR_NAMES = {"__pycache__", ".venv", "venv", "logs", "dist", ".git", ".github", "screenshots"}
+EXCLUDE_DIR_NAMES = {"__pycache__", ".venv", "venv", "logs", "dist", ".git", ".github",
+                     "screenshots", "kb", "index"}
 EXCLUDE_FILE_NAMES = {"report_doc_cases.json", "eval_cases_docs.jsonl", ".DS_Store", "Thumbs.db"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
 

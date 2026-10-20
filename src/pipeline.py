@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from .chunking import load_corpus
 from .config import api_key, load_settings
+from .embeddings import EmbeddingError, EmbeddingUnavailable
 from .generator import extractive_answer, generate, repair_citation
 
 # 最外层拦截：通用护栏（注入/越权/隐私）+ profile 附加护栏（金融：荐股/收益承诺）
@@ -57,11 +58,37 @@ class RAGPipeline:
         self.chunks = load_corpus(knowledge_dir)
         if not self.chunks:
             raise ValueError("知识库为空，无法启动")
-        self.retriever = build_retriever(self.chunks, self.settings.retrieval, self.settings.rrf_k)
-        self.vocabulary = _build_vocabulary(self.chunks)
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.project_root = root
         self.log_path = os.path.join(root, "logs", "trace.jsonl")
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+        self._retrieval_error: str | None = None
+        self.retriever = self._make_retriever(self.chunks)
+        self.vocabulary = _build_vocabulary(self.chunks)
+
+    def _index_dir(self) -> str:
+        configured = self.settings.embedding_index_dir or "data/index"
+        return configured if os.path.isabs(configured) else os.path.join(self.project_root, configured)
+
+    def _make_retriever(self, chunks):
+        """embedding 不可用时回退 hashing 向量，并把原因留在 retrieval_detail。"""
+        try:
+            return build_retriever(chunks, self.settings.retrieval, self.settings.rrf_k,
+                                   settings=self.settings, index_dir=self._index_dir())
+        except EmbeddingUnavailable as exc:
+            self._retrieval_error = str(exc)
+            return build_retriever(chunks, "vector")
+        except EmbeddingError as exc:
+            # 模型/索引不可用（网络、维度错、索引损坏）：降级但显式暴露，不静默
+            self._retrieval_error = f"{type(exc).__name__}: {exc}"[:300]
+            return build_retriever(chunks, "vector")
+
+    @property
+    def retrieval_detail(self) -> dict:
+        detail = self.retriever.describe()
+        detail["configured_mode"] = self.settings.retrieval
+        detail["fallback_error"] = self._retrieval_error
+        return detail
 
     @property
     def llm_ready(self) -> bool:
@@ -84,7 +111,7 @@ class RAGPipeline:
             "citations": [],
             "retrieved": [],
             "retrieval_score": 0.0,
-            "retrieval_mode": self.settings.retrieval,
+            "retrieval_mode": self.retriever.describe().get("mode", self.settings.retrieval),
             "search_query": None,
             "gate_score": 0.0,
             "mode": None,
@@ -133,6 +160,16 @@ class RAGPipeline:
 
         if hits:
             result["retrieval_score"] = hits[0][1]
+
+        # 检索层降级必须可见：embedding 超时/限流/维度错时当次已回退 BM25
+        embed_error = getattr(self.retriever, "last_error", None)
+        if embed_error:
+            result["degraded"] = True
+            result["degrade_reason"] = "embedding_error"
+            result["retrieval_error"] = str(embed_error)[:300]
+        embed_usage = getattr(self.retriever, "last_usage", {}) or {}
+        if embed_usage.get("total_tokens"):
+            result["embedding_tokens"] = int(embed_usage["total_tokens"])
 
         # 置信度闸门：**用原问题的检索分**判断是否域外。
         # 若用扩展后的分数，域外问题会被扩展词“拉近”而误答（实测「今天天气」被打成 answer）。
@@ -219,12 +256,15 @@ class RAGPipeline:
         return self._finish(result, t0)
 
     def reload(self) -> int:
-        """重新加载知识库（对应看板的“知识库管理”）。"""
+        """重新加载知识库（知识库页上传/删除、版本审批后调用）。"""
         chunks = load_corpus(self.knowledge_dir)
         if not chunks:
             raise ValueError("知识库为空，拒绝加载")
+        self._retrieval_error = None
+        retriever = self._make_retriever(chunks)
+        # 先构建成功再替换，避免构建失败把在线检索打空
         self.chunks = chunks
-        self.retriever = build_retriever(chunks, self.settings.retrieval, self.settings.rrf_k)
+        self.retriever = retriever
         self.vocabulary = _build_vocabulary(chunks)
         return len(chunks)
 

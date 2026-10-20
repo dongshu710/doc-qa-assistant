@@ -53,7 +53,8 @@ flowchart TD
   V -->|合法| QE{查询扩展<br/>QUERY_EXPANSION}
   QE -->|auto/llm| EXP[用章节词表改写检索词]
   QE -->|off| RET
-  EXP --> RET[向量召回 + 重排 top_k]
+  EXP --> RET[召回：embedding / n-gram / BM25<br/>+ 多信号重排 top_k]
+  IDX[(索引 manifest<br/>model · dim · fingerprint)] -.-> RET
   RET -->|无命中| R2[no_answer + 相似问题]
   RET -->|命中| GEN{生成层}
   GEN -->|有 API Key| LLM[LLM 生成 OpenAI 兼容]
@@ -69,9 +70,13 @@ flowchart TD
 | 组件 | 职责 | 失败处理 |
 |---|---|---|
 | `chunking` | 标题/条款感知切分，保证语义完整、可回溯 | 目录缺失即报错；空库拒绝启动 |
-| `retriever` | 向量召回 + 多信号重排（默认）；BM25 / Hybrid 保留为对照 | 检索异常 → 降级不检索并标注 |
+| `retriever` | embedding 召回 + 多信号重排；n-gram / BM25 为兜底与对照 | embedding 失败 → 当次回退词法检索并标 `degraded` |
+| `embeddings` | OpenAI 兼容 `/embeddings`（bge 同协议），批请求、超时、重试、维度探测 | 失败抛 `EmbeddingError`，不阻塞启动 |
+| `vector_store` | 纯 Python / NumPy / FAISS 三种向量后端 + manifest 持久化 | 后端不可用逐级降级；维度不一致直接报错 |
+| `kbstore` | 版本目录、审批流、按文档回滚 | 版本只增不改；激活原子替换 |
 | `suggest` | 按知识库章节生成示例问题、未命中时的相似问题 | 无候选 → 回退文档级问题 |
-| `guards` | 限流、幂等、成本上限、审计、灰度、回滚 | 状态落盘 `logs/`，失败不阻塞主流程 |
+| `guards` | 限流、幂等、成本上限、审计、灰度、回滚；可切 Redis 共享状态 | Redis 失败回退进程内状态，健康检查暴露 |
+| `metrics_exporter` | Prometheus 文本指标（请求/延迟/降级/token） | 采集失败不影响业务响应 |
 | `query` | 语料自适应查询扩展：把章节标题当词表，让改写贴合文档术语 | 超时/异常静默回退原问题 |
 | `profiles` | finance / generic 两套提示词与合规护栏 | 未知 profile 回退默认 |
 | `generator` | LLM 生成 / 无 Key 抽取式 | 超时·重试·退避·抖动；最终降级抽取并标 `degraded` |
@@ -84,13 +89,20 @@ flowchart TD
 doc-qa-assistant/
 ├─ data/
 │  ├─ raw/                     # 原始 PDF（演示制度 + 监管摘录），离线解析用
-│  └─ knowledge/               # 知识库（3 份手写 md + 3 份 PDF 解析出的 md）
+│  ├─ knowledge/               # 种子知识库（3 份手写 md + 3 份 PDF 解析出的 md）
+│  ├─ kb/                      # 版本库：versions / pending / changes（运行时生成）
+│  └─ index/                   # embedding 索引：manifest / vectors / faiss（运行时生成）
 ├─ src/
 │  ├─ config.py                # 通道/超时/重试/阈值配置
 │  ├─ chunking.py              # 标题/条款感知切分
-│  ├─ retriever.py             # 向量召回 + 重排 / BM25 / Hybrid（零依赖）
+│  ├─ retriever.py             # embedding / n-gram / BM25 召回 + 重排
+│  ├─ embeddings.py            # OpenAI 兼容 embedding（批请求 / 重试 / 维度探测 / 缓存）
+│  ├─ vector_store.py          # 纯 Python / NumPy / FAISS 索引 + manifest
+│  ├─ kbstore.py               # 知识库版本目录 / 审批 / 文档级回滚
+│  ├─ redis_client.py          # 零依赖 RESP 客户端（限流 / 幂等 / 成本）
+│  ├─ metrics_exporter.py      # Prometheus 文本指标
 │  ├─ suggest.py               # 示例问题与相似问题（按文档章节生成）
-│  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚
+│  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚（本地 / Redis）
 │  ├─ query.py                 # 语料自适应查询扩展
 │  ├─ generator.py             # LLM + 抽取式降级
 │  ├─ pipeline.py              # 编排 + 校验 + 引用 + trace
@@ -132,6 +144,11 @@ doc-qa-assistant/
 │  ├─ test_docx_upload.py      # DOCX 上传 + 自动出题 + 一起跑
 │  ├─ test_pdf_text.py         # 内置 PDF 解析器单测（对象流/拒绝路径）
 │  ├─ test_kb_api.py           # 知识库上传/删除接口冒烟
+│  ├─ test_kb_versions.py      # 版本 / 审批 / 文档级回滚
+│  ├─ test_embeddings.py       # embedding 批请求 / 重试 / 索引 / 降级
+│  ├─ test_redis_guards.py     # Redis 跨实例限流 / 幂等 / 成本
+│  ├─ test_server_redis.py     # 两个服务实例共享 Redis 的端到端验证
+│  ├─ test_pipeline_embedding.py # embedding 检索链路与故障降级
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
 │  ├─ fixtures/                # 上传测试用 PDF / DOCX（可复现生成）
 │  └─ baseline.json            # 离线基线（26/26）
@@ -150,7 +167,7 @@ doc-qa-assistant/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.2.0.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.3.0.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -202,9 +219,9 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | 端点地址（OpenAI 兼容） |
 | `LLM_MODEL` | `deepseek-chat` | 模型名 |
 | `LLM_API_KEY` | 空 | 密钥；为空则离线抽取（兼容 `DEEPSEEK_API_KEY`） |
-| `RETRIEVAL` | `vector` | `vector`（向量召回 + 重排）/ `bm25` / `hybrid` |
+| `RETRIEVAL` | `vector` | `embedding`（真向量）/ `vector`（n-gram 兜底）/ `bm25` / `hybrid` |
 | `TOP_K` | `4` | 召回条数 |
-| `MIN_SCORE` | `0.30` | 检索置信度阈值（`bm25` 模式为 `0.5`），低于此值按未命中处理 |
+| `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
@@ -215,7 +232,14 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `DAILY_TOKEN_BUDGET` | `200000` | 每日 token 上限，超限跳过模型调用 |
 | `CANARY_PERCENT` | `0` | 灰度比例（0-100） |
 | `CANARY_MODEL` | 空 | 灰度模型名 |
-| `ADMIN_TOKEN` | 空 | 设置后 `/api/admin/*` 需带 `X-Admin-Token`；为空仅本机可调用 |
+| `ADMIN_TOKEN` | 空 | 设置后 `/api/admin/*`、`/api/kb/approve|reject|rollback_doc` 需带 `X-Admin-Token`；为空仅本机可调用 |
+| `REDIS_URL` | 空 | 多实例共享限流/幂等/成本状态；为空用进程内状态 |
+| `KB_STORE` | `on` | 启用版本库（`off` 退回单目录模式，仅测试/批处理用） |
+| `KB_APPROVAL` | `auto` | `auto` 本机管理员直通 / `on` 全部审批 / `off` 全部直通 |
+| `LOG_SINK` | `file` | `file` / `stdout` / `both`；stdout 供 Fluent Bit 采集 |
+| `TOKEN_PRICE_PER_1K` | `0` | 每千 token 单价；为 0 时只统计 token，不算金额 |
+
+embedding 与索引相关变量见 [4.6](#46-真-embedding-与向量索引可选接口已隔离)，多实例变量见 [4.7](#47-多实例redis-共享状态--集中日志与指标)，版本库变量见 [4.8](#48-知识库版本审批与文档级回滚)。
 
 ## 4.1 原型（五页 + HTTP API）
 
@@ -239,17 +263,18 @@ python -m src.server --port 8000
 
 API：
 
-- `GET /api/health` → 端点 / 模型 / 检索模式 / 知识块数 / 限流与预算状态
+- `GET /api/health` → 端点 / 模型 / 检索详情（索引状态、维度、降级原因）/ 知识库版本 / 限流与预算状态
 - `GET /api/examples?n=4` → 按当前知识库生成的示例问题
 - `POST /api/ask` `{"query": "..."}` → 结构化结果（answer / citations / behavior / mode / similar_questions）
   - 可选请求头 `Idempotency-Key: <key>`：TTL 内重复请求返回首次结果，并带 `X-Idempotent-Replay: true`
-- `GET /api/metrics` → 聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
+- `GET /api/metrics` → 业务聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
+- `GET /metrics` → Prometheus 文本指标（请求 / 延迟直方图 / 限流 / 幂等重放 / 降级 / token / 版本）
 - `GET /api/l3` → L3 语义评分摘要（忠实度 / 相关性 / 完整性、门禁结论）
 - `GET /api/report/export` → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开）
-- `GET /api/knowledge` → 知识库文件与块数
-- `POST /api/knowledge/upload` `{"name","content"}` → 上传 `.md`/`.txt` 并立即重建索引（上限 512KB）
+- `GET /api/knowledge` → 知识库文件与块数、当前版本、待审批数
+- `POST /api/knowledge/upload` `{"name","content"}` → 上传 `.md`/`.txt`（上限 512KB）；直接生效则重建索引，需审批则返回 `pending:true` + `change_id`
 - `POST /api/knowledge/upload_file` `{"name","data_b64"}` → 上传 PDF/DOCX（服务端解析入库；`upload_pdf` 保留为别名）
-- `POST /api/knowledge/delete` `{"name"}` → 删除文件并重建索引（至少保留一份）
+- `POST /api/knowledge/delete` `{"name"}` → 删除文件（至少保留一份）；同样受审批开关控制
 - `GET /api/feedback/list?limit=20` → 反馈 / badcase
 - `GET /api/trace?limit=20` → 最近对话
 - `POST /api/feedback` `{"trace_id","useful","comment"}` → 写入 `logs/feedback.jsonl`
@@ -259,13 +284,19 @@ API：
 - `GET /api/cases` → 评测用例数（基础 + 反馈 + 文档）
 - `POST /api/cases/from_feedback` `{"trace_id","keywords","behavior","note"}` → 差评一键转回归用例
 - `POST /api/handoff` `{"trace_id","query","contact"}` → 模拟工单，写 `logs/handoff.jsonl`
+- `GET /api/kb/versions` → 版本列表与活动版本
+- `GET /api/kb/changes?status=pending|approved|rejected` → 变更审批记录
+- `GET /api/kb/doc_history?name=...` → 单份文档的版本历史
+- `POST /api/kb/approve` `{"change_id","note"}` → 审批并生成新版本（需 admin）
+- `POST /api/kb/reject` `{"change_id","reason"}` → 拒绝变更（需 admin）
+- `POST /api/kb/rollback_doc` `{"name","to_version","note"}` → 按文档回滚，生成新版本（需 admin）
 - `GET /api/audit?limit=20` → 审计日志（需 admin）
 - `GET /api/admin/config` → 灰度配置（需 admin）
 - `POST /api/admin/config` `{"canary_percent","canary_model"}` → 调整灰度比例 / 模型（需 admin）
 - `POST /api/admin/rollback` `{}` → 恢复上一版运行配置（需 admin）
 - `GET /api/admin/cost` → 当日 token 用量与剩余额度（需 admin）
 
-> **admin 鉴权**：设置 `ADMIN_TOKEN` 后，`/api/admin/*` 与 `/api/audit` 需带 `X-Admin-Token`；未设置时仅允许本机 `127.0.0.1` 调用。
+> **admin 鉴权**：设置 `ADMIN_TOKEN` 后，`/api/admin/*`、`/api/audit` 与审批/回滚接口需带 `X-Admin-Token`；未设置时仅允许本机 `127.0.0.1` 调用。
 
 ### 4.1.1 生产防护
 
@@ -288,14 +319,16 @@ API：
 
 | 方式 | 怎么做 | 适用 |
 |---|---|---|
-| 页面上传 | `/kb` → 拖拽或选择 `.md` / `.txt` / `.pdf` / `.docx`（可多选）→ 上传（立即重建索引） | 几份到几十份，含 PDF/Word |
-| 直接放文件 | 把 `.md` 放进 `data/knowledge/`，再点「重建索引」 | 批量导入、版本管理 |
+| 页面上传 | `/kb` → 拖拽或选择 `.md` / `.txt` / `.pdf` / `.docx`（可多选）→ 上传（审批通过后重建索引） | 几份到几十份，含 PDF/Word |
+| 直接放文件 | 首次启动前放 `data/knowledge/`（作为 v0001 种子）；已启用版本库后放 `data/kb/versions/<活动版本>/files/`，再点「重建索引」 | 批量导入、离线准备 |
 | 命令行批量 | `python -m src.pdf_ingest --raw data/raw`（见 4.3） | 一次性导入大量 PDF |
 
 注意：
 
 - 文本上传 ≤512KB；PDF/DOCX ≤6MB；文件名做了目录穿越校验（显式拒绝 `../x.pdf`，不静默改名），文件头也校验（改后缀的假文件直接 400）；
-- 删除会立即重建索引，且**至少保留一份文件**，避免把库删空导致服务起不来；
+- 删除/覆盖走审批（`KB_APPROVAL=auto` 时本机管理员直通），且**至少保留一份文件**，避免把库删空导致服务起不来；
+- `data/kb/` 是版本库（运行时生成），`data/knowledge/` 只是首次初始化种子；两者别混用；
+- 每次发布都会生成 `versions/vNNNN`，可 `POST /api/kb/rollback_doc` 按文档回退，历史不会被改写；
 - 切领域时同时设 `APP_PROFILE=generic`，否则金融护栏（拒绝荐股/收益承诺）仍会生效；
 - 文档结构建议用 Markdown 标题分节：切分器按标题/条款切块，结构越清楚，召回越准。
 
@@ -402,8 +435,148 @@ python -m src.report --out dist/report.html   # 导出独立 HTML（不依赖服
 ```
 
 导出的文件**数据全部内联**：双击即可打开、可发邮件/网盘，对方不需要装环境或起服务。
-内容不是功能罗列，而是四件事：**它是什么 / 它不是什么**（明确不做 Agent、不给投资建议）、
-**链路每层的失败动作**、**L1+L3 评测结果**、**已知边界与下一步**。
+内容不是功能罗列，而是四件事：**功能清单**、**链路每层的失败动作**、**L1+L3 评测结果**、
+**生产控制与运行约束**。
+
+## 4.6 真 embedding 与向量索引（可选，接口已隔离）
+
+默认仍是零依赖的字符 n-gram 向量，保证 `git clone` 后不装任何东西就能跑。
+配置 embedding 后，`RETRIEVAL=embedding` 走真语义召回。
+
+### 选型：为什么是「OpenAI 兼容协议 + FAISS」
+
+| 决策 | 选择 | 理由 |
+|---|---|---|
+| 模型协议 | OpenAI 兼容 `POST {base}/embeddings` | bge 用 TEI / Xinference / vLLM / Ollama 部署后都暴露同一路径；换模型只改环境变量，不改代码 |
+| 模型 | bge（中文优先）或 OpenAI embedding | 中文制度/产品说明里「起购 vs 起点」这类同义改写，字符 n-gram 补不上，真 embedding 才能补 |
+| 向量库 | **FAISS**（默认 `IndexFlatIP`） | 语料是 10²~10⁵ 量级的内部文档，单进程只读、按版本整体重建；flat 是精确检索，持久化只有两个文件，不引入服务端 |
+| 不选 Chroma | — | 需要 collection/元数据过滤/多租户时才划算；它会带 sqlite/duckdb 等一串传递依赖，与本项目「小依赖、可离线」冲突。接口已隔离，将来加 `ChromaStore` 不影响检索层 |
+| 加速器 | NumPy / FAISS 均为可选 | 没装时自动退到纯 Python 精确内积；31 个块 × 1024 维的查询开销可忽略 |
+
+### 维度与索引配置
+
+**维度不写死**：首次构建时探测模型实际维度并写进 `manifest.json`；配置了 `EMBEDDING_DIM` 就做一致性校验，不一致直接报错（不截断、不补零）。这样换 bge 版本（512/768/1024）不会静默错配。
+
+```bash
+EMBEDDING_PROVIDER=openai          # none | openai | bge（bge 走同一协议）
+EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=0                    # 0=自动探测；已知维度时填上可提前校验
+EMBEDDING_BATCH=16
+EMBEDDING_TIMEOUT_S=8
+EMBEDDING_MAX_RETRIES=2
+EMBEDDING_INDEX_DIR=data/index
+VECTOR_STORE=auto                  # auto | pure | numpy | faiss | faiss-ivf
+VECTOR_IVF_NLIST=64
+VECTOR_IVF_NPROBE=8
+RETRIEVAL=embedding
+```
+
+索引文件（`data/index/<model>/`）：
+
+| 文件 | 内容 |
+|---|---|
+| `manifest.json` | 模型、维度、度量（cosine）、语料指纹、后端、块数、构建用量 |
+| `vectors.jsonl` | L2 归一化后的向量；换后端不必重新 embedding |
+| `index.faiss` | FAISS 索引（可选，加载更快） |
+| `embeddings.cache.jsonl` | 按 `model|dim|text` 哈希缓存，知识库小改只重算变化块 |
+
+索引策略：
+
+- **指纹失效**：manifest 的 fingerprint 覆盖「模型 + 每块 id/正文哈希」，知识库或模型一变就自动重建；
+- **flat vs IVF**：`faiss-ivf` 只在 `N ≥ nlist × 30` 时启用，否则训练样本不足会退化/报错，自动回退 flat 并在 manifest 记明；
+- **nlist/nprobe**：经验值 `nlist ≈ 4√N`，`nprobe` 从 8 起调；本演示 31 块用 flat，不引入训练误差；
+- **查询缓存**：同一问题 128 条 LRU，评测重跑/多轮追问不重复计费。
+
+### 迁移步骤（可回滚）
+
+1. 起一个 OpenAI 兼容的 embedding 端点（TEI / Xinference / Ollama 均可），确认 `curl {base}/embeddings` 返回向量；
+2. 设置上面的环境变量，先 **不要** 改 `RETRIEVAL`；
+3. `python tools/build_index.py --rebuild --check "大额存单可以转让吗"`，确认 `dim`、`backend`、抽查命中；
+4. 跑 `python tests/eval_retrieval.py` 对比 R@1 / MRR，**有增益再切**；
+5. 改 `RETRIEVAL=embedding` 并重启；观察 `/api/health` 的 `retrieval_detail.index_status`；
+6. 回滚：把 `RETRIEVAL` 改回 `vector` 或 `bm25`，无需删索引；索引坏了下一次启动会自动重建。
+
+未配置模型、服务不可达、超时、维度不一致时：**查询当次回退词法检索**，答案标 `degraded`，`/api/health` 暴露 `fallback_error`；不会让服务起不来，也不会静默返回空结果。
+
+## 4.7 多实例：Redis 共享状态 + 集中日志与指标
+
+单实例时状态在进程内，重启即丢；多实例时会出现「每个实例各限各的、幂等只在单机生效、预算各算一份」。配置 `REDIS_URL` 后，三类**共享状态**切到 Redis：
+
+| 能力 | Redis 结构 | 原子性 | TTL |
+|---|---|---|---|
+| 限流 | `rag:rl:<ip>` Hash（tokens/ts） | Lua 脚本原子执行；时间取 Redis `TIME`，不依赖各实例时钟 | `burst/rps + 60s` |
+| 幂等 | `rag:idem:<key>` String | `SET NX PX`，先写入者生效 | `IDEMPOTENCY_TTL_S` |
+| 成本 | `rag:cost:<date>` Integer | `INCRBY` 原子累加 | 2 天 |
+
+```bash
+REDIS_URL=redis://:password@127.0.0.1:6379/0
+REDIS_TIMEOUT_S=1.5
+REDIS_PREFIX=rag
+```
+
+**故障策略**：Redis 不可用时回退进程内实现（仍有限流，不是放行），30 秒冷却后再试；`/api/health.guards` 返回 `backend`、`redis_ok`、`redis_error`、各能力的 `fallbacks` 计数与 `last_errors`。健康检查里能看见降级，才算真的可运维。
+
+**审计日志**：`LOG_SINK=file|stdout|both`。`stdout` 每行一个 JSON，字段含 `event=audit`、`service`、`instance`、`request_id`、`action`、`trace_id`，可直接被 Fluent Bit / Vector 采集：
+
+```json
+{"ts":"2026-10-20T09:00:00+00:00","event":"audit","service":"doc-qa","instance":"host:1234","action":"ask","request_id":"...","trace_id":"...","behavior":"answer","tokens":812}
+```
+
+**指标**：`GET /metrics` 输出 Prometheus 文本格式（`rag_ask_total`、`rag_ask_duration_seconds`、`rag_rate_limited_total`、`rag_idempotent_replay_total`、`rag_tokens_total`、`rag_retrieval_degraded_total`、`rag_kb_version`、`rag_index_chunks`）。金额只在配置 `TOKEN_PRICE_PER_1K` 后计算——不内置任何供应商价格。
+
+采集配置示例见 `deploy/prometheus.yml` 与 `deploy/fluent-bit.conf`；多实例由 Prometheus 按 `instance` 聚合，不在应用内做跨实例汇总。
+
+## 4.8 知识库版本、审批与文档级回滚
+
+`data/kb/` 是运行时版本库（已加入 `.gitignore`），`data/knowledge/` 只作为首次初始化的种子：
+
+```
+data/kb/
+├─ state.json                 # {"active":"v0003","next_version":4,...}
+├─ versions/v0001/
+│  ├─ manifest.json           # 作者、来源、每份文档 sha256
+│  └─ files/*.md
+├─ versions/v0002/...
+├─ pending/chg_0001/          # 待审批：request.json + 暂存文件
+│  └─ request.json
+└─ changes/chg_0001.json      # 已审批/已拒绝的历史（只增不改）
+```
+
+三条不变量：
+
+1. **版本只增不改**：回滚不是把指针拨回去，而是用旧内容生成新版本，历史可追溯（谁、何时、从哪个版本恢复）；
+2. **激活原子**：版本目录写完后才 `os.replace` 更新 `state.json`，读侧不会看到半成品；
+3. **按文档回滚**：只替换目标文件，其余文档保持当前版本，避免「为回滚一份文档把别人刚发布的也退回去」。
+
+```bash
+KB_STORE=on
+KB_DIR=data/kb
+KB_SEED_DIR=data/knowledge
+KB_APPROVAL=auto        # auto=本机管理员直通，其他来源走审批 | on=全部审批 | off=全部直通
+```
+
+审批流（`KB_APPROVAL=on` 时）：
+
+```bash
+# 1) 上传 -> 生成待审批变更，不进检索
+curl -s -X POST localhost:8000/api/knowledge/upload \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"04_采购制度.md","content":"# 采购制度\n\n## 一、审批\n\n采购合同由财务负责人签字。\n"}'
+# -> {"ok":true,"pending":true,"change_id":"chg_0001","version":"v0001"}
+
+# 2) 管理员审批 -> 生成 v0002 并重建索引
+curl -s -X POST localhost:8000/api/kb/approve \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"change_id":"chg_0001"}'
+
+# 3) 按文档回滚到 v0001（只回滚这一份）
+curl -s -X POST localhost:8000/api/kb/rollback_doc \
+  -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"04_采购制度.md","to_version":"v0001"}'
+```
+
+版本/审批接口：`GET /api/kb/versions`、`GET /api/kb/changes?status=pending|approved|rejected`、`GET /api/kb/doc_history?name=...`、`POST /api/kb/approve|reject|rollback_doc`。审批与回滚都写审计日志；`KB_APPROVAL=auto` 时本机管理员上传仍会自动生成版本（有历史可回滚），只是不排队。
 
 ## 5. 评测
 
@@ -506,8 +679,8 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 
 结论：
 
-1. **默认链路已切到向量召回 + 重排**：`VectorRerankRetriever` 只用向量做候选召回，再用原问题词覆盖、长片段命中、BM25 和标题命中重排；接口在 `build_retriever` 工厂后面，可继续替换为真 embedding 向量库。
-2. **在本语料上，向量召回与 BM25 的 R@1 / R@4 持平**（72.7% / 90.9%），差异主要在排序细节。没有为了「向量」二字虚构增益。
+1. **默认链路是向量召回 + 重排**：`VectorRerankRetriever` 用字符 n-gram 向量做候选召回，再用原问题词覆盖、长片段命中、BM25 和标题命中重排；配置 embedding 后可切到 `EmbeddingRetriever`（真语义召回）。
+2. **在本语料上，字符 n-gram 向量与 BM25 的 R@1 / R@4 持平**（72.7% / 90.9%），差异主要在排序细节。真 embedding 的增益尚未在本语料标注集上实测（没有可用的 embedding 凭据），所以不写「一定更好」。
 3. **查询扩展仍是补齐同义改写的有效手段**：H10（「测评 R3 想买 R5」）靠它从漏召回变成第 1 名命中；未配置 Key 时不会启用。
 4. **召回与重排必须分开**：扩展词只用于召回，重排只看用户原问题，否则会把原本最相关的块压下去。
 
@@ -521,20 +694,22 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 2. **检索**：向量召回 + 重排为默认；BM25 / Hybrid 保留为对照；查询扩展可选，`build_retriever` 工厂隔离实现。
 3. **生成与引用**：OpenAI 兼容端点；超时、重试、退避；引用强制与降级抽取；未命中返回相似问题。
 4. **评测**：L1 确定性断言、L3 语义评分、Recall@k / MRR 召回评测；差评与上传文档可转用例。
-5. **可观测**：`logs/trace.jsonl`、`/api/metrics`、`/api/health`、`/api/audit`。
-6. **生产控制**：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚。
+5. **可观测**：`logs/trace.jsonl`、`/api/metrics`、`/metrics`（Prometheus）、`/api/health`、`/api/audit`；审计可输出 stdout 供采集。
+6. **生产控制**：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚；多实例状态可切 Redis。
+7. **真向量检索**：OpenAI 兼容 embedding（bge 同协议）+ FAISS / NumPy / 纯 Python 三档索引，manifest 记录模型/维度/指纹。
+8. **知识库版本化**：版本目录、审批流、按文档粒度回滚，版本只增不改。
 
 可继续扩展：
 
-- 用真 embedding（bge / OpenAI embedding）替换字符 n-gram 向量，接 FAISS / Chroma。
-- 多实例部署时把幂等缓存与限流状态迁到 Redis；审计与成本接集中日志/监控。
-- 知识库版本目录与审批流，支持文档级回滚。
+- 用 Chroma 承载元数据过滤与多租户（当前 FAISS 足够，接口已隔离）。
+- 在多实例上把灰度配置与知识库写锁也搬到 Redis / 配置中心。
+- 给 embedding 索引加增量更新，避免整库重建。
 
 ## 7. 回滚
 
 - **灰度配置**：每次 `POST /api/admin/config` 都会把上一版快照写入 `logs/runtime.json`；`POST /api/admin/rollback` 恢复上一版（灰度比例与模型）。
 - **代码**：Git tag + `git revert`；`baseline.json` 是回滚后的验收基线。
-- **知识库**：`data/knowledge/` 走版本目录（如 `2026-10-18/`），切换目录后调用 `POST /api/reload` 即回滚。
+- **知识库**：`data/kb/versions/` 只增不改；整库回退用 `state.json` 的活动指针，单份文档回退用 `POST /api/kb/rollback_doc`（会生成新版本，不改历史）。
 - **模型**：`LLM_MODEL` 环境变量切换备用模型；失败自动降级抽取（`degraded=True`）。
 
 ## 8. 已知风险与边界
@@ -549,13 +724,17 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - **引用强制**：LLM 回答若不含有效 `[n]`，自动降级为抽取式并标记 `degrade_reason=no_citation`，杜绝无出处答案。
 - **零宽注入**：输入先做零宽/控制字符归一化，避免用零宽字符绕过注入检测；并按合规拒绝「必涨/稳赚/荐股」类请求。
 - **L3 裁判偏差**：裁判与被测模型同源时存在自偏好，分数系统性偏高；基础集 26 条曾全 5.0，更可能反映“测试集太简单”。缓解手段：校准样本（默认跑）+ 异构裁判（`--judge-model` 换家族）。
-- **检索的同义改写仍是主要缺口**：H10「测评 R3 想买 R5」时，问题措辞（R3/R5）与制度措辞（「超出其风险承受能力等级」）字面重合度低，检索器无法仅靠 n-gram 向量召回。已切换到向量召回 + 重排，并保留查询扩展作为同义改写手段；要彻底解决需要真 embedding 模型。
+- **同义改写仍是主要缺口**：H10「测评 R3 想买 R5」时，问题措辞（R3/R5）与制度措辞（「超出其风险承受能力等级」）字面重合度低，字符 n-gram 补不上。配置真 embedding（`RETRIEVAL=embedding`）是正解，但本仓库没有可用的 embedding 凭据，**未做同语料增益验证**；切换前先跑 `tests/eval_retrieval.py`。
 - **L3 的盲区（重要）**：裁判只拿到检索到的 4 块资料。条款没被召回时，「资料中未找到」对裁判来说是**忠实且相关**的，会给 5 分——所以 H10 这种检索失败，L3 完全看不见（实测同源/异构裁判都给了高分）。**结论：L3 评的是「对给定资料的忠实度」，不能替代召回质量评测**；召回缺口必须用 `retrieval_contains*` 断言或人工抽检来测。
 - **引用强制曾误伤短答案（已修）**：模型给出正确但未标 `[n]` 的短答案时，原先直接降级为抽取式，答案反而更差（如「资料未提及收益率」被替换成无关段落）。现改为**先补引用**（`repair_citation`，只允许加标注/删无据句），补不上再降级；「资料未提供」类回答天然无出处，予以豁免并标记 `citation_exempt_reason`。
 - **抽取式兜底不会说“不知道”**：降级后只复述最相关段落，无法表达“资料没有”，L3 会判 relevance 1-2 分。这是兜底策略的固有短板，只能靠豁免与更好的降级文案缓解。
 - **裁判侧限流**：推理型裁判模型配额更紧，实测 2s 间隔下 9/13 被 429；`_judge_call` 已尊重 `Retry-After` 并把退避拉到 5/10/20/30 秒，批量跑建议 `--sleep 5`。
 - **校准基准要挑对**：「多问只答一半」的校准必须用**真多问句**（按分句判定），否则单问句截断后仍完整，会得出“裁判无区分力”的错误结论。
-- **向量召回在本语料 R@1 与 BM25 持平**：31 个块、术语密集，字符 n-gram 向量补的是字面重合，不是语义；默认仍切到 `vector` 是为了保留可替换的向量接口与重排链路，但不应据此宣称效果提升。Hybrid 作为历史对照保留。要真正解决语义改写，需要**真 embedding**，不是字符 n-gram。
+- **字符 n-gram 向量不等于语义检索**：31 个块、术语密集，它补的是字面重合；默认用 `vector` 是为了零依赖可跑，不应据此宣称效果提升。真语义检索请配 `RETRIEVAL=embedding`。
+- **embedding 增加一次在线查询延迟与费用**：每题一次 `/embeddings` 调用（已加 128 条查询缓存），超时默认 8s；批量建库按 `EMBEDDING_BATCH` 计费。索引构建失败/服务不可达时降级词法检索，答案会标 `degraded`。
+- **Redis 是新的单点**：限流/幂等/成本依赖它；不可用时回退进程内状态（仍有限流），但多实例之间不再一致。生产建议主从 + 哨兵或托管 Redis，并把 `REDIS_TIMEOUT_S` 控制在 1~2s。
+- **知识库审批锁是本机文件锁**：`state.lock` 保证同机多进程串行；多实例部署时审批应由单实例处理，或把锁换成 Redis 分布式锁。上传本身不写活动目录，不会出现半写。
+- **索引是全量重建**：语料指纹变化会重算所有缺失向量（有内容缓存，未变块不重复计费），10⁵ 块以上建议改增量索引与后台构建。
 - **查询扩展有延迟成本**：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。
 - **上传支持 `.md` / `.txt` / `.pdf` / `.docx`**：PDF 与 DOCX 都由服务端解析，上传即入库。`.doc` 老格式需先另存为 `.docx`。
 - **DOCX 解析边界**：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。
@@ -565,8 +744,11 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 ## 9. 待核实清单
 
 - `[待核实: 各厂商上下文长度与单价以官方文档为准]`
+- `[待核实: bge / OpenAI embedding 的实际维度与计费以模型卡/价格页为准；代码不硬编码维度，构建时探测]`
 - `[待核实: 监管条款摘录来自公开文件，正式使用前以官方原文为准]`
 - `[待核实: 生产环境的统一鉴权、网关限流与密钥托管以实际部署平台为准；当前仅有 ADMIN_TOKEN 保护管理接口]`
+- `[待核实: Redis 高可用方案（主从/哨兵/集群）与 maxmemory 策略以部署环境为准；当前只验证单实例语义]`
+- `[待核实: IVF 的 nlist/nprobe 需在真实语料上以 Recall@k 调参；本仓库 31 块使用 flat，未做大规模基准]`
 
 ## 10. 文档与发布
 

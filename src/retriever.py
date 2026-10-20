@@ -1,21 +1,26 @@
-"""检索层：向量召回 + 重排（默认），并保留 BM25 / Hybrid 作为对照。
+"""检索层：真 embedding 召回 + 重排（`RETRIEVAL=embedding`），保留词法基线对照。
 
-当前默认链路：
-1. **向量召回**：字符 2/3-gram + 词元的 hashing TF-IDF 向量，取 topN 候选；
-2. **重排**：对候选综合「向量相似度 + 原问题词覆盖 + 长片段命中 + BM25 分 + 标题/章节命中」，
-   输出 0~1 的归一化分数，供 pipeline 的置信度闸门使用；
-3. BM25 与 Hybrid 仍保留，可通过 `RETRIEVAL=bm25|hybrid|vector` 切换。
+四种模式，共用同一套 `search()` 接口：
+- `embedding`：真 embedding（OpenAI 兼容 /embeddings，bge 同协议）+ 向量索引召回，
+  再按「余弦 + 原问题词覆盖 + BM25 + 长片段 + 标题」重排；
+- `vector`：字符 2/3-gram hashing 向量召回 + 重排（零依赖基线，未配置模型时的兜底）；
+- `hybrid`：BM25 + hashing 向量 RRF 融合 + 重排（历史对照）；
+- `bm25`：纯词法（降级与对照）。
 
-诚实说明（不要被「向量」二字误导）：
-这里的向量是 **hashing TF-IDF 向量**（字符 2/3-gram 哈希到固定维度），
-是**词法相似度**，不是语义 embedding。同义改写（「起购」vs「起点」）仍然靠
-查询扩展（`src/query.py`，可选 LLM 改写）来补。`VectorIndex` 的接口已隔离，
-将来可直接替换为真 embedding 向量库，不影响召回/重排调用方。
+为什么重排不直接信余弦：embedding 的分数量纲随模型变化，且「语义相近但没答到点上」
+的块很常见。把余弦归一为相对信号，再叠加词面覆盖与 BM25，能让阈值语义稳定，
+也保留「问法与原文不一致」时的召回收益。
+
+embedding 调用失败（超时/限流/维度错）不会让问答挂掉：当次请求回退 BM25 重排，
+`last_error` 暴露给 pipeline 标记 `degraded`，健康检查里也能看到。
 """
 import math
 import re
 import zlib
 from collections import Counter
+
+from .embeddings import EmbeddingError, EmbeddingUnavailable, make_provider
+from .vector_store import EmbeddingIndex
 
 _ALNUM_RE = re.compile(r"[a-z]+|\d+(?:\.\d+)?")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
@@ -76,6 +81,9 @@ class BM25:
                 scores.append((s, i))
         scores.sort(key=lambda x: x[0], reverse=True)
         return [(self.chunks[i], round(s, 4)) for s, i in scores[:top_k]]
+
+    def describe(self) -> dict:
+        return {"mode": "bm25", "backend": "bm25", "chunks": len(self.chunks)}
 
 
 class VectorIndex:
@@ -199,6 +207,9 @@ class HybridRetriever:
         reranked.sort(key=lambda x: x[0], reverse=True)
         return [(self.chunks[i], s) for s, i in reranked[:top_k]]
 
+    def describe(self) -> dict:
+        return {"mode": "hybrid", "backend": "bm25+hash-ngram", "chunks": len(self.chunks)}
+
 
 class VectorRerankRetriever:
     """向量召回 + 多信号重排（项目默认检索器）。
@@ -245,17 +256,147 @@ class VectorRerankRetriever:
         reranked.sort(key=lambda x: x[0], reverse=True)
         return [(self.chunks[i], s) for s, i in reranked[:top_k]]
 
+    def describe(self) -> dict:
+        return {"mode": "vector", "backend": "hash-ngram", "chunks": len(self.chunks)}
 
-def build_retriever(chunks, mode: str = "vector", rrf_k: int = 60):
+
+class EmbeddingRetriever:
+    """真 embedding 召回 + 多信号重排。
+
+    索引在构造时 `ensure()`：manifest 与语料/模型匹配就直接加载，
+    否则重新 embedding 并原子写盘。查询向量带 128 条 LRU 缓存，
+    同一问题在多轮追问/评测重跑时不重复计费。
+    """
+
+    def __init__(self, chunks, provider, index_dir: str, store_kind: str = "auto",
+                 recall_k: int = 48, nlist: int = 64, nprobe: int = 8):
+        self.chunks = chunks
+        self.provider = provider
+        self.bm25 = BM25(chunks)
+        self.recall_k = max(24, recall_k)
+        self.index = EmbeddingIndex(chunks, provider, index_dir, store_kind, nlist, nprobe)
+        try:
+            self.index_status = self.index.ensure()
+        except EmbeddingError:
+            raise
+        except Exception as exc:  # noqa: BLE001 —— 索引后端异常统一转成可降级的错误
+            raise EmbeddingError(
+                f"索引构建失败: {type(exc).__name__}: {exc}") from exc
+        self.last_error: str | None = None
+        self.last_usage: dict = {}
+        self._query_cache: dict[str, list[float]] = {}
+        self._cache_order: list[str] = []
+
+    def _embed_query(self, query: str) -> list[float]:
+        hit = self._query_cache.get(query)
+        if hit is not None:
+            return hit
+        result = self.provider.embed([query])
+        vec = result.vectors[0]
+        self.last_usage = result.usage
+        self._query_cache[query] = vec
+        self._cache_order.append(query)
+        if len(self._cache_order) > 128:
+            self._query_cache.pop(self._cache_order.pop(0), None)
+        return vec
+
+    def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
+        focus = focus_query or query
+        try:
+            qv = self._embed_query(query)
+            candidates = self.index.search(qv, max(self.recall_k, top_k * 8))
+            self.last_error = None
+        except EmbeddingError as exc:
+            # 失败降级：当次用 BM25 召回，分数仍归一化，保证闸门语义一致
+            return self._fallback(query, focus, top_k, str(exc))
+
+        if not candidates:
+            return []
+
+        q_tokens = set(tokenize(focus))
+        lex = {id(c): s for c, s in self.bm25.search(query, len(self.chunks))}
+        max_lex = max(lex.values()) if lex else 1.0
+
+        reranked: list[tuple[float, int]] = []
+        for idx, cos in candidates:
+            if not 0 <= idx < len(self.chunks):
+                continue
+            chunk = self.chunks[idx]
+            text = chunk.section + " " + chunk.text
+            score = (
+                0.50 * max(0.0, cos)
+                + 0.20 * _coverage(q_tokens, text)
+                + 0.15 * (lex.get(id(chunk), 0.0) / max_lex if max_lex else 0.0)
+                + 0.10 * _long_match(focus, text)
+                + 0.05 * _coverage(q_tokens, chunk.title + " " + chunk.section)
+            )
+            reranked.append((round(score, 4), idx))
+
+        reranked.sort(key=lambda x: x[0], reverse=True)
+        return [(self.chunks[i], s) for s, i in reranked[:top_k]]
+
+    def _fallback(self, query: str, focus: str, top_k: int, error: str):
+        self.last_error = error
+        hits = self.bm25.search(query or focus, max(self.recall_k, top_k * 8))
+        if not hits:
+            return []
+        q_tokens = set(tokenize(focus))
+        max_lex = hits[0][1] or 1.0
+        reranked = []
+        for chunk, lex in hits:
+            text = chunk.section + " " + chunk.text
+            score = (
+                0.55 * (lex / max_lex)
+                + 0.25 * _coverage(q_tokens, text)
+                + 0.10 * _long_match(focus, text)
+                + 0.10 * _coverage(q_tokens, chunk.title + " " + chunk.section)
+            )
+            reranked.append((chunk, round(score, 4)))
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        return reranked[:top_k]
+
+    def describe(self) -> dict:
+        return {
+            "mode": "embedding",
+            "backend": self.index_status.get("backend"),
+            "model": self.provider.model,
+            "dim": self.index_status.get("dim"),
+            "index_status": self.index_status.get("status"),
+            "index_dir": self.index_status.get("index_dir"),
+            "chunks": len(self.chunks),
+            "degraded": bool(self.last_error),
+            "last_error": self.last_error,
+        }
+
+
+def build_retriever(chunks, mode: str = "vector", rrf_k: int = 60,
+                    settings=None, index_dir: str | None = None):
     """检索器工厂（唯一入口，调用方不感知具体实现）。
 
     mode:
-      - `vector`（默认）：向量召回 + 重排
+      - `embedding`：真 embedding + 向量索引召回 + 重排
+      - `vector`（默认）：hashing n-gram 向量召回 + 重排，零依赖
       - `bm25`：纯词法，用于对照与降级
-      - `hybrid`：BM25 + 向量 RRF 融合 + 重排，用于历史对照
+      - `hybrid`：BM25 + hashing 向量 RRF 融合 + 重排，用于历史对照
     """
     if mode == "bm25":
         return BM25(chunks)
     if mode == "hybrid":
         return HybridRetriever(chunks, rrf_k=rrf_k)
+    if mode == "embedding":
+        if settings is None:
+            raise EmbeddingUnavailable("embedding 检索需要 Settings")
+        provider = make_provider(settings)
+        if provider is None:
+            raise EmbeddingUnavailable(
+                "未配置 EMBEDDING_PROVIDER；请设置 EMBEDDING_BASE_URL / EMBEDDING_MODEL"
+            )
+        return EmbeddingRetriever(
+            chunks, provider,
+            index_dir=index_dir or getattr(settings, "embedding_index_dir", "data/index"),
+            store_kind=getattr(settings, "vector_store", "auto"),
+            recall_k=getattr(settings, "embedding_recall_k", 48),
+            nlist=getattr(settings, "vector_ivf_nlist", 64),
+            nprobe=getattr(settings, "vector_ivf_nprobe", 8),
+        )
     return VectorRerankRetriever(chunks)

@@ -2,6 +2,29 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.3.0] - 2026-10-20
+
+检索升级为真 embedding、多实例状态外置、知识库版本化与审批。
+
+### 新增
+
+- **真 embedding 检索**：`src/embeddings.py` 接入 OpenAI 兼容 `/embeddings`（bge 同协议），批请求、429/5xx 退避重试、墙钟上限、维度探测与内容缓存；`RETRIEVAL=embedding` 启用。
+- **向量索引**：`src/vector_store.py` 提供纯 Python / NumPy / FAISS（flat、ivf）三种后端，manifest 记录模型、维度、语料指纹与后端；指纹不匹配自动重建。
+- **索引工具**：`tools/build_index.py` 支持全量重建、后端选择与构建后抽查。
+- **多实例状态**：`src/redis_client.py`（零依赖 RESP2）+ `guards` 的 Redis 限流（Lua 令牌桶）、幂等（SET NX PX）、日 token 预算（INCRBY）；Redis 故障回退本地并暴露健康状态。
+- **集中观测**：`GET /metrics` 输出 Prometheus 指标（请求、延迟直方图、限流、幂等重放、降级、token、版本）；`LOG_SINK=stdout|both` 输出结构化审计 JSON；新增 `deploy/prometheus.yml`、`deploy/fluent-bit.conf` 与多实例说明。
+- **知识库版本库**：`src/kbstore.py` 管理 `data/kb/versions/vNNNN`、`pending` 变更、`state.json` 活动指针；上传先暂存，审批后生成新版本。
+- **审批与文档级回滚**：`GET /api/kb/versions`、`/api/kb/changes`、`/api/kb/doc_history`，`POST /api/kb/approve|reject|rollback_doc`；回滚生成新版本，历史只增不改。
+- **测试**：`test_embeddings`、`test_pipeline_embedding`、`test_redis_guards`、`test_kb_versions`、`test_kb_api_versions`；CI 增加 Redis service 与 NumPy/FAISS 安装。
+
+### 变更
+
+- `/api/health` 增加 `retrieval_detail`（实际模式、索引状态、维度、降级原因）与 `kb`（活动版本、待审批数）。
+- `/api/knowledge` 返回当前版本与待审批数；上传/删除在审批模式下返回 `pending` 与 `change_id`。
+- `MIN_SCORE` 按检索模式给默认值：`embedding=0.38`、`vector/hybrid=0.30`、`bm25=0.5`。
+- 核心仍零第三方依赖；NumPy / FAISS 为可选加速，缺失时退到纯 Python 精确内积。
+- 本地 embedding 端点自动绕过 HTTP 代理，避免 127.0.0.1 被代理转发成 502。
+
 ## [1.2.0] - 2026-10-19
 
 检索升级、动态示例问题与生产防护。

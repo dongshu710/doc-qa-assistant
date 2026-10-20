@@ -6,6 +6,8 @@
 # 运行时产物
 logs/
 dist/
+data/kb/
+data/index/
 tests/report_doc_cases.json
 tests/eval_cases_docs.jsonl
 __pycache__/

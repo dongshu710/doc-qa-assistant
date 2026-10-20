@@ -4,21 +4,27 @@
 - 限流：按客户端 IP 的令牌桶，超限回 429 + Retry-After；
 - 幂等：同一个 Idempotency-Key 在 TTL 内复用首次结果，避免重试造成重复计费；
 - 成本上限：按天累计 token，达到上限后跳过模型调用、降级为抽取式；
-- 审计：管理动作与问答摘要写入 logs/audit.jsonl；
+- 审计：管理动作与问答摘要写入 logs/audit.jsonl（可同时输出 stdout 供采集）；
 - 灰度：按请求 key 稳定分流到 CANARY_MODEL；
 - 回滚：运行配置保留历史快照，可一键恢复上一版。
 
-所有状态都落在 logs/ 下，进程重启后仍可恢复。
+多实例：配置 `REDIS_URL` 后，限流、幂等、成本三类**共享状态**切到 Redis；
+Redis 不可用时自动回退进程内实现（不是放行），并在 `/api/health` 与指标里暴露。
+灰度与回滚是低频管理配置，仍以本地文件为准（多实例需共享卷或改配置中心）。
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import socket
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from .redis_client import RedisClient, RedisError
 
 
 def _now_iso() -> str:
@@ -174,26 +180,260 @@ class CostBudget:
             }
 
 
-class AuditLog:
-    """追加写 JSONL；写失败不阻塞主流程。"""
+class RedisRateLimiter:
+    """Redis 令牌桶：Lua 原子执行，多实例共享同一份令牌。
 
-    def __init__(self, path: str):
+    时间取 Redis 服务端 `TIME`，不依赖各实例本地时钟，避免机器间漂移把
+    「5 rps」算成 3 rps 或 8 rps。Lua 里不做 TIME 调用（非确定性命令后写会
+    触发脚本限制），由客户端先取时间再作为 ARGV 传入，误差 <1ms。
+    """
+
+    backend = "redis"
+    LUA = """
+local key = KEYS[1]
+local rps = tonumber(ARGV[1])
+local burst = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local data = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(data[1])
+local ts = tonumber(data[2])
+if tokens == nil then tokens = burst end
+if ts == nil or now < ts then ts = now end
+tokens = math.min(burst, tokens + (now - ts) * rps)
+local allowed = 0
+local retry = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+else
+  retry = (1 - tokens) / rps
+end
+redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', key, math.ceil((burst / rps) * 1000) + 60000)
+return {allowed, tostring(retry), tostring(math.floor(tokens))}
+"""
+
+    def __init__(self, client: RedisClient, rps: float = 5.0, burst: int = 10,
+                 prefix: str = "rag"):
+        self.client = client
+        self.rps = max(0.1, float(rps))
+        self.burst = max(1, int(burst))
+        self.prefix = prefix
+
+    def allow(self, key: str) -> RateDecision:
+        now = self.client.execute("TIME")
+        ts = float(now[0]) + float(now[1]) / 1_000_000
+        res = self.client.eval(self.LUA, [f"{self.prefix}:rl:{key}"],
+                               [self.rps, self.burst, f"{ts:.6f}"])
+        if not isinstance(res, list) or len(res) < 3:
+            raise RedisError(f"限流脚本返回异常: {res!r}")
+        return RateDecision(allowed=bool(int(res[0])), retry_after=float(res[1]),
+                            remaining=int(float(res[2])))
+
+
+class RedisIdempotencyCache:
+    """Redis 幂等存储：`SET NX PX` 首次写入生效，重启与跨实例都能复用。
+
+    并发窗口：两个实例同时未命中会各算一次，只有先写入的结果被复用。
+    这是「已完成结果复用」，不是严格 exactly-once；要彻底避免重复计费，
+    需要把请求变成异步任务并加分布式锁，成本高于本场景收益。
+    """
+
+    backend = "redis"
+
+    def __init__(self, client: RedisClient, ttl_s: int = 300, prefix: str = "rag"):
+        self.client = client
+        self.ttl_s = max(1, int(ttl_s))
+        self.prefix = prefix
+
+    def _key(self, key: str) -> str:
+        return f"{self.prefix}:idem:{key}"
+
+    def get(self, key: str) -> dict | None:
+        if not key:
+            return None
+        raw = self.client.get(self._key(key))
+        if not raw:
+            return None
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    def put(self, key: str, value: dict) -> None:
+        if not key:
+            return
+        self.client.set(self._key(key), json.dumps(value, ensure_ascii=False),
+                        ttl_s=self.ttl_s, nx=True)
+
+
+class RedisCostBudget:
+    """Redis 日 token 计数：`INCRBY` 原子累加，多实例共用一份预算。
+
+    检查与累加不是同一事务：并发请求可能小幅超限（最多并发数 × 单次 token），
+    这是可接受的成本上界；若要求硬上限，应改成 Lua 里「先查后加再返回」。
+    """
+
+    backend = "redis"
+
+    def __init__(self, client: RedisClient, daily_limit: int = 200_000, prefix: str = "rag"):
+        self.client = client
+        self.daily_limit = max(0, int(daily_limit))
+        self.prefix = prefix
+
+    def _key(self) -> str:
+        return f"{self.prefix}:cost:{_today()}"
+
+    def _used(self) -> int:
+        raw = self.client.get(self._key())
+        try:
+            return max(0, int(raw or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    @property
+    def blocked(self) -> bool:
+        return bool(self.daily_limit and self._used() >= self.daily_limit)
+
+    def add(self, tokens) -> int:
+        try:
+            n = max(0, int(tokens or 0))
+        except (TypeError, ValueError):
+            n = 0
+        if not n:
+            return self._used()
+        used = self.client.incrby(self._key(), n)
+        self.client.expire(self._key(), 172800)
+        return used
+
+    def status(self) -> dict:
+        used = self._used()
+        remaining = max(0, self.daily_limit - used) if self.daily_limit else 0
+        return {
+            "date": _today(),
+            "used": used,
+            "limit": self.daily_limit,
+            "remaining": remaining,
+            "blocked": bool(self.daily_limit and used >= self.daily_limit),
+        }
+
+
+class _FailoverGuard:
+    """Redis 主路径 + 本地兜底；失败后 30s 内不再打 Redis，避免每请求等超时。"""
+
+    def __init__(self, name: str, primary, fallback):
+        self.name = name
+        self.primary = primary
+        self.fallback = fallback
+        self.last_error: str | None = None
+        self.fallback_hits = 0
+        self._retry_at = 0.0
+        self._lock = threading.Lock()
+
+    @property
+    def backend(self) -> str:
+        return getattr(self.primary, "backend", "local") if self.primary else "local"
+
+    def _degrade(self, exc: Exception) -> None:
+        with self._lock:
+            self.last_error = f"{type(exc).__name__}: {exc}"[:300]
+            self._retry_at = time.monotonic() + 30
+            self.fallback_hits += 1
+
+    def call(self, method: str, *args, **kwargs):
+        primary = self.primary
+        if primary is not None and time.monotonic() >= self._retry_at:
+            try:
+                return getattr(primary, method)(*args, **kwargs)
+            except (RedisError, OSError) as exc:
+                self._degrade(exc)
+        return getattr(self.fallback, method)(*args, **kwargs)
+
+
+class RateLimitGuard(_FailoverGuard):
+    def __init__(self, primary, fallback):
+        super().__init__("rate", primary, fallback)
+        self.rps = fallback.rps
+        self.burst = fallback.burst
+
+    def allow(self, key: str) -> RateDecision:
+        return self.call("allow", key)
+
+
+class IdempotencyGuard(_FailoverGuard):
+    def __init__(self, primary, fallback):
+        super().__init__("idempotency", primary, fallback)
+
+    def get(self, key: str):
+        return self.call("get", key)
+
+    def put(self, key: str, value: dict) -> None:
+        self.call("put", key, value)
+
+
+class CostGuard(_FailoverGuard):
+    def __init__(self, primary, fallback):
+        super().__init__("cost", primary, fallback)
+        self.daily_limit = fallback.daily_limit
+
+    @property
+    def blocked(self) -> bool:
+        primary = self.primary
+        if primary is not None and time.monotonic() >= self._retry_at:
+            try:
+                return bool(primary.blocked)
+            except (RedisError, OSError) as exc:
+                self._degrade(exc)
+        return bool(self.fallback.blocked)
+
+    def add(self, tokens) -> int:
+        return int(self.call("add", tokens) or 0)
+
+    def status(self) -> dict:
+        return self.call("status")
+
+
+class AuditLog:
+    """追加写 JSONL；可选同时输出 stdout，供 Fluent Bit / Vector 采集。
+
+    写失败不阻塞主流程，但会置 `last_error`，健康检查里可见——静默丢审计
+    日志和没有审计日志一样危险。
+    """
+
+    def __init__(self, path: str, sink: str = "file", service: str = "doc-qa",
+                 instance: str = ""):
         self.path = path
+        self.sink = (sink or "file").strip().lower()
+        self.service = service
+        self.instance = instance or f"{socket.gethostname()}:{os.getpid()}"
+        self.last_error: str | None = None
         self._lock = threading.Lock()
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
     def write(self, action: str, **fields) -> None:
-        record = {"ts": _now_iso(), "action": action}
+        record = {"ts": _now_iso(), "event": "audit", "service": self.service,
+                  "instance": self.instance, "action": action}
         for key, value in fields.items():
             if isinstance(value, (str, int, float, bool)) or value is None:
                 record[key] = value[:500] if isinstance(value, str) else value
             else:
                 record[key] = str(value)[:500]
+        line = json.dumps(record, ensure_ascii=False)
+        if self.sink in ("stdout", "both"):
+            try:
+                with self._lock:
+                    sys.stdout.write(line + "\n")
+                    sys.stdout.flush()
+            except OSError as exc:
+                self.last_error = str(exc)
+        if self.sink in ("stdout",):
+            return
         try:
             with self._lock, open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+                f.write(line + "\n")
+        except OSError as exc:
+            self.last_error = str(exc)
 
     def tail(self, limit: int = 20) -> list[dict]:
         rows: list[dict] = []
@@ -309,13 +549,71 @@ class RuntimeConfig:
 
 class Guards:
     def __init__(self, settings, log_dir: str):
-        self.rate = RateLimiter(settings.rate_limit_rps, settings.rate_limit_burst)
-        self.idem = IdempotencyCache(settings.idempotency_ttl_s)
-        self.cost = CostBudget(settings.daily_token_budget, os.path.join(log_dir, "cost.json"))
-        self.audit = AuditLog(os.path.join(log_dir, "audit.jsonl"))
+        self.redis: RedisClient | None = None
+        self.redis_error: str | None = None
+        redis_url = getattr(settings, "redis_url", "") or ""
+        if redis_url:
+            client = None
+            try:
+                client = RedisClient(redis_url, getattr(settings, "redis_timeout_s", 1.5))
+                client.execute("PING")
+                self.redis = client
+            except RedisError as exc:
+                self.redis_error = f"{type(exc).__name__}: {exc}"[:300]
+                if client:
+                    client.close()
+
+        prefix = getattr(settings, "redis_prefix", "rag")
+        local_rate = RateLimiter(settings.rate_limit_rps, settings.rate_limit_burst)
+        local_idem = IdempotencyCache(settings.idempotency_ttl_s)
+        local_cost = CostBudget(settings.daily_token_budget, os.path.join(log_dir, "cost.json"))
+
+        self.rate = RateLimitGuard(
+            RedisRateLimiter(self.redis, local_rate.rps, local_rate.burst, prefix)
+            if self.redis else None,
+            local_rate,
+        )
+        self.idem = IdempotencyGuard(
+            RedisIdempotencyCache(self.redis, settings.idempotency_ttl_s, prefix)
+            if self.redis else None,
+            local_idem,
+        )
+        self.cost = CostGuard(
+            RedisCostBudget(self.redis, settings.daily_token_budget, prefix)
+            if self.redis else None,
+            local_cost,
+        )
+        self.audit = AuditLog(os.path.join(log_dir, "audit.jsonl"),
+                              sink=getattr(settings, "log_sink", "file"))
         self.runtime = RuntimeConfig(os.path.join(log_dir, "runtime.json"),
                                      settings.canary_percent, settings.canary_model)
 
+    @property
+    def backend(self) -> str:
+        return "redis" if self.redis else "local"
+
     def status(self) -> dict:
-        return {"rate_limit_rps": self.rate.rps, "rate_limit_burst": self.rate.burst,
-                "budget": self.cost.status(), "canary": self.runtime.status()}
+        return {
+            "backend": self.backend,
+            "redis_ok": bool(self.redis),
+            "redis_error": self.redis_error,
+            "fallbacks": {
+                "rate": self.rate.fallback_hits,
+                "idempotency": self.idem.fallback_hits,
+                "cost": self.cost.fallback_hits,
+            },
+            "last_errors": {
+                "rate": self.rate.last_error,
+                "idempotency": self.idem.last_error,
+                "cost": self.cost.last_error,
+                "audit": self.audit.last_error,
+            },
+            "rate_limit_rps": self.rate.rps,
+            "rate_limit_burst": self.rate.burst,
+            "budget": self.cost.status(),
+            "canary": self.runtime.status(),
+        }
+
+    def close(self) -> None:
+        if self.redis:
+            self.redis.close()

@@ -33,9 +33,14 @@ flowchart LR
   E --> C
   C --> O[答案 + 引用 + trace]
   O --> T[(logs/trace.jsonl)]
+  O --> PM[/metrics<br/>Prometheus/]
   T --> D[评测看板 / 汇报页]
-  K[(data/knowledge<br/>md / txt)] --> R
-  U[上传 PDF / DOCX] --> X[纯标准库解析] --> K
+  K[(data/kb/versions/<v>/files<br/>md / txt)] --> R
+  K -.-> IX[(embedding 索引<br/>manifest: model/dim/fingerprint)]
+  IX -.-> R
+  U[上传 PDF / DOCX] --> X[纯标准库解析] --> CH[待审批变更<br/>pending/chg_*]
+  CH -->|审批| K
+  S --> RD[(Redis<br/>限流 / 幂等 / 成本)]
 ```
 
 ## 3. 请求时序
@@ -76,9 +81,14 @@ sequenceDiagram
 |---|---|---|---|
 | 配置 | `src/config.py` | 通道、超时、重试、阈值、profile | 缺失 Key → 离线模式；非法通道 → 回退默认 |
 | 切分 | `src/chunking.py` | 标题/条款感知切块，中文二元组检索单元 | 目录不存在 → 启动失败并明确报错 |
-| 检索 | `src/retriever.py` | 向量召回 + 多信号重排（默认）；BM25 / Hybrid 对照 | 异常 → 不检索并标 `degraded` |
+| 检索 | `src/retriever.py` | embedding 召回 + 多信号重排；n-gram / BM25 兜底 | embedding 失败 → 当次回退词法检索并标 `degraded` |
+| embedding | `src/embeddings.py` | OpenAI 兼容 `/embeddings`；批请求、超时、重试、维度探测、内容缓存 | 抛 `EmbeddingError`，由检索层降级 |
+| 向量索引 | `src/vector_store.py` | 纯 Python / NumPy / FAISS；manifest 记录模型、维度、语料指纹 | 指纹不匹配自动重建；维度不一致报错 |
+| 知识库版本 | `src/kbstore.py` | 版本目录、审批流、按文档回滚 | 版本只增不改；激活原子替换 |
+| Redis 客户端 | `src/redis_client.py` | RESP2；GET/SET NX PX/INCRBY/EVAL；超时与重连 | 抛 `RedisError`，guard 回退本地 |
 | 示例问题 | `src/suggest.py` | 按文档章节生成示例问题与相似问题 | 无候选 → 回退文档级问题 |
-| 生产防护 | `src/guards.py` | 限流、幂等、成本上限、审计、灰度、回滚 | 状态落盘 `logs/`，失败不阻塞主流程 |
+| 生产防护 | `src/guards.py` | 限流、幂等、成本上限、审计、灰度、回滚；本地 / Redis 双后端 | 本地状态落盘 `logs/`；Redis 失败回退并暴露 |
+| 指标导出 | `src/metrics_exporter.py` | Prometheus 文本格式：请求、延迟、降级、token | 采集失败不影响业务 |
 | 查询扩展 | `src/query.py` | 用语料词表扩展问题，提升召回 | 失败自动回退原问题（重试一次） |
 | 生成 | `src/generator.py` | LLM 调用、抽取式兜底、引用修复 | 超时/429 → 退避重试；最终降级 |
 | 编排 | `src/pipeline.py` | 校验、闸门、生成、引用、trace | 任一步失败都有明确行为（见下表） |
@@ -94,8 +104,12 @@ sequenceDiagram
 |---|---|---|---|
 | 输入 | 空 / 超长（>500 字） | `ask_clarify` | 提示补充或缩短问题 |
 | 输入 | 提示注入 / 越权 / 荐股 | `refuse` | 明确拒绝，不进检索 |
-| 检索 | 最高分 < 0.30 | `no_answer` | 提示未找到，并展示相似问题 / 工单入口 |
+| 检索 | 最高分 < 0.30（embedding 默认 0.38） | `no_answer` | 提示未找到，并展示相似问题 / 工单入口 |
 | 检索 | 检索器异常 | 空结果 + `degraded=true` | 转人工，不硬答 |
+| embedding | 超时 / 429 / 维度不一致 | 当次回退 BM25 重排，标 `embedding_error` | 有答案但标注降级 |
+| 索引 | manifest 指纹不匹配 | 启动/首次查询时重建 | 首次查询延迟增加 |
+| Redis | 连接失败 / 超时 | 回退进程内限流/幂等/成本，30s 后重试 | 服务可用；多实例状态短暂不一致 |
+| 审批 | 基线版本已过期 | 拒绝审批，提示重新提交 | `409` + 明确原因 |
 | LLM | 超时（30s）/ 429 | 指数退避重试 3 次，尊重 `Retry-After` | 延迟增加，最终可能降级 |
 | LLM | 未配置 Key | 抽取式回答 | 标注「离线抽取模式」 |
 | LLM | 重试耗尽 | 抽取式降级 | `mode=extractive_fallback` |
@@ -110,10 +124,11 @@ sequenceDiagram
 
 1. **换领域**：`APP_PROFILE=generic` 去掉金融合规护栏；或新增 profile（提示词 + 拒答规则）。
 2. **换语料**：把文档放进 `data/knowledge/`，或在看板拖拽上传；上传后自动重建索引。
-3. **换检索**：`RETRIEVAL=vector|bm25|hybrid`；`build_retriever` 是唯一工厂，替换为真 embedding 向量库不影响上层。
+3. **换检索**：`RETRIEVAL=embedding|vector|bm25|hybrid`；`build_retriever` 是唯一工厂。embedding 端点换模型只改环境变量，索引按 manifest 自动重建。
 4. **换通道**：任何 OpenAI 兼容网关，改 `base_url` / `model` / Key 环境变量即可。
-5. **灰度与回滚**：`POST /api/admin/config` 调整 `canary_percent` / `canary_model`，`POST /api/admin/rollback` 恢复上一版。
-6. **升级为 Agent**：在 `pipeline.py` 的生成层外挂有界工具调用循环，保留现有闸门与引用校验作为最终出口。
+5. **多实例**：`REDIS_URL` 共享限流/幂等/成本；`/metrics` 交给 Prometheus；审计 `LOG_SINK=stdout` 交给 Fluent Bit。
+6. **灰度与回滚**：`POST /api/admin/config` 调整 `canary_percent` / `canary_model`，`POST /api/admin/rollback` 恢复上一版；知识库用 `POST /api/kb/rollback_doc` 按文档回退。
+7. **升级为 Agent**：在 `pipeline.py` 的生成层外挂有界工具调用循环，保留现有闸门与引用校验作为最终出口。
 
 ## 7. 不在范围内
 

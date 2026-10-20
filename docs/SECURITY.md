@@ -38,27 +38,34 @@
 |---|---|
 | 限流 | 按客户端 IP 令牌桶，默认 5 rps / burst 10；超限 429 + `Retry-After` |
 | 幂等 | `Idempotency-Key` 在 TTL 内复用首次结果，避免重试重复计费 |
-| 审计 | 问答摘要、上传/删除、用例运行、灰度变更写入 `logs/audit.jsonl` |
+| 审计 | 问答摘要、上传/删除、审批/回滚、用例运行、灰度变更写入 `logs/audit.jsonl`；`LOG_SINK=stdout` 可输出 JSON 供集中采集 |
+| 多实例状态 | 配置 `REDIS_URL` 后限流/幂等/成本跨实例共享；连接支持密码，失败回退本地 |
+| 知识库审批 | `KB_APPROVAL=on` 时上传只进 `pending/`，管理员审批后才成为活动版本；审批/回滚需 admin |
 | 成本上限 | 每日 token 预算，超限跳过模型调用并标记 `budget_exceeded` |
 | 灰度 | 按 `IP + query` 哈希稳定分流到灰度模型，比例可运行时调整 |
 | 回滚 | 运行配置保留历史快照，`POST /api/admin/rollback` 恢复上一版 |
-| 管理接口 | 设置 `ADMIN_TOKEN` 后需 `X-Admin-Token`；未设置时仅本机可调用 |
+| 管理接口 | 设置 `ADMIN_TOKEN` 后需 `X-Admin-Token`；未设置时仅本机可调用（含审批/回滚） |
 
 ## 已知缺口
 
 1. **业务接口无鉴权**：`/api/ask` 与上传接口未做用户认证，依赖部署侧网关；`ADMIN_TOKEN` 只保护管理接口。
-2. **单实例状态**：限流与幂等缓存位于进程内，多实例部署需换成 Redis 或网关层实现。
+2. **Redis 自身的安全**：连接支持密码，但没有内置 TLS 校验与 ACL 管理；`REDIS_URL` 必须只在内网可达，禁止裸奔到公网。Redis 失联时会回退进程内状态，此时多实例限流不再一致。
 3. **trace 与审计会记录用户问题原文**：`logs/trace.jsonl`、`logs/audit.jsonl` 用于评测与排查。接入真实业务前需要脱敏（手机号、身份证、卡号）并设置保留期。
 4. **上传解析在进程内完成**：没有沙箱与杀毒扫描。只接受文本型 PDF/DOCX；不要接受来源不明的文件。
+5. **embedding 会把文档与问题发到模型端点**：若用外部 API，等于把知识库内容出网；敏感语料应部署内网 bge（TEI/Xinference），并在 `EMBEDDING_BASE_URL` 里指向内网地址。`EMBEDDING_API_KEY` 与 LLM Key 同等对待，不写日志。
+6. **审批锁是本机文件锁**：多实例下审批应由单实例处理，或改用 Redis 分布式锁；否则两个实例同时审批可能各自生成版本（`state.json` 的 `os.replace` 保证不会写坏，但后写者覆盖先写者）。
 5. **提示注入只能降低概率**：规则拦截覆盖常见句式，不保证 100%。模型输出仍应视为不可信内容。
 6. **模型输出可能出错**：引用校验能降低「无出处」的比例，但不能保证事实一定正确；关键业务需人工复核。
 7. **无 OCR**：扫描件 PDF 会被拒绝，而不是给出空答案。
 8. **无多租户隔离**：所有请求共享同一知识库与索引。
+9. **审计只保证本机落盘**：stdout 采集链路（Fluent Bit → Loki/ES）的丢失、篡改与保留期由日志平台负责；应用侧没有 WORM 存储。
 
 ## 部署建议
 
 - 只在本机或内网使用；如需公网访问，放在反向代理后面并加认证与 HTTPS。
-- 设置 `ADMIN_TOKEN`，并限制 `/api/admin/*` 的来源 IP。
+- 设置 `ADMIN_TOKEN`，并限制 `/api/admin/*`、`/api/kb/approve|reject|rollback_doc` 的来源 IP。
+- Redis 只监听内网，启用 `requirepass` / ACL，禁止公网暴露；`REDIS_TIMEOUT_S` 控制在 1~2s，避免故障时拖垮请求。
+- 用内网 embedding 端点处理敏感语料；外部 API 场景先在数据合规侧确认出网范围。
 - 设置 `LLM_TIMEOUT_S`、`LLM_MAX_RETRIES`、`WALL_CLOCK_BUDGET_S`、`DAILY_TOKEN_BUDGET`，避免单请求长时间占用与成本失控。
 - 定期清理 `logs/`，不要把 trace 提交到仓库。
 - 不要把 `.env`、`logs/`、`dist/` 打进公开镜像或压缩包（本项目 `.gitignore` 已处理）。

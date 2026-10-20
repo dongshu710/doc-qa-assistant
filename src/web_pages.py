@@ -641,6 +641,7 @@ KB_BODY = """
       <p class="sub">上传什么文档，就回答什么内容。</p>
     </div>
     <div class="actions">
+      <span class="pill" id="kbVersion">—</span>
       <span class="pill" id="kbMeta">加载中…</span>
       <button class="btn ghost sm" id="reload" type="button">重建索引</button>
       <a class="btn sm" href="/ask">去提问 <span aria-hidden="true">→</span></a>
@@ -664,7 +665,7 @@ KB_BODY = """
 
       <section class="card tips">
         <div class="side-title">说明</div>
-        <div><i></i><span>上传后立即切分并重建索引，无需重启。</span></div>
+        <div><i></i><span>审批通过后切分并重建索引；本机管理员直通时立即生效。</span></div>
         <div><i></i><span>PDF / Word 由服务端转成 Markdown；扫描件需先 OCR。</span></div>
         <div><i></i><span>删除文档后，对应文档用例会在下次运行时自动跳过。</span></div>
       </section>
@@ -738,7 +739,8 @@ function visibleFiles(){
 
 function render(){
   var total=(KB.files||[]).length, chunks=KB.total_chunks||0;
-  $('kbMeta').textContent=total+' 份 · '+chunks+' 块';
+  $('kbMeta').textContent=total+' 份 · '+chunks+' 块'+(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
+  $('kbVersion').textContent=KB.version?('版本 '+KB.version):'单目录模式';
   var list=visibleFiles();
   $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
   $('kbHint').textContent=total?('合计 '+chunks+' 个知识块'):'';
@@ -793,19 +795,24 @@ async function uploadFiles(files){
   var arr=[].slice.call(files||[]);
   if(!arr.length||BUSY) return;
   BUSY=true;
-  var ok=0, fail=0, added=0, firstErr='';
+  var ok=0, fail=0, added=0, pend=0, firstErr='';
   for(var i=0;i<arr.length;i++){
     setMsg('上传中 '+(i+1)+'/'+arr.length+'：'+arr[i].name);
     try{
       var r=await uploadOne(arr[i]);
-      if(r&&r.ok){ ok++; added+=r.added_chunks||0; }
+      if(r&&r.ok){ ok++; added+=r.added_chunks||0; if(r.pending) pend++; }
       else{ fail++; if(!firstErr) firstErr=(r&&r.error)||'未知错误'; }
     }catch(e){ fail++; if(!firstErr) firstErr=e.message||String(e); }
   }
   BUSY=false;
   if(ok){
-    setMsg('已入库 '+ok+' 份'+(fail?('，失败 '+fail+' 份（'+firstErr+'）'):'')+'，新增 '+added+' 块', fail?'':'ok');
-    toast('已入库 '+ok+' 份，新增 '+added+' 块');
+    if(pend){
+      setMsg('已提交 '+pend+' 份待审批'+(fail?('，失败 '+fail+' 份（'+firstErr+'）'):'')+'；审批通过后才会进入检索', fail?'':'ok');
+      toast('已提交 '+pend+' 份，等待审批');
+    }else{
+      setMsg('已入库 '+ok+' 份'+(fail?('，失败 '+fail+' 份（'+firstErr+'）'):'')+'，新增 '+added+' 块', fail?'':'ok');
+      toast('已入库 '+ok+' 份，新增 '+added+' 块');
+    }
     await loadKb();
   }else{
     setMsg('上传失败：'+firstErr,'err');

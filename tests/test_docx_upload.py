@@ -90,7 +90,7 @@ def main() -> int:
     print(f"[1] DOCX 解析：{meta['paragraphs']} 段 / {meta['headings']} 个标题 / {meta['tables']} 张表")
 
     saved = _force_offline()
-    httpd, _pipe = create_server(HOST, 0)
+    httpd, _pipe = create_server(HOST, 0, str(ROOT / "data" / "knowledge"))
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     kb_dir = ROOT / "data" / "knowledge"
