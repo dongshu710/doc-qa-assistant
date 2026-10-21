@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--questions", nargs="*", default=[
         "我爱吃什么", "我不吃什么", "我有什么忌口", "我几点起床",
         "我养了什么宠物", "我有什么爱好", "今天天气怎么样",
+        "我不爱吃香菜", "我不喜欢的运动是什么", "我为什么不能吃香菜",
     ])
     args = parser.parse_args()
 
@@ -48,10 +49,16 @@ def main() -> int:
 
     hit = 0
     for question in args.questions:
+        report = pipe.keywords.match_report(question)
         result = pipe.ask(question)
         local = result.get("path") == "keyword"
         hit += 1 if local else 0
         print(f"Q: {question}")
+        if report.gate:
+            print(f"   闸门=解释型问法（交检索生成）")
+        elif report.rejected:
+            why = "、".join(f"{r['term']}({r['reason']})" for r in report.rejected[:4])
+            print(f"   规则挡下={why}")
         print(f"   路径={'本地关键词' if local else '检索生成'} · 模式={result.get('mode')} · "
               f"调用API={'是' if result.get('api_called') else '否'} · {result.get('latency_ms')} ms")
         print("   " + result["answer"].replace("\n", "\n   "))

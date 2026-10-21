@@ -164,35 +164,44 @@ class RAGPipeline:
         # ---------- 关键词直出（本地，不调用任何 API）----------
         # 放在检索之前：命中即答，省掉 embedding 与生成两次调用，也避免模型改写引入偏差。
         # 只对结构化条目生效（清单/表格/标签/显式关键词），标题与普通词不在此列。
+        # 命中后还要过极性/否定、解释型意图、单文档三道闸门；被挡下的原因写入 trace。
         if self.settings.keyword_mode != "off" and not force_extractive:
             try:
-                kw_hits = self.keywords.match(clean)
+                report = self.keywords.match_report(clean)
             except Exception as exc:  # noqa: BLE001 —— 关键词匹配失败就退回正常检索
-                kw_hits = []
+                report = None
                 result["keyword_error"] = f"{type(exc).__name__}: {exc}"[:200]
-            if kw_hits:
-                citations, retrieved = [], []
-                for i, hit in enumerate(kw_hits, 1):
-                    chunk = self.keywords.chunks[hit.entry.chunk_index]
-                    citations.append({"ref": i, "title": chunk.title, "section": chunk.section})
-                    retrieved.append({"title": chunk.title, "section": chunk.section,
-                                      "score": round(hit.score, 3)})
-                result.update(
-                    behavior="answer",
-                    mode="keyword_local",
-                    path="keyword",
-                    api_called=False,
-                    answer=KeywordIndex.compose(kw_hits),
-                    citations=citations,
-                    retrieved=retrieved,
-                    retrieval_score=round(kw_hits[0].score, 4),
-                    gate_score=round(kw_hits[0].score, 4),
-                    citation_coverage=1.0,
-                    keyword_terms=list(dict.fromkeys(h.entry.term for h in kw_hits)),
-                    keyword_docs=list(dict.fromkeys(h.entry.doc_id for h in kw_hits)),
-                    keyword_kinds=list(dict.fromkeys(h.entry.kind for h in kw_hits)),
-                )
-                return self._finish(result, t0)
+            if report is not None:
+                if report.gate:
+                    result["keyword_gate"] = report.gate
+                if report.rejected:
+                    result["keyword_rejected"] = report.rejected
+                # 同一条原文只算一次：引用编号必须与答案里的 [n] 一致
+                kw_hits = KeywordIndex.merge(report.hits)
+                if kw_hits:
+                    citations, retrieved = [], []
+                    for i, hit in enumerate(kw_hits, 1):
+                        chunk = self.keywords.chunks[hit.entry.chunk_index]
+                        citations.append({"ref": i, "title": chunk.title, "section": chunk.section})
+                        retrieved.append({"title": chunk.title, "section": chunk.section,
+                                          "score": round(hit.score, 3)})
+                    result.update(
+                        behavior="answer",
+                        mode="keyword_local",
+                        path="keyword",
+                        api_called=False,
+                        answer=KeywordIndex.compose(kw_hits),
+                        citations=citations,
+                        retrieved=retrieved,
+                        retrieval_score=round(kw_hits[0].score, 4),
+                        gate_score=round(kw_hits[0].score, 4),
+                        citation_coverage=1.0,
+                        keyword_terms=list(dict.fromkeys(h.entry.term for h in kw_hits)),
+                        keyword_docs=list(dict.fromkeys(h.entry.doc_id for h in kw_hits)),
+                        keyword_kinds=list(dict.fromkeys(h.entry.kind for h in kw_hits)),
+                        keyword_polarity=list(dict.fromkeys(h.entry.polarity for h in kw_hits)),
+                    )
+                    return self._finish(result, t0)
 
         # ---------- 检索 ----------
         # 查询扩展只作用于检索；给模型的仍然是用户原问题（避免改写引入偏差）

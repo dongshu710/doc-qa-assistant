@@ -72,6 +72,8 @@ class Settings:
     keyword_index: str = "data/index/keywords.json"
     keyword_top_n: int = 3
     keyword_llm_max_chars: int = 2400
+    keyword_guard: str = "on"          # on | off：极性/否定、解释型意图、单文档收敛
+    keyword_multi_doc: str = "off"     # off=一次直出只取一份文档
     # LLM：超时与重试必须显式，禁止依赖默认值
     llm_timeout_s: float = 30.0
     llm_max_retries: int = 3
@@ -134,6 +136,8 @@ def load_settings() -> Settings:
         keyword_index=_first_env("KEYWORD_INDEX", default="data/index/keywords.json"),
         keyword_top_n=max(1, min(8, int(_first_env("KEYWORD_TOP_N", default="3")))),
         keyword_llm_max_chars=int(_first_env("KEYWORD_LLM_MAX_CHARS", default="2400")),
+        keyword_guard="off" if (_first_env("KEYWORD_GUARD", default="on") or "on").lower() == "off" else "on",
+        keyword_multi_doc="on" if (_first_env("KEYWORD_MULTI_DOC", default="off") or "off").lower() == "on" else "off",
         llm_timeout_s=float(_first_env("LLM_TIMEOUT_S", default="30")),
         llm_max_retries=int(_first_env("LLM_MAX_RETRIES", default="3")),
         wall_clock_budget_s=float(_first_env("WALL_CLOCK_BUDGET_S", default="60")),

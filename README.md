@@ -157,6 +157,9 @@ doc-qa-assistant/
 │  ├─ test_pipeline_embedding.py # embedding 检索链路与故障降级
 │  ├─ test_keywords.py         # 关键词抽取/命中/API 增强/零调用验证
 │  ├─ test_keyword_api.py      # 关键词 HTTP 接口与命中路径
+│  ├─ test_keyword_precision.py # 否定/极性/意图/单文档/索引一致性
+│  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
+│  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
 │  ├─ fixtures/                # 上传测试用 PDF / DOCX（可复现生成）
 │  └─ baseline.json            # 离线基线（26/26）
@@ -175,7 +178,7 @@ doc-qa-assistant/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.4.0.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-*.zip`（版本号以 Releases 页为准，同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -236,6 +239,8 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `KEYWORD_TOP_N` | `3` | 单次直出最多几条条目 |
 | `KEYWORD_INDEX` | `data/index/keywords.json` | 关键词与整理结果缓存路径 |
 | `KEYWORD_LLM_MAX_CHARS` | `2400` | 单份文档送去整理的字符上限 |
+| `KEYWORD_GUARD` | `on` | 极性/否定、解释型意图、单文档收敛三道闸门；`off` 回到 1.4.0 行为，用于 A/B |
+| `KEYWORD_MULTI_DOC` | `off` | `on` 允许一次直出跨多份文档（默认收敛到一份） |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
 | `WALL_CLOCK_BUDGET_S` | `60` | 重试总墙钟上限 |
@@ -601,7 +606,7 @@ curl -s -X POST localhost:8000/api/kb/rollback_doc \
 答案就是原文里的某一行，走检索 + 生成只会更慢、更贵，还可能被改写。
 
 **场景**：小a 上传 `小a的生活习惯.md`，里面有爱吃/不吃/忌口/作息/爱好/宠物。
-系统抽出 40 个条目；问「我不吃香菜」命中「香菜」，直接返回原文那一行与出处，
+系统抽出 42 个条目；问「我不吃香菜」命中「香菜」，直接返回原文那一行与出处，
 **0 次 API 调用**；问「今天天气怎么样」不命中，回退到正常检索。
 
 ```text
@@ -624,6 +629,27 @@ Q: 我不吃香菜
 
 只认**精确包含**（词或同义词），不做模糊近似：关键词直出的错误代价比「多走一次 RAG」高得多。
 因此制度类文档的常规问题不会被截胡——`test_keywords.py` 里有专门的回归用例守着这条线。
+个人偏好类条目的核心词（「喜欢的音乐」→「音乐」）只在第一人称提问时生效，
+「明天天气」不会因为文档里有「讨厌的天气」被截胡。
+
+### 命中之后的三道闸门
+
+命中不等于直出。下面三道闸门（`KEYWORD_GUARD=on`，可关掉做 A/B）在 v1.5.0 加入，
+对应的是实测翻车现场，不是纸面规则：
+
+| 闸门 | 触发例子 | 处理 | 记录 |
+|---|---|---|---|
+| 否定作用域 | 「我**不**爱吃香菜」里的「爱吃」 | 该次出现不算命中 | `negated` |
+| 极性冲突 | 「爱吃的食物」与「不吃的食物」同时命中 | 按问句极性只留一侧 | `polarity_conflict` |
+| 解释型意图 | 「我**为什么**不能吃香菜」 | 整条交检索生成 | `keyword_gate=explain_intent` |
+| 单文档收敛 | 命中跨两份文档 | 只取得分最高的那份 | `other_doc` |
+
+被挡下的词写入响应的 `keyword_rejected`，并计入
+`rag_keyword_rejected_total{reason}` 与 `rag_keyword_gate_total{gate}`——
+规则是在救火还是误伤，看指标，不靠感觉。
+
+`tests/eval_keyword.py` 是这套规则的标尺：13 条应直出用例全部命中，9 条不应直出用例 0 误伤，
+其中 2 条被解释型闸门主动挡下（而不是碰巧不命中）。
 
 ### 接了 API 之后：只增强，不替换
 
@@ -656,6 +682,8 @@ Q: 我不吃香菜
 ```bash
 python tools/keyword_demo.py                  # 小a 场景：抽取 → 命中 → 本地输出
 python tools/keyword_demo.py --show-entries   # 打印每条关键词及原文片段
+python tests/eval_keyword.py                  # 标注集：应直出 / 不应直出
+python tests/bench_keyword.py                 # 倒排索引 vs 线性扫描
 ```
 
 页面上的入口：知识库页「关键词」列（点击展开词表）；问答页命中时显示「本地直出 · 未调用模型」。
@@ -664,6 +692,10 @@ python tools/keyword_demo.py --show-entries   # 打印每条关键词及原文�
 
 - 同义词只解决**词面差异**，不解决跨段推理；需要比较、计算、归纳的问题仍走 RAG。
 - 清单里的单字项（如「辣」）只在白名单内接受，避免「的/了」这类字误触发。
+- 否定只处理命中位置前 3 个字的简单否定；双重否定、反问、跨句否定仍可能判错，
+  这类问法建议用 `KEYWORD_GUARD=off` 对照一轮再决定是否放行。
+- 极性规则依赖「喜欢/不喜欢/忌口」这类词面前缀；文档若用「谢绝」「不宜」等未收录说法，
+  条目会退化为中性，不会被误挡，但也享受不到极性消解。
 - 关键词索引按文档 hash 全量重算条目（本地抽取很便宜）；模型整理只对新增/变更文档调用一次。
 - 没有 API Key 时只有本地条目，没有摘要和同义词；这是可用性差异，不是静默降级。
 

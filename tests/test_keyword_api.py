@@ -72,6 +72,17 @@ def main() -> None:
         assert headers.get("X-Answer-Path") == "keyword", headers
         assert "不吃的食物" in result["answer"], result["answer"]
 
+        # 否定作用域：被挡下的「爱吃」不能出现在答案里，且原因要能透传
+        status, negated, _ = post("/api/ask", {"query": "我不爱吃香菜"})
+        assert status == 200 and negated["path"] == "keyword", negated
+        assert "爱吃的食物" not in negated["answer"], negated["answer"]
+        assert any(r["reason"] == "negated" for r in negated.get("keyword_rejected") or []), negated
+
+        with urllib.request.urlopen(base + "/metrics", timeout=10) as resp:
+            text = resp.read().decode("utf-8")
+        assert "rag_keyword_hit_total" in text, text[-800:]
+        assert 'rag_keyword_rejected_total{reason="negated"}' in text, text[-800:]
+
         status, rebuilt, _ = post("/api/keywords/rebuild", {})
         assert status == 200 and rebuilt["ok"], rebuilt
         assert rebuilt["summary"]["docs"] == 1, rebuilt

@@ -16,6 +16,14 @@
 直出只对**结构化条目**（清单项、表格项、标签值、显式关键词、模型补的词）生效；
 章节标题与 TF-IDF 词只用于展示与召回提示，不单独触发直出——否则「风险等级」这类
 通用词会把制度类问题全部截胡。
+
+命中之后还有三道闸门（`KEYWORD_GUARD=on` 时生效，可整体关闭做 A/B）：
+
+1. **极性/否定**：条目分正（爱吃/喜欢）、负（不吃/不喜欢/忌口）、中性。
+   「我不爱吃香菜」里的「爱吃」处于否定作用域内，不能再拿「爱吃的食物」去答；
+   同一族条目（去掉极性的核心词相同）正负并存时，按问句极性只留一侧。
+2. **意图**：为什么/怎么/区别/流程这类问法要的是解释，条目罗列答不了，交给检索生成。
+3. **单文档**：一次直出只取得分最高的那份文档，避免把不同文档的片段拼成一段答案。
 """
 from __future__ import annotations
 
@@ -28,10 +36,11 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from .config import api_key, load_settings
 
-BUILDER_VERSION = 2
+BUILDER_VERSION = 3
 
 _BULLET = re.compile(r"^\s*(?:[-*·•—]|\d{1,2}[.、)]|[（(]\d{1,2}[)）])\s*")
 _COLON = re.compile(r"^([^：:]{1,14})[：:]\s*(.+)$")
@@ -55,6 +64,36 @@ _SINGLE_OK = set("辣甜酸苦咸冷热荤素酒茶糖盐油肉鱼蛋奶")
 _NOISE = re.compile(r"^[\d\W_]+$")
 # 表格表头不是内容，别把「项目：内容」当成条目
 _TABLE_HEAD = {"项目", "名称", "内容", "说明", "序号", "类别", "备注", "字段", "取值", "条件", "标准"}
+
+# ---------- 极性：条目本身是「喜欢」还是「不喜欢」 ----------
+# 长标记在前，避免「不喜欢」被「不」抢先匹配后剩一个字的残核
+_NEG_MARKERS = (
+    "不喜欢", "不爱吃", "不爱喝", "不擅长", "不吃", "不喝", "不去", "不爱",
+    "忌口", "禁忌", "禁止", "不得", "不宜", "不能", "不可", "避免", "讨厌", "拒绝",
+    "无需", "不用", "不", "没", "无", "非",
+)
+_POS_MARKERS = ("喜欢", "爱吃", "爱喝", "爱去", "偏爱", "擅长", "推荐", "适合")
+# 问句里的否定线索：出现任意一个就认为问的是「负向」那一侧
+_Q_NEG = re.compile(r"不|没|别|勿|忌|讨厌|避免|拒绝|无需|不用")
+_Q_POS = re.compile(r"喜欢|爱吃|爱喝|偏爱|爱去")
+# 否定作用域：命中位置前 3 个字内出现否定词，视为该次出现被否定
+_NEG_WINDOW = re.compile(r"[不没别勿忌]|讨厌|避免|拒绝")
+
+# 解释型问法：要的是原因/做法/差异，条目罗列答不了
+_EXPLAIN = re.compile(r"为什么|为何|原因|理由|怎么|怎样|如何|区别|差异|对比|流程|步骤")
+# 个人偏好类条目的核心词只在第一人称提问时生效：「我喜欢什么音乐」可以，
+# 「明天天气」不能因为文档里有一条「讨厌的天气」就被当成在问自己
+_FIRST_PERSON = re.compile(r"我|本人|自己|咱")
+# 这些核心词太泛，不能当别名，否则「时间」「内容」会把同类条目全部拉出来
+_GENERIC_CORE = {"食物", "东西", "饮品", "口味", "偏好", "习惯", "情况",
+                 "时间", "内容", "清单", "列表", "地方"}
+
+# 纯度量短语不是实体：「每次 1 小时」「每天 200 元」这类切出来的碎片
+_MEASURE = re.compile(
+    r"^(?:每次|每天|每周|每月|每年|一般|通常|大约|平均|左右)?\s*"
+    r"\d+(?:\.\d+)?\s*(?:小时|分钟|次|天|周|个月|年|元|万元|万|%|杯|公里|米)?$"
+)
+_MEASURE_PREFIX = re.compile(r"^(?:每次|每天|每周|每月|每年|平均).{0,3}\d")
 
 
 def _norm(text: str) -> str:
@@ -98,16 +137,25 @@ class Entry:
     weight: float
     aliases: list[str] = field(default_factory=list)
     chunk_index: int = -1
+    self_alias: bool = False   # aliases 中是否含「只在第一人称提问时生效」的核心词
 
     def keys(self) -> list[str]:
         out = [_norm(self.term)] + [_norm(a) for a in self.aliases]
-        return [k for k in out if k]
+        return list(dict.fromkeys(k for k in out if k))
+
+    @property
+    def polarity(self) -> int:
+        return _polarity(self.term)[0]
+
+    @property
+    def core(self) -> str:
+        return _norm(_polarity(self.term)[1])
 
     def to_json(self) -> dict:
         return {
             "term": self.term, "kind": self.kind, "section": self.section,
             "doc": self.doc_id, "snippet": self.snippet, "aliases": list(self.aliases),
-            "weight": round(self.weight, 3),
+            "weight": round(self.weight, 3), "polarity": self.polarity,
         }
 
 
@@ -118,6 +166,17 @@ class Hit:
 
     def to_json(self) -> dict:
         return {**self.entry.to_json(), "score": round(self.score, 3)}
+
+
+@dataclass
+class MatchReport:
+    """一次匹配的完整结论：命中、被规则挡下的条目、整体闸门。
+
+    `rejected` 只用于解释与观测（为什么没直出），不参与答案生成。
+    """
+    hits: list[Hit] = field(default_factory=list)
+    rejected: list[dict] = field(default_factory=list)
+    gate: str | None = None   # None | explain_intent
 
 
 def _looks_like_noise(term: str) -> bool:
@@ -134,6 +193,48 @@ def _clean_term(term: str) -> str:
     term = _clean(term).strip(_TRAIL)
     term = re.sub(r"^[「『“\"']|[」』”\"']$", "", term).strip()
     return term
+
+
+@lru_cache(maxsize=8192)
+def _polarity(term: str) -> tuple[int, str]:
+    """把条目拆成 (极性, 核心词)：+1 正向，-1 负向，0 中性。
+
+    「不吃的食物」→ (-1, 食物)，「爱吃的食物」→ (+1, 食物)，两者核心相同，
+    问句里出现否定时应当只保留负向那条。核心词少于 2 字的不拆，避免「非常」
+    被当成「非」+「常」。
+    """
+    text = _clean_term(term)
+    if text.startswith("非常"):  # 「非常喜欢」是加强，不是否定
+        return 0, text
+    for marker in _NEG_MARKERS:
+        if text.startswith(marker):
+            core = text[len(marker):].lstrip("的")
+            if len(core) >= 2:
+                return -1, core
+    for marker in _POS_MARKERS:
+        if text.startswith(marker):
+            core = text[len(marker):].lstrip("的")
+            if len(core) >= 2:
+                return 1, core
+    return 0, text
+
+
+def _negated_at(text: str, start: int) -> bool:
+    """命中位置是否处在否定作用域内（只看前面 3 个字）。"""
+    return bool(_NEG_WINDOW.search(text[max(0, start - 3):start]))
+
+
+def _query_polarity(text: str) -> int:
+    """问句整体极性：否定线索优先；「喜欢/爱吃」这类才算正向。"""
+    if _Q_NEG.search(text):
+        return -1
+    if _Q_POS.search(text):
+        return 1
+    return 0
+
+
+def _is_measure(term: str) -> bool:
+    return bool(_MEASURE.match(term) or _MEASURE_PREFIX.match(term))
 
 
 def _sentences(text: str) -> list[str]:
@@ -170,7 +271,8 @@ def _parse_line(raw: str) -> tuple[str | None, str] | None:
 
 def _items_from(value: str) -> list[str]:
     items = [_clean_term(x) for x in _ITEM_SEP.split(value)]
-    return [x for x in items if x and len(x) <= 20 and not _looks_like_noise(x)]
+    return [x for x in items if x and len(x) <= 20 and not _looks_like_noise(x)
+            and not _is_measure(x)]
 
 
 # 词首/词尾是虚词时，这个 n-gram 基本不是术语
@@ -185,14 +287,24 @@ def _sentence_for(chunks, term: str):
     return None, None
 
 
-def _label_aliases(label: str) -> list[str]:
-    """给「爱吃的食物」这类标签补一个短说法（爱吃），否则「我爱吃什么」命不中。"""
-    out = []
+def _label_aliases(label: str) -> tuple[list[str], bool]:
+    """给「爱吃的食物」这类标签补短说法，返回（别名, 是否为核心词别名）。
+
+    - 去后缀：「爱吃的食物」→「爱吃」，问「我爱吃什么」能命中；
+    - 取核心词：「喜欢的音乐」→「音乐」，问「我喜欢什么音乐」能命中。
+      核心词只在第一人称提问时生效（见 `_FIRST_PERSON`），避免「明天天气」
+      被「讨厌的天气」截胡。
+    """
+    out: list[str] = []
     core = re.sub(r"(?:的)?(?:食物|东西|饮品|口味|偏好|习惯|情况|时间|内容|清单|列表)$", "", label)
     core = core.strip(_TRAIL)
     if 2 <= len(core) < len(label):
         out.append(core)
-    return out
+    polarity, obj = _polarity(label)
+    if polarity and 2 <= len(obj) <= 12 and obj not in _GENERIC_CORE and obj not in out:
+        out.append(obj)
+        return out, True
+    return out, False
 
 
 class KeywordIndex:
@@ -207,6 +319,8 @@ class KeywordIndex:
         self.meta: dict = {}
         self.last_error: str | None = None
         self._built = False
+        self._key_index: dict[str, list[Entry]] | None = None
+        self._max_key = 0
 
     # ---------- 路径与配置 ----------
     def _default_path(self) -> str:
@@ -232,6 +346,16 @@ class KeywordIndex:
         if mode == "on":
             return bool(api_key())
         return bool(api_key())
+
+    @property
+    def guard_on(self) -> bool:
+        """极性/否定、意图、单文档三道闸门的总开关。"""
+        return (getattr(self.settings, "keyword_guard", "on") or "on").lower() != "off"
+
+    @property
+    def multi_doc(self) -> bool:
+        """一次直出是否允许多份文档（默认否，避免拼盘答案）。"""
+        return (getattr(self.settings, "keyword_multi_doc", "off") or "off").lower() == "on"
 
     # ---------- 构建 ----------
     def ensure(self, enrich: bool = True) -> dict:
@@ -274,6 +398,7 @@ class KeywordIndex:
 
         self.docs = docs
         self.entries = self._build_entries(by_doc, docs)
+        self._build_key_index()
         self.meta = {
             "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "fingerprint": fingerprint,
@@ -315,17 +440,22 @@ class KeywordIndex:
                         continue
                     if label:
                         items = _items_from(value)
+                        raw_items = [_clean_term(x) for x in _ITEM_SEP.split(value)]
                         clean_label = _clean_term(label)
-                        is_list = (len(items) >= 2 and len(value) <= 60
+                        # 是否清单要看切分后的原始项数：过滤掉「每次 1 小时」这类度量碎片后
+                        # 只剩一项，不能因此把整行降级成单值标签，否则真条目会一起丢掉
+                        is_list = (len(raw_items) >= 2 and len(value) <= 60
                                    and not re.search(r"[。！？!?；;]", value))
                         if is_list:
                             if clean_label and not _looks_like_noise(clean_label):
+                                label_aliases, self_alias = _label_aliases(clean_label)
                                 entries.append(Entry(
                                     term=clean_label, doc_id=doc_id, title=chunk.title,
                                     section=chunk.section, snippet=line_text,
                                     kind="explicit" if explicit_section else "item",
                                     weight=1.0 if explicit_section else 0.95,
-                                    aliases=_label_aliases(clean_label), chunk_index=idx,
+                                    aliases=label_aliases, chunk_index=idx,
+                                    self_alias=self_alias,
                                 ))
                                 seen_terms.add(_norm(clean_label))
                             for item in items:
@@ -341,12 +471,14 @@ class KeywordIndex:
                         if 1 <= len(value) <= 40 and not re.search(r"[。！？!?]", value):
                             if clean_label and 1 <= len(clean_label) <= 14 \
                                     and not _looks_like_noise(clean_label):
+                                label_aliases, self_alias = _label_aliases(clean_label)
                                 entries.append(Entry(
                                     term=clean_label, doc_id=doc_id, title=chunk.title,
                                     section=chunk.section, snippet=line_text,
                                     kind="explicit" if explicit_section else "colon",
                                     weight=1.0 if explicit_section else 0.9,
-                                    aliases=_label_aliases(clean_label), chunk_index=idx,
+                                    aliases=label_aliases, chunk_index=idx,
+                                    self_alias=self_alias,
                                 ))
                                 seen_terms.add(_norm(clean_label))
                     elif explicit_section:
@@ -397,9 +529,13 @@ class KeywordIndex:
         for entry in entries:
             key = (entry.doc_id, _norm(entry.term))
             if key not in best or entry.weight > best[key].weight:
+                if key in best:
+                    entry.aliases = list(dict.fromkeys(entry.aliases + best[key].aliases))[:4]
+                    entry.self_alias = entry.self_alias or best[key].self_alias
                 best[key] = entry
             elif entry.weight == best[key].weight:
                 best[key].aliases = list(dict.fromkeys(best[key].aliases + entry.aliases))[:4]
+                best[key].self_alias = best[key].self_alias or entry.self_alias
         out = sorted(best.values(), key=lambda e: (-e.weight, e.doc_id, e.term))
         return out
 
@@ -507,25 +643,119 @@ class KeywordIndex:
             self.last_error = f"关键词索引写入失败: {exc}"
 
     # ---------- 匹配与输出 ----------
-    def match(self, query: str, limit: int | None = None) -> list[Hit]:
-        """只认精确包含（词或同义词），命中才算；不做模糊近似，避免截胡正常检索。"""
-        if not self.enabled:
-            return []
-        q = _norm(query)
-        if len(q) < 2:
-            return []
-        limit = limit or int(getattr(self.settings, "keyword_top_n", 3))
-        scored: list[tuple[float, Entry]] = []
+    def _build_key_index(self) -> None:
+        """key -> 条目 的倒排表：匹配时枚举问句子串，而不是逐个条目做包含判断。"""
+        index: dict[str, list[Entry]] = {}
         for entry in self.entries:
             if entry.kind not in DIRECT_KINDS:
                 continue
-            best = 0.0
             for key in entry.keys():
-                if len(key) >= 2 and key in q:
-                    best = max(best, 1.0 if key == _norm(entry.term) else 0.94)
-            if best:
-                scored.append((best * entry.weight, entry))
+                if len(key) >= 2:
+                    index.setdefault(key, []).append(entry)
+        self._key_index = index
+        self._max_key = max((len(k) for k in index), default=0)
+
+    def _scan(self, q: str) -> tuple[list[tuple[float, Entry]], set[str]]:
+        """扫一遍问句，返回（候选, 因否定被挡下的词）。候选按条目去重取最高分。"""
+        if self._key_index is None:
+            self._build_key_index()
+        index = self._key_index or {}
+        found: dict[str, list[int]] = {}
+        max_len = min(self._max_key, len(q))
+        for i in range(len(q)):
+            for size in range(2, max_len + 1):
+                sub = q[i:i + size]
+                if sub in index:
+                    found.setdefault(sub, []).append(i)
+
+        guard = self.guard_on
+        first_person = bool(_FIRST_PERSON.search(q)) if guard else True
+        best: dict[int, tuple[float, Entry]] = {}
+        negated_terms: set[str] = set()
+        for key, positions in found.items():
+            # 同一个词出现多次，只要有一处不在否定域内，就算真的命中
+            neg_all = guard and all(_negated_at(q, p) for p in positions)
+            for entry in index[key]:
+                # 核心词别名只在第一人称提问时成立，避免把别人的偏好当成通用知识
+                if entry.self_alias and not first_person and key == entry.core:
+                    continue
+                if entry.polarity > 0 and neg_all:
+                    negated_terms.add(entry.term)
+                    continue
+                score = (1.0 if key == _norm(entry.term) else 0.94) * entry.weight
+                slot = best.get(id(entry))
+                if slot is None or score > slot[0]:
+                    best[id(entry)] = (score, entry)
+                negated_terms.discard(entry.term)
+        return list(best.values()), negated_terms
+
+    def match_report(self, query: str, limit: int | None = None) -> MatchReport:
+        """只认精确包含（词或同义词），再依次过极性、意图、单文档三道闸门。"""
+        if not self.enabled:
+            return MatchReport()
+        q = _norm(query)
+        if len(q) < 2:
+            return MatchReport()
+        limit = limit or int(getattr(self.settings, "keyword_top_n", 3))
+
+        # 闸门一：解释型问法。先扫一遍，确认本来会命中才记闸门——
+        # 否则「今天天气怎么样」也会被记成「被意图挡下」，指标就失真了
+        scored, negated_terms = self._scan(q)
+        if self.guard_on and _EXPLAIN.search(q) and scored:
+            return MatchReport(gate="explain_intent")
+
+        rejected: list[dict] = []
+        if self.guard_on and scored:
+            hit_terms = {entry.term for _, entry in scored}
+            for term in sorted(negated_terms - hit_terms):
+                rejected.append({"term": term, "reason": "negated"})
+
+            # 闸门二：同族正负并存时，按问句极性只留一侧
+            q_pol = _query_polarity(q)
+            if q_pol:
+                families: dict[tuple[str, str], list[Entry]] = {}
+                for _, entry in scored:
+                    if entry.core:
+                        families.setdefault((entry.doc_id, entry.core), []).append(entry)
+                drop: set[int] = set()
+                for entries in families.values():
+                    pols = {e.polarity for e in entries}
+                    if q_pol < 0 and -1 in pols:
+                        # 问的是「不喜欢/不吃」，同族的中性条目与正向条目都不该出现：
+                        # 「我不喜欢的运动」不能被「运动：每周三次游泳」答成喜欢的事
+                        drop.update(id(e) for e in entries if e.polarity != -1)
+                    elif q_pol > 0 and -1 in pols:
+                        # 问的是「喜欢/爱吃」，负向条目要挡掉；中性条目仍可能是答案
+                        drop.update(id(e) for e in entries if e.polarity == -1)
+                if drop:
+                    kept = []
+                    for score, entry in scored:
+                        if id(entry) in drop:
+                            rejected.append({"term": entry.term, "reason": "polarity_conflict"})
+                        else:
+                            kept.append((score, entry))
+                    scored = kept
+
         scored.sort(key=lambda x: (-x[0], -x[1].weight, len(x[1].term)))
+
+        # 闸门三：一次直出只取得分最高的文档，避免把不同文档的片段拼成一段答案
+        if self.guard_on and not self.multi_doc and scored:
+            doc_score: dict[str, float] = {}
+            doc_count: dict[str, int] = {}
+            first: dict[str, int] = {}
+            for pos, (score, entry) in enumerate(scored):
+                doc_score[entry.doc_id] = doc_score.get(entry.doc_id, 0.0) + score
+                doc_count[entry.doc_id] = doc_count.get(entry.doc_id, 0) + 1
+                first.setdefault(entry.doc_id, pos)
+            best_doc = max(doc_score, key=lambda d: (doc_score[d], doc_count[d], -first[d]))
+            kept = []
+            for score, entry in scored:
+                if entry.doc_id != best_doc:
+                    rejected.append({"term": entry.term, "reason": "other_doc"})
+                else:
+                    kept.append((score, entry))
+            scored = kept
+
         picked: list[Hit] = []
         seen: set[tuple[str, str, str]] = set()
         for score, entry in scored:
@@ -536,17 +766,39 @@ class KeywordIndex:
             picked.append(Hit(entry=entry, score=min(1.0, score)))
             if len(picked) >= limit:
                 break
-        return picked
+        return MatchReport(hits=picked, rejected=rejected[:12])
+
+    def match(self, query: str, limit: int | None = None) -> list[Hit]:
+        return self.match_report(query, limit).hits
+
+    @staticmethod
+    def merge(hits: list[Hit]) -> list[Hit]:
+        """按（文档, 章节, 原文）去重：一条原文只留一次，引用编号才不会错位。"""
+        out: list[Hit] = []
+        seen: set[tuple[str, str, str]] = set()
+        for hit in hits:
+            if not _display(hit.entry.snippet):
+                continue
+            key = (hit.entry.doc_id, hit.entry.section, hit.entry.snippet)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(hit)
+        return out
 
     @staticmethod
     def compose(hits: list[Hit]) -> str:
         if not hits:
             return ""
+        multi = len(hits) > 1
         lines: list[str] = []
-        for hit in hits:
+        seen: set[str] = set()
+        for i, hit in enumerate(hits, 1):
             snippet = _display(hit.entry.snippet)
-            if snippet and snippet not in lines:
-                lines.append(f"· {snippet}")
+            if not snippet or snippet in seen:
+                continue
+            seen.add(snippet)
+            lines.append(f"· {snippet}" + (f" [{i}]" if multi else ""))
         return "\n".join(lines)
 
     # ---------- 视图 ----------
@@ -583,6 +835,8 @@ class KeywordIndex:
         return {
             "enabled": self.enabled,
             "llm": self.llm_on,
+            "guard": self.guard_on,
+            "multi_doc": self.multi_doc,
             "docs": len({e.doc_id for e in self.entries}),
             "terms": len(self.entries),
             "direct": len(direct),
@@ -594,11 +848,18 @@ class KeywordIndex:
         return {
             "enabled": self.enabled,
             "llm": self.llm_on,
+            "guard": self.guard_on,
+            "multi_doc": self.multi_doc,
             "entries": len(self.entries),
             "direct": len(direct),
             "docs": len(self.docs),
             "by_kind": {k: sum(1 for e in self.entries if e.kind == k)
                         for k in ("item", "colon", "explicit", "llm", "heading")},
+            "by_polarity": {
+                "positive": sum(1 for e in direct if e.polarity > 0),
+                "negative": sum(1 for e in direct if e.polarity < 0),
+                "neutral": sum(1 for e in direct if e.polarity == 0),
+            },
             "built_at": self.meta.get("built_at"),
             "reused": self.meta.get("reused"),
             "llm_docs": sum(1 for d in self.docs.values() if d.get("llm")),

@@ -931,6 +931,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             metrics.inc("rag_answer_path_total", {"path": answer_path})
             if answer_path == "keyword":
                 metrics.inc("rag_keyword_hit_total")
+            # 被闸门挡下的命中：按原因计数，用来判断规则是「救火」还是「误伤」
+            for item in result.get("keyword_rejected") or []:
+                metrics.inc("rag_keyword_rejected_total",
+                            {"reason": str(item.get("reason") or "unknown")})
+            if result.get("keyword_gate"):
+                metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
             if not result.get("api_called"):
                 metrics.inc("rag_local_answer_total")
             metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "200"})
@@ -953,6 +959,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 latency_ms=result.get("latency_ms"), path=answer_path,
                 api_called=bool(result.get("api_called")),
                 keyword_terms=result.get("keyword_terms"),
+                keyword_gate=result.get("keyword_gate"),
+                keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
+                                  for r in (result.get("keyword_rejected") or [])],
             )
             self._json(result, extra_headers={
                 "X-RateLimit-Remaining": decision.remaining,

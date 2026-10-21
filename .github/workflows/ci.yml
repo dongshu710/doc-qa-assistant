@@ -51,6 +51,12 @@ jobs:
       - name: 关键词 HTTP 接口
         run: python tests/test_keyword_api.py
 
+      - name: 关键词精度回归（否定 / 极性 / 意图 / 单文档）
+        run: python tests/test_keyword_precision.py
+
+      - name: 关键词评测（应直出 / 不应直出）
+        run: python tests/eval_keyword.py
+
       - name: 生产防护单测
         run: python tests/test_guards.py
 

@@ -533,7 +533,7 @@ def render(data: dict, standalone: bool = False) -> str:
   <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>环节</th><th>策略</th><th>失败时怎么办</th></tr></thead><tbody>
     <tr><td>接入</td><td>幂等键去重 · 按 IP 令牌桶限流（多实例走 Redis）· 按比例灰度到 CANARY_MODEL</td><td>重复请求回放首次结果；超限返回 <code>429</code> + <code>Retry-After</code></td></tr>
     <tr><td>输入</td><td>归一化去零宽 / 控制字符；注入、越权、荐股关键词拦截</td><td>直接拒答，不进检索与生成</td></tr>
-    <tr><td>关键词</td><td>清单 / 表格 / 标签条目精确命中，最多 {cfg.get('keyword_top_n', 3)} 条</td><td>直接返回原文片段，标 <code>path=keyword</code>、<code>api_called=false</code>；不命中继续检索</td></tr>
+    <tr><td>关键词</td><td>清单 / 表格 / 标签条目精确命中，最多 {cfg.get('keyword_top_n', 3)} 条；命中后过否定 / 极性 / 解释型意图 / 单文档四道闸门</td><td>直接返回原文片段，标 <code>path=keyword</code>、<code>api_called=false</code>；被闸门挡下或未命中则继续检索</td></tr>
     <tr><td>检索</td><td>embedding 召回（可切 n-gram / BM25）+ 多信号重排，top_k={cfg['top_k']}；查询扩展可选</td><td>embedding 失败回退词法检索并标 <code>degraded</code></td></tr>
     <tr><td>置信度</td><td>最高分低于 {cfg['min_score']} 视为未命中</td><td>返回「没有在文档中找到相关问题」+ 相似问题</td></tr>
     <tr><td>生成</td><td>OpenAI 兼容 LLM，温度 0.1，超时 {int(cfg['timeout'])}s，重试 {cfg['retries']} 次并尊重 Retry-After；每日 token 上限</td><td>降级为抽取式，把 error / <code>budget_exceeded</code> 透传到结果</td></tr>

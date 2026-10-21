@@ -406,7 +406,7 @@ function answerHTML(d){
   if(d.retrieved&&d.retrieved.length){
     h+='<details class="src"><summary>'
       +'<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>'
-      +'检索依据 '+d.retrieved.length+' 条</summary><div class="src-list">'
+      +(local?'命中依据':'检索依据')+' '+d.retrieved.length+' 条</summary><div class="src-list">'
       +d.retrieved.map(function(x,i){
         var sc=(x.score==null)?'-':(Math.round(x.score*1000)/1000);
         return '<div class="src-row"><span class="rank">'+String(i+1).padStart(2,'0')+'</span>'
