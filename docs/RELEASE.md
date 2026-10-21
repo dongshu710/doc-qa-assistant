@@ -6,7 +6,7 @@
 
 发版时：
 
-1. 修改 `VERSION`（例如 `1.3.0`）；
+1. 修改 `VERSION`（例如 `1.4.0`）；
 2. 在 `CHANGELOG.md` 增加对应条目；
 3. 重新打包。
 
@@ -32,8 +32,8 @@ dist/SHA256SUMS.txt
 
 ```bash
 mkdir -p /tmp/docqa-test && cd /tmp/docqa-test
-unzip <path>/doc-qa-assistant-1.3.0.zip
-cd doc-qa-assistant-1.3.0
+unzip <path>/doc-qa-assistant-1.4.0.zip
+cd doc-qa-assistant-1.4.0
 python -m src.server --port 8021 &
 curl http://127.0.0.1:8021/api/health
 curl -X POST http://127.0.0.1:8021/api/ask \
@@ -51,7 +51,7 @@ curl -X POST http://127.0.0.1:8021/api/ask \
 ```bash
 git init -b main
 git add .
-git commit -m "release: v1.3.0"
+git commit -m "release: v1.4.0"
 git remote add origin https://github.com/<owner>/doc-qa-assistant.git
 git push -u origin main
 ```
@@ -67,11 +67,11 @@ Topics：`rag` `llm` `document-qa` `python` `bm25` `evaluation` `llm-as-judge` `
 GitHub CLI：
 
 ```bash
-gh release create v1.3.0 \
-  dist/doc-qa-assistant-1.3.0.zip \
+gh release create v1.4.0 \
+  dist/doc-qa-assistant-1.4.0.zip \
   dist/SHA256SUMS.txt \
   dist/report.html \
-  --title "v1.3.0 · 文档问答系统" \
+  --title "v1.4.0 · 文档问答系统" \
   --notes-file CHANGELOG.md
 ```
 

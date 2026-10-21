@@ -61,7 +61,7 @@ def main() -> None:
         "LLM_API_KEY": "",
         "DEEPSEEK_API_KEY": "",
     }
-    with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, env, clear=False):
+    with tempfile.TemporaryDirectory(), mock.patch.dict(os.environ, env, clear=False):
         os.environ.pop("LLM_API_KEY", None)
         os.environ.pop("DEEPSEEK_API_KEY", None)
         a, _ = create_server("127.0.0.1", 0, str(ROOT / "data" / "knowledge"))

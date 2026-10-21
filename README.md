@@ -21,10 +21,10 @@
 | ![](docs/screenshots/home.png) | ![](docs/screenshots/ask.png) |
 | **知识库** | **评测看板** |
 | ![](docs/screenshots/kb.png) | ![](docs/screenshots/dashboard.png) |
-| **汇报页（可独立导出）** | |
-| ![](docs/screenshots/report.png) | |
+| **汇报页（可独立导出）** | **关键词命中（本地直出）** |
+| ![](docs/screenshots/report.png) | ![](docs/screenshots/keyword.png) |
 
-> 截图使用演示知识库与离线抽取模式；接入模型后界面一致。
+> 截图使用演示知识库与离线抽取模式；最后一图是上传「小a的生活习惯」后命中「香菜」的本地直出，未调用模型。
 
 ## 0. 定位：这是「文档问答助手」，不是只服务金融
 
@@ -50,7 +50,9 @@
 flowchart TD
   Q[用户问题] --> V{输入校验<br/>空/超长/注入/越权}
   V -->|不合法| R1[ask_clarify / refuse]
-  V -->|合法| QE{查询扩展<br/>QUERY_EXPANSION}
+  V -->|合法| KW{关键词命中<br/>清单 / 标签条目}
+  KW -->|命中| OUT[本地直出<br/>不调用任何 API]
+  KW -->|未命中| QE{查询扩展<br/>QUERY_EXPANSION}
   QE -->|auto/llm| EXP[用章节词表改写检索词]
   QE -->|off| RET
   EXP --> RET[召回：embedding / n-gram / BM25<br/>+ 多信号重排 top_k]
@@ -62,7 +64,7 @@ flowchart TD
   LLM --> CITE[引用校验 [n] 对齐命中块]
   EXT --> CITE
   CITE --> LOG[(trace.jsonl 观测)]
-  CITE --> OUT[答案 + 来源]
+  CITE --> OUT
 ```
 
 组件职责：
@@ -74,13 +76,14 @@ flowchart TD
 | `embeddings` | OpenAI 兼容 `/embeddings`（bge 同协议），批请求、超时、重试、维度探测 | 失败抛 `EmbeddingError`，不阻塞启动 |
 | `vector_store` | 纯 Python / NumPy / FAISS 三种向量后端 + manifest 持久化 | 后端不可用逐级降级；维度不一致直接报错 |
 | `kbstore` | 版本目录、审批流、按文档回滚 | 版本只增不改；激活原子替换 |
+| `keywords` | 从清单 / 表格 / 标签抽条目，命中原样返回；接 API 时补摘要与同义词 | 构建失败只记录，不影响检索；命中失败退回正常链路 |
 | `suggest` | 按知识库章节生成示例问题、未命中时的相似问题 | 无候选 → 回退文档级问题 |
 | `guards` | 限流、幂等、成本上限、审计、灰度、回滚；可切 Redis 共享状态 | Redis 失败回退进程内状态，健康检查暴露 |
 | `metrics_exporter` | Prometheus 文本指标（请求/延迟/降级/token） | 采集失败不影响业务响应 |
 | `query` | 语料自适应查询扩展：把章节标题当词表，让改写贴合文档术语 | 超时/异常静默回退原问题 |
 | `profiles` | finance / generic 两套提示词与合规护栏 | 未知 profile 回退默认 |
 | `generator` | LLM 生成 / 无 Key 抽取式 | 超时·重试·退避·抖动；最终降级抽取并标 `degraded` |
-| `pipeline` | 输入校验、编排、引用校验、trace | 注入/越权直接拒；无命中转人工 |
+| `pipeline` | 输入校验、关键词直出、编排、引用校验、trace | 注入/越权直接拒；关键词不命中走检索；无命中转人工 |
 | `cli` | 单次问答 / 交互模式 | — |
 
 ## 2. 目录
@@ -91,7 +94,8 @@ doc-qa-assistant/
 │  ├─ raw/                     # 原始 PDF（演示制度 + 监管摘录），离线解析用
 │  ├─ knowledge/               # 种子知识库（3 份手写 md + 3 份 PDF 解析出的 md）
 │  ├─ kb/                      # 版本库：versions / pending / changes（运行时生成）
-│  └─ index/                   # embedding 索引：manifest / vectors / faiss（运行时生成）
+│  ├─ index/                   # embedding 索引 + keywords.json（运行时生成）
+│  └─ demo/                    # 演示文档：小a的生活习惯.md（关键词直出示例）
 ├─ src/
 │  ├─ config.py                # 通道/超时/重试/阈值配置
 │  ├─ chunking.py              # 标题/条款感知切分
@@ -102,6 +106,7 @@ doc-qa-assistant/
 │  ├─ redis_client.py          # 零依赖 RESP 客户端（限流 / 幂等 / 成本）
 │  ├─ metrics_exporter.py      # Prometheus 文本指标
 │  ├─ suggest.py               # 示例问题与相似问题（按文档章节生成）
+│  ├─ keywords.py              # 关键词条目：本地抽取 + 可选 API 整理 + 命中直出
 │  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚（本地 / Redis）
 │  ├─ query.py                 # 语料自适应查询扩展
 │  ├─ generator.py             # LLM + 抽取式降级
@@ -128,6 +133,7 @@ doc-qa-assistant/
 │  └─ screenshots/             # README 用的五页截图
 ├─ tools/
 │  ├─ build_release.py         # 构建可下载的 zip + SHA256
+│  ├─ keyword_demo.py          # 小a场景演示：上传→关键词→命中→本地输出
 │  └─ make_policy_pdfs.py      # 生成演示制度 PDF（fpdf2）
 ├─ tests/
 │  ├─ build_cases.py           # 生成 25 条基础用例
@@ -149,6 +155,8 @@ doc-qa-assistant/
 │  ├─ test_redis_guards.py     # Redis 跨实例限流 / 幂等 / 成本
 │  ├─ test_server_redis.py     # 两个服务实例共享 Redis 的端到端验证
 │  ├─ test_pipeline_embedding.py # embedding 检索链路与故障降级
+│  ├─ test_keywords.py         # 关键词抽取/命中/API 增强/零调用验证
+│  ├─ test_keyword_api.py      # 关键词 HTTP 接口与命中路径
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
 │  ├─ fixtures/                # 上传测试用 PDF / DOCX（可复现生成）
 │  └─ baseline.json            # 离线基线（26/26）
@@ -167,7 +175,7 @@ doc-qa-assistant/
 
 ### 方式 A：下载安装包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.3.0.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-1.4.0.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
@@ -223,6 +231,11 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `TOP_K` | `4` | 召回条数 |
 | `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
+| `KEYWORD_MODE` | `on` | `on` 命中结构化条目即本地直出；`off` 全部走检索 |
+| `KEYWORD_LLM` | `auto` | `auto` 有 Key 才做摘要/同义词整理；`off` 纯本地；`on` 强制尝试 |
+| `KEYWORD_TOP_N` | `3` | 单次直出最多几条条目 |
+| `KEYWORD_INDEX` | `data/index/keywords.json` | 关键词与整理结果缓存路径 |
+| `KEYWORD_LLM_MAX_CHARS` | `2400` | 单份文档送去整理的字符上限 |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
 | `WALL_CLOCK_BUDGET_S` | `60` | 重试总墙钟上限 |
@@ -265,13 +278,17 @@ API：
 
 - `GET /api/health` → 端点 / 模型 / 检索详情（索引状态、维度、降级原因）/ 知识库版本 / 限流与预算状态
 - `GET /api/examples?n=4` → 按当前知识库生成的示例问题
-- `POST /api/ask` `{"query": "..."}` → 结构化结果（answer / citations / behavior / mode / similar_questions）
+- `POST /api/ask` `{"query": "..."}` → 结构化结果（answer / citations / behavior / mode / path / api_called / similar_questions）；
+  `path=keyword` 表示命中关键词本地直出，响应头带 `X-Answer-Path: keyword`
   - 可选请求头 `Idempotency-Key: <key>`：TTL 内重复请求返回首次结果，并带 `X-Idempotent-Replay: true`
 - `GET /api/metrics` → 业务聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
 - `GET /metrics` → Prometheus 文本指标（请求 / 延迟直方图 / 限流 / 幂等重放 / 降级 / token / 版本）
 - `GET /api/l3` → L3 语义评分摘要（忠实度 / 相关性 / 完整性、门禁结论）
 - `GET /api/report/export` → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开）
-- `GET /api/knowledge` → 知识库文件与块数、当前版本、待审批数
+- `GET /api/knowledge` → 知识库文件与块数、当前版本、待审批数、每份文档的关键词
+- `GET /api/keywords` → 关键词总览（每份文档的 top 词与条目数）
+- `GET /api/keywords?name=...` → 单份文档的摘要、条目、原文片段
+- `POST /api/keywords/rebuild` `{}` → 重建关键词；接入 API 时对变更文档做一次整理（需 admin）
 - `POST /api/knowledge/upload` `{"name","content"}` → 上传 `.md`/`.txt`（上限 512KB）；直接生效则重建索引，需审批则返回 `pending:true` + `change_id`
 - `POST /api/knowledge/upload_file` `{"name","data_b64"}` → 上传 PDF/DOCX（服务端解析入库；`upload_pdf` 保留为别名）
 - `POST /api/knowledge/delete` `{"name"}` → 删除文件（至少保留一份）；同样受审批开关控制
@@ -577,6 +594,78 @@ curl -s -X POST localhost:8000/api/kb/rollback_doc \
 ```
 
 版本/审批接口：`GET /api/kb/versions`、`GET /api/kb/changes?status=pending|approved|rejected`、`GET /api/kb/doc_history?name=...`、`POST /api/kb/approve|reject|rollback_doc`。审批与回滚都写审计日志；`KB_APPROVAL=auto` 时本机管理员上传仍会自动生成版本（有历史可回滚），只是不排队。
+
+## 4.9 关键词直出：命中条目就本地返回，不调用模型
+
+这条路径解决的是「问题根本不需要模型」的情况：用户上传的是清单、档案、标签类文档，
+答案就是原文里的某一行，走检索 + 生成只会更慢、更贵，还可能被改写。
+
+**场景**：小a 上传 `小a的生活习惯.md`，里面有爱吃/不吃/忌口/作息/爱好/宠物。
+系统抽出 40 个条目；问「我不吃香菜」命中「香菜」，直接返回原文那一行与出处，
+**0 次 API 调用**；问「今天天气怎么样」不命中，回退到正常检索。
+
+```text
+Q: 我不吃香菜
+路径=本地关键词 · 模式=keyword_local · 调用API=否 · 0.1 ms
+· 不吃的食物：香菜、动物内脏、苦瓜
+出处: [1] 小a的生活习惯·一、饮食偏好
+```
+
+### 抽什么、什么时候直出
+
+| 来源 | 例子 | 直出 |
+|---|---|---|
+| 清单项 | `- 爱吃的食物：火锅、寿司、拿铁` | ✓ 每项 + 标签都可命中 |
+| 表格行 | 表头「起购金额」、单元格「1 元」 | ✓ 标签作为条目 |
+| 标签值 | `起床时间：早上 7:30` | ✓ |
+| `## 关键词` 段 | 逗号/顿号分隔的词 | ✓ 权重最高 |
+| 章节标题 | `## 三、个人爱好` | ✗ 只用于展示与召回提示 |
+| 普通句子 | 「风险等级越高，波动越大」 | ✗ 只走检索 |
+
+只认**精确包含**（词或同义词），不做模糊近似：关键词直出的错误代价比「多走一次 RAG」高得多。
+因此制度类文档的常规问题不会被截胡——`test_keywords.py` 里有专门的回归用例守着这条线。
+
+### 接了 API 之后：只增强，不替换
+
+每份文档在上传/重建时做**一次**模型整理：
+
+- 生成 ≤60 字摘要，展示在知识库关键词面板；
+- 生成 6~16 个关键词与同义说法（「咖啡」→「拿铁」、「芫荽」→「香菜」），补词面差异；
+- **term 必须在原文出现**，snippet 一律从原文截取，模型不提供答案句子；
+- 解析失败 / 超时 / 429：保留本地条目，失败原因写 `/api/health.keywords.error`，不影响上传；
+- 按文档内容 hash 缓存，语料没变不重复调用；`KEYWORD_LLM=off` 可完全关掉。
+
+### 「不通过 API 返回」是怎么保证的
+
+命中后直接 `return`，不经过查询扩展、embedding 召回、生成与补引用四步：
+
+| 字段 / 观测 | 命中时 |
+|---|---|
+| `path` | `keyword` |
+| `mode` | `keyword_local` |
+| `api_called` | `false` |
+| `usage` | 空 |
+| 响应头 | `X-Answer-Path: keyword` |
+| 指标 | `rag_keyword_hit_total`、`rag_answer_path_total{path="keyword"}`、`rag_local_answer_total` |
+
+验证不是靠肉眼：`tests/test_keywords.py` 起了一个假模型端点，统计请求数，
+断言「命中前后请求数不变」；同时断言回退路径确实调用了模型。
+
+### 跑一遍
+
+```bash
+python tools/keyword_demo.py                  # 小a 场景：抽取 → 命中 → 本地输出
+python tools/keyword_demo.py --show-entries   # 打印每条关键词及原文片段
+```
+
+页面上的入口：知识库页「关键词」列（点击展开词表）；问答页命中时显示「本地直出 · 未调用模型」。
+
+### 边界
+
+- 同义词只解决**词面差异**，不解决跨段推理；需要比较、计算、归纳的问题仍走 RAG。
+- 清单里的单字项（如「辣」）只在白名单内接受，避免「的/了」这类字误触发。
+- 关键词索引按文档 hash 全量重算条目（本地抽取很便宜）；模型整理只对新增/变更文档调用一次。
+- 没有 API Key 时只有本地条目，没有摘要和同义词；这是可用性差异，不是静默降级。
 
 ## 5. 评测
 

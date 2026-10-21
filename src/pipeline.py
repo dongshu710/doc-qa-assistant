@@ -20,6 +20,7 @@ from .chunking import load_corpus
 from .config import api_key, load_settings
 from .embeddings import EmbeddingError, EmbeddingUnavailable
 from .generator import extractive_answer, generate, repair_citation
+from .keywords import KeywordIndex
 
 # 最外层拦截：通用护栏（注入/越权/隐私）+ profile 附加护栏（金融：荐股/收益承诺）
 from .profiles import get_profile
@@ -65,6 +66,8 @@ class RAGPipeline:
         self._retrieval_error: str | None = None
         self.retriever = self._make_retriever(self.chunks)
         self.vocabulary = _build_vocabulary(self.chunks)
+        # 启动时只做本地抽取：有 Key 时也不在启动阶段打模型，避免首屏被拖慢
+        self.keywords = self._make_keywords(self.chunks, enrich=False)
 
     def _index_dir(self) -> str:
         configured = self.settings.embedding_index_dir or "data/index"
@@ -82,6 +85,24 @@ class RAGPipeline:
             # 模型/索引不可用（网络、维度错、索引损坏）：降级但显式暴露，不静默
             self._retrieval_error = f"{type(exc).__name__}: {exc}"[:300]
             return build_retriever(chunks, "vector")
+
+    def _make_keywords(self, chunks, enrich: bool):
+        configured = self.settings.keyword_index or "data/index/keywords.json"
+        path = configured if os.path.isabs(configured) else os.path.join(self.project_root, configured)
+        index = KeywordIndex(chunks, self.settings, path)
+        try:
+            index.ensure(enrich=enrich)
+        except Exception as exc:  # noqa: BLE001 —— 关键词只是加速路径，坏了不能拖垮主链路
+            index.last_error = f"构建失败: {type(exc).__name__}: {exc}"[:200]
+        return index
+
+    @property
+    def keyword_detail(self) -> dict:
+        detail = self.keywords.describe()
+        detail["mode"] = self.settings.keyword_mode
+        detail["llm_mode"] = self.settings.keyword_llm
+        detail["error"] = self.keywords.last_error
+        return detail
 
     @property
     def retrieval_detail(self) -> dict:
@@ -108,6 +129,8 @@ class RAGPipeline:
             "model_override": model,
             "behavior": "answer",
             "answer": "",
+            "path": "rag",              # rag | keyword：keyword 表示本地直出
+            "api_called": False,        # 本次是否调用过任何模型/embedding 接口
             "citations": [],
             "retrieved": [],
             "retrieval_score": 0.0,
@@ -138,6 +161,39 @@ class RAGPipeline:
                 result.update(behavior="refuse", answer="抱歉，这个请求我无法处理。")
                 return self._finish(result, t0)
 
+        # ---------- 关键词直出（本地，不调用任何 API）----------
+        # 放在检索之前：命中即答，省掉 embedding 与生成两次调用，也避免模型改写引入偏差。
+        # 只对结构化条目生效（清单/表格/标签/显式关键词），标题与普通词不在此列。
+        if self.settings.keyword_mode != "off" and not force_extractive:
+            try:
+                kw_hits = self.keywords.match(clean)
+            except Exception as exc:  # noqa: BLE001 —— 关键词匹配失败就退回正常检索
+                kw_hits = []
+                result["keyword_error"] = f"{type(exc).__name__}: {exc}"[:200]
+            if kw_hits:
+                citations, retrieved = [], []
+                for i, hit in enumerate(kw_hits, 1):
+                    chunk = self.keywords.chunks[hit.entry.chunk_index]
+                    citations.append({"ref": i, "title": chunk.title, "section": chunk.section})
+                    retrieved.append({"title": chunk.title, "section": chunk.section,
+                                      "score": round(hit.score, 3)})
+                result.update(
+                    behavior="answer",
+                    mode="keyword_local",
+                    path="keyword",
+                    api_called=False,
+                    answer=KeywordIndex.compose(kw_hits),
+                    citations=citations,
+                    retrieved=retrieved,
+                    retrieval_score=round(kw_hits[0].score, 4),
+                    gate_score=round(kw_hits[0].score, 4),
+                    citation_coverage=1.0,
+                    keyword_terms=list(dict.fromkeys(h.entry.term for h in kw_hits)),
+                    keyword_docs=list(dict.fromkeys(h.entry.doc_id for h in kw_hits)),
+                    keyword_kinds=list(dict.fromkeys(h.entry.kind for h in kw_hits)),
+                )
+                return self._finish(result, t0)
+
         # ---------- 检索 ----------
         # 查询扩展只作用于检索；给模型的仍然是用户原问题（避免改写引入偏差）
         search_query = clean
@@ -149,6 +205,7 @@ class RAGPipeline:
             if expansion_on:
                 search_query, expanded = expand(clean, self.vocabulary)
         result["search_query"] = search_query if expanded else None
+        result["api_called"] = bool(expanded)  # 查询扩展会调用模型
 
         try:
             hits = self.retriever.search(search_query, self.settings.top_k, focus_query=clean)
@@ -170,6 +227,7 @@ class RAGPipeline:
         embed_usage = getattr(self.retriever, "last_usage", {}) or {}
         if embed_usage.get("total_tokens"):
             result["embedding_tokens"] = int(embed_usage["total_tokens"])
+            result["api_called"] = True
 
         # 置信度闸门：**用原问题的检索分**判断是否域外。
         # 若用扩展后的分数，域外问题会被扩展词“拉近”而误答（实测「今天天气」被打成 answer）。
@@ -194,6 +252,7 @@ class RAGPipeline:
         # ---------- 生成 ----------
         gen = generate(clean, hits, model=model, force_extractive=force_extractive)
         result["mode"] = gen["mode"]
+        result["api_called"] = bool(result["api_called"] or gen["mode"] == "llm")
         result["degraded"] = bool(gen["degraded"] or result["degraded"])
         result["answer"] = gen["answer"]
         result["usage"] = gen.get("usage", {})
@@ -266,7 +325,14 @@ class RAGPipeline:
         self.chunks = chunks
         self.retriever = retriever
         self.vocabulary = _build_vocabulary(chunks)
+        # 上传/审批后重建：只对新增或变更的文档做一次模型整理，其余走缓存
+        self.keywords = self._make_keywords(chunks, enrich=True)
         return len(chunks)
+
+    def rebuild_keywords(self, enrich: bool = True) -> dict:
+        """只重建关键词（不动检索索引）；enrich=True 时对变更文档做一次模型整理。"""
+        self.keywords = self._make_keywords(self.chunks, enrich=enrich)
+        return self.keyword_detail
 
     def _finish(self, result: dict, t0: float) -> dict:
         result["latency_ms"] = round((time.time() - t0) * 1000, 1)

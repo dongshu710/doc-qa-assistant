@@ -45,6 +45,12 @@ jobs:
       - name: 可选向量依赖（NumPy + FAISS）
         run: python -m pip install "numpy==2.3.3" "faiss-cpu==1.12.0"
 
+      - name: 关键词抽取 / 命中 / 零调用
+        run: python tests/test_keywords.py
+
+      - name: 关键词 HTTP 接口
+        run: python tests/test_keyword_api.py
+
       - name: 生产防护单测
         run: python tests/test_guards.py
 

@@ -2,6 +2,26 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.4.0] - 2026-10-21
+
+新增「关键词直出」路径：清单/标签类条目命中时本地返回，不调用任何模型；页面进一步精简。
+
+### 新增
+
+- **关键词索引**：`src/keywords.py` 从清单项、表格行、`标签：值`、`## 关键词` 段抽条目，附带原文片段、出处与权重；章节名仅用于展示，不触发直出。
+- **本地直出**：`pipeline.ask` 在检索前先做关键词匹配，命中即返回原文片段 + 引用，结果标 `path=keyword`、`mode=keyword_local`、`api_called=false`，不经过查询扩展 / embedding / 生成 / 补引用。
+- **API 整理（可选）**：`KEYWORD_LLM=auto` 且配置 Key 时，每份新增/变更文档调用一次模型生成摘要与同义说法；`term` 必须在原文出现，snippet 一律从原文截取，解析失败保留本地结果。
+- **接口**：`GET /api/keywords`、`GET /api/keywords?name=`、`POST /api/keywords/rebuild`；`/api/knowledge` 返回每份文档的关键词与数量，`/api/health` 返回关键词索引状态。
+- **指标**：`rag_keyword_hit_total`、`rag_answer_path_total{path}`、`rag_local_answer_total`；响应头 `X-Answer-Path`，审计字段 `path` 与 `api_called`。
+- **演示与测试**：`data/demo/小a的生活习惯.md`、`tools/keyword_demo.py`、`tests/test_keywords.py`（含假端点请求数断言）、`tests/test_keyword_api.py`。
+
+### 变更
+
+- 知识库页新增「关键词」列，点击展开词表与摘要；说明文案同步直出规则。
+- 问答页命中时显示「本地直出」标签、命中词与「未调用模型」状态，不展示通道/模型。
+- 首页右侧示意卡改为两条回答路径（关键词本地直出 / 检索生成），移除原浏览器窗口示意；知识库说明精简为 4 条。
+- 版本升到 1.4.0；README 新增 4.9 节，架构文档与 CI 同步。
+
 ## [1.3.0] - 2026-10-20
 
 检索升级为真 embedding、多实例状态外置、知识库版本化与审批。

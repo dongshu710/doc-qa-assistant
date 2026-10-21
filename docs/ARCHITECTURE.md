@@ -23,7 +23,10 @@ flowchart LR
   B[浏览器<br/>首页 / 问答 / 知识库 / 看板 / 汇报] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
   S --> P[RAGPipeline]
   P --> G[输入校验<br/>归一化 / 注入 / 越权 / 合规]
-  G --> R[Retriever<br/>向量召回 + 重排]
+  G --> KW{关键词命中<br/>清单 / 标签条目}
+  KW -->|命中| KO[本地直出<br/>原文片段 + 出处<br/>不调用 API]
+  KW -->|未命中| R[Retriever<br/>向量召回 + 重排]
+  KQ[(keywords.json<br/>条目 / 摘要 / 同义词)] -.-> KW
   R --> Q{置信度闸门<br/>min_score=0.30}
   Q -->|未命中| H[未命中提示<br/>相似问题 / handoff 工单]
   Q -->|命中| L{LLM 通道}
@@ -32,6 +35,7 @@ flowchart LR
   M --> C[引用校验 / 修复]
   E --> C
   C --> O[答案 + 引用 + trace]
+  KO --> O
   O --> T[(logs/trace.jsonl)]
   O --> PM[/metrics<br/>Prometheus/]
   T --> D[评测看板 / 汇报页]
@@ -60,6 +64,10 @@ sequenceDiagram
   alt 命中拒答规则
     P-->>S: refuse（不检索、不调模型）
   else 正常问题
+    P->>P: keywords.match(query)
+    alt 命中结构化条目
+      P-->>S: answer（path=keyword，api_called=false）
+    else 未命中
     P->>R: search(query, top_k=4)
     R-->>P: hits + scores
     alt 最高分 < 0.30
@@ -69,6 +77,7 @@ sequenceDiagram
       L-->>P: answer（含 [n]）或超时/限流
       P->>P: repair_citation / 抽取式降级
       P-->>S: answer + citations + retrieved
+    end
     end
   end
   P->>T: 落盘（query/behavior/mode/latency/score）
@@ -81,6 +90,7 @@ sequenceDiagram
 |---|---|---|---|
 | 配置 | `src/config.py` | 通道、超时、重试、阈值、profile | 缺失 Key → 离线模式；非法通道 → 回退默认 |
 | 切分 | `src/chunking.py` | 标题/条款感知切块，中文二元组检索单元 | 目录不存在 → 启动失败并明确报错 |
+| 关键词 | `src/keywords.py` | 清单/表格/标签抽条目，命中本地直出；可选 API 补摘要与同义词 | 构建失败只记录；不命中走检索，不影响主链路 |
 | 检索 | `src/retriever.py` | embedding 召回 + 多信号重排；n-gram / BM25 兜底 | embedding 失败 → 当次回退词法检索并标 `degraded` |
 | embedding | `src/embeddings.py` | OpenAI 兼容 `/embeddings`；批请求、超时、重试、维度探测、内容缓存 | 抛 `EmbeddingError`，由检索层降级 |
 | 向量索引 | `src/vector_store.py` | 纯 Python / NumPy / FAISS；manifest 记录模型、维度、语料指纹 | 指纹不匹配自动重建；维度不一致报错 |
@@ -104,6 +114,8 @@ sequenceDiagram
 |---|---|---|---|
 | 输入 | 空 / 超长（>500 字） | `ask_clarify` | 提示补充或缩短问题 |
 | 输入 | 提示注入 / 越权 / 荐股 | `refuse` | 明确拒绝，不进检索 |
+| 关键词 | 命中条目 | `answer` + `path=keyword` | 原文片段直出，不调用模型；`api_called=false` |
+| 关键词 | 未命中 / 索引构建失败 | 继续走检索 | 失败原因写 `/api/health.keywords.error` |
 | 检索 | 最高分 < 0.30（embedding 默认 0.38） | `no_answer` | 提示未找到，并展示相似问题 / 工单入口 |
 | 检索 | 检索器异常 | 空结果 + `degraded=true` | 转人工，不硬答 |
 | embedding | 超时 / 429 / 维度不一致 | 当次回退 BM25 重排，标 `embedding_error` | 有答案但标注降级 |

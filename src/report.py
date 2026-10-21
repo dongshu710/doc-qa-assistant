@@ -201,6 +201,7 @@ def collect(pipe=None, root: Path | None = None) -> dict:
             "min_score": pipe.settings.min_score,
             "timeout": pipe.settings.llm_timeout_s,
             "retries": pipe.settings.llm_max_retries,
+            "keyword_top_n": pipe.settings.keyword_top_n,
         },
     }
 
@@ -470,7 +471,8 @@ def render(data: dict, standalone: bool = False) -> str:
 <section class="rp-hero">
   <div class="eyebrow">Project Brief · 文档问答</div>
   <h1>文档问答系统：检索、引用与评测</h1>
-  <p>把文档放入知识库后，系统用向量召回与重排找到相关段落，由模型生成答案并标注出处；
+  <p>把文档放入知识库后，系统先做关键词命中：清单、表格、标签类条目命中时直接返回原文片段，不调用模型；
+  未命中再用向量召回与重排找到相关段落，由模型生成答案并标注出处。
   检索置信度不足时返回「没有在文档中找到相关问题」，同时给出相似问题。
   当前知识库为金融制度与产品说明示例，替换文档即可用于其他领域。</p>
   <div class="badges">
@@ -510,6 +512,7 @@ def render(data: dict, standalone: bool = False) -> str:
   <div class="card">
     <div class="sec-head"><span class="n">02</span><h2>问答能力</h2></div>
     <div class="axis"><span class="ic is">✓</span><div><b>多格式入库。</b>支持 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code>，PDF 与 Word 在服务端转换为 Markdown 后切分索引。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>关键词直出。</b>清单项、表格行、<code>标签：值</code> 精确命中时，直接返回原文片段与出处，不调用模型；不命中再走检索。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>向量召回 + 重排。</b>支持 bge / OpenAI embedding 召回（FAISS 或 NumPy 索引），再按原问题词覆盖、长片段命中、BM25 与标题命中重排；未配置模型时用字符 n-gram 向量兜底。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>引用校验。</b>答案必须包含有效 <code>[n]</code>；模型未给出处时先补引用，补不上则降级为抽取式答案。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>未命中处理。</b>置信度低于阈值时返回「没有在文档中找到相关问题」，并列出相似问题；可提交转人工工单。</div></div>
@@ -530,6 +533,7 @@ def render(data: dict, standalone: bool = False) -> str:
   <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>环节</th><th>策略</th><th>失败时怎么办</th></tr></thead><tbody>
     <tr><td>接入</td><td>幂等键去重 · 按 IP 令牌桶限流（多实例走 Redis）· 按比例灰度到 CANARY_MODEL</td><td>重复请求回放首次结果；超限返回 <code>429</code> + <code>Retry-After</code></td></tr>
     <tr><td>输入</td><td>归一化去零宽 / 控制字符；注入、越权、荐股关键词拦截</td><td>直接拒答，不进检索与生成</td></tr>
+    <tr><td>关键词</td><td>清单 / 表格 / 标签条目精确命中，最多 {cfg.get('keyword_top_n', 3)} 条</td><td>直接返回原文片段，标 <code>path=keyword</code>、<code>api_called=false</code>；不命中继续检索</td></tr>
     <tr><td>检索</td><td>embedding 召回（可切 n-gram / BM25）+ 多信号重排，top_k={cfg['top_k']}；查询扩展可选</td><td>embedding 失败回退词法检索并标 <code>degraded</code></td></tr>
     <tr><td>置信度</td><td>最高分低于 {cfg['min_score']} 视为未命中</td><td>返回「没有在文档中找到相关问题」+ 相似问题</td></tr>
     <tr><td>生成</td><td>OpenAI 兼容 LLM，温度 0.1，超时 {int(cfg['timeout'])}s，重试 {cfg['retries']} 次并尊重 Retry-After；每日 token 上限</td><td>降级为抽取式，把 error / <code>budget_exceeded</code> 透传到结果</td></tr>

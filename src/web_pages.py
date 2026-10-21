@@ -36,29 +36,21 @@ HOME_CSS = """
 .btn.ghost-dark{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.2);color:#e6ecff;box-shadow:none;}
 .btn.ghost-dark:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.34);color:#fff;}
 
-/* 右侧产品示意，静态不放真实数据 */
-.mock-wrap{position:relative;min-width:0;}
-.mock{position:relative;max-width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:20px;padding:14px;
+/* 右侧两条回答路径，静态示意 */
+.flow-wrap{position:relative;min-width:0;}
+.flow-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:18px;padding:18px;
   box-shadow:0 50px 90px -40px rgba(0,0,0,.85), inset 0 1px 0 rgba(255,255,255,.12);}
-.mock-card{background:#fff;border-radius:13px;padding:15px 16px;box-shadow:0 18px 40px -30px rgba(0,0,0,.6);}
-.mock-top{display:flex;align-items:center;gap:7px;font-size:10.5px;color:#8792a8;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid #eef1f7;}
-.mock-top .d{width:7px;height:7px;border-radius:50%;background:#e2e6ef;}
-.mock-top .d:nth-child(1){background:#ffc9c4;} .mock-top .d:nth-child(2){background:#ffe1a8;} .mock-top .d:nth-child(3){background:#b7ebc9;}
-.mock-top b{margin-left:auto;font-weight:600;color:#7b879c;font-size:10.5px;}
-.mock-q{background:#f3f6fd;border-radius:9px;padding:9px 11px;font-size:12.5px;color:#334155;line-height:1.6;}
-.mock-a{font-size:12.5px;line-height:1.8;color:#3b4657;margin-top:10px;}
-.mock-a .cite{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;border-radius:4px;background:var(--brand-soft);color:#2a49c8;font-size:9.5px;font-weight:700;padding:0 3px;vertical-align:1px;margin:0 1px;}
-.mock-refs{display:flex;flex-wrap:wrap;gap:5px;margin-top:11px;}
-.mock-refs span{font-size:10px;color:#34457a;background:var(--brand-tint);border:1px solid #e4eafd;border-radius:6px;padding:2px 7px;}
-.mock-foot{display:flex;gap:6px;margin-top:11px;font-size:10px;color:#98a2b3;flex-wrap:wrap;}
-.mock-foot span{padding:2px 7px;border:1px solid #eef1f7;border-radius:999px;}
-.mock-float{position:absolute;left:-24px;bottom:-20px;display:flex;align-items:center;gap:8px;
-  background:#0b1430;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:9px 12px;
-  font-size:11px;color:#cdd8f5;box-shadow:0 24px 50px -24px rgba(0,0,0,.9);}
-.mock-float svg{color:#fbbf24;flex:none;}
-.mock-badge{position:absolute;right:-14px;top:-14px;background:#0b1430;border:1px solid rgba(255,255,255,.18);border-radius:999px;
-  padding:5px 11px;font-size:10.5px;color:#cdd8f5;display:flex;align-items:center;gap:6px;box-shadow:0 14px 30px -18px rgba(0,0,0,.9);}
-.mock-badge i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.18);}
+.flow-head{display:flex;align-items:center;gap:8px;font-size:11px;color:#9db4ff;padding:0 2px 13px;}
+.flow-head .dot{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.18);}
+.flow-row{display:grid;grid-template-columns:58px minmax(0,1fr) auto;gap:12px;align-items:center;
+  background:#fff;border-radius:11px;padding:13px 14px;margin-top:9px;}
+.flow-k{font-size:10.5px;font-weight:700;text-align:center;padding:4px 0;border-radius:6px;
+  background:var(--brand-soft);color:var(--brand-600);}
+.flow-k.rag{background:#eef1f7;color:#54617a;}
+.flow-txt b{display:block;font-size:12.5px;color:#0a1020;font-weight:600;}
+.flow-txt small{display:block;font-size:11px;color:#8a94a6;margin-top:2px;}
+.flow-v{font-size:11px;color:#0a7a4d;background:#e9f9f1;border-radius:999px;padding:3px 8px;white-space:nowrap;}
+.flow-foot{font-size:10.5px;color:#8ea0c8;text-align:center;padding-top:12px;}
 
 /* 指标条，压在 hero 上 */
 .stat-strip{position:relative;z-index:3;margin-top:-40px;background:#fff;border:1px solid var(--line);border-radius:16px;
@@ -71,21 +63,19 @@ HOME_CSS = """
 
 @media (max-width:960px){
   .hero .wrap{grid-template-columns:1fr;gap:40px;padding-top:44px;padding-bottom:78px;}
-  .mock-wrap{max-width:520px;}
+  .flow-wrap{max-width:520px;}
 }
 @media (max-width:760px){
   .stat-strip{grid-template-columns:repeat(3,1fr);row-gap:16px;padding:18px 4px;}
   .stat{padding:2px 10px;}
   .stat .v{font-size:21px;}
   .stat .k{font-size:11px;}
-  .mock-float{left:-6px;bottom:-16px;}
-  .mock-badge{right:-4px;}
 }
 @media (max-width:560px){
   .hero h1{font-size:29px;}
-  .mock{padding:10px;border-radius:16px;}
-  .mock-card{padding:13px;}
-  .mock-float{font-size:10.5px;padding:8px 10px;}
+  .flow-card{padding:14px;}
+  .flow-row{grid-template-columns:52px minmax(0,1fr);row-gap:6px;padding:11px 12px;}
+  .flow-v{grid-column:2;justify-self:start;}
 }
 """
 
@@ -102,21 +92,20 @@ HOME_BODY = """
         </div>
       </div>
 
-      <div class="mock-wrap" aria-hidden="true">
-        <div class="mock">
-          <div class="mock-card">
-            <div class="mock-top"><span class="d"></span><span class="d"></span><span class="d"></span><b>知识库 · 已索引</b></div>
-            <div class="mock-q">首次购买 R3 及以上产品有什么要求？</div>
-            <div class="mock-a">首次购买 R3 及以上风险等级产品，须在营业网点临柜办理并完成录音录像<span class="cite">1</span>；
-              未完成风险测评或测评过期的客户，不得购买 R2 及以上产品<span class="cite">2</span>。</div>
-            <div class="mock-refs"><span>1 销售适当性实施细则 · 四、双录管理</span><span>2 客户适当性管理制度 · 一、风险测评</span></div>
-            <div class="mock-foot"><span>deepseek-chat</span><span>1.4s</span><span>2 条引用</span></div>
+      <div class="flow-wrap" aria-hidden="true">
+        <div class="flow-card">
+          <div class="flow-head"><span class="dot"></span>文档进来，两条路出去</div>
+          <div class="flow-row">
+            <span class="flow-k">关键词</span>
+            <div class="flow-txt"><b>命中清单 / 标签条目</b><small>原文片段直接返回</small></div>
+            <span class="flow-v">0 调用</span>
           </div>
-        </div>
-        <div class="mock-badge"><i></i>引用校验通过</div>
-        <div class="mock-float">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>
-          低置信度 → 转人工
+          <div class="flow-row">
+            <span class="flow-k rag">检索</span>
+            <div class="flow-txt"><b>未命中或需要推理</b><small>召回 → 生成 → 引用校验</small></div>
+            <span class="flow-v">带出处</span>
+          </div>
+          <div class="flow-foot">同一份知识库，按问题自动切换</div>
         </div>
       </div>
     </div>
@@ -191,6 +180,10 @@ ASK_CSS = """
 .ans-label{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--faint);letter-spacing:.1em;
   text-transform:uppercase;font-weight:700;margin-bottom:7px;}
 .answer{font-size:13.8px;line-height:1.85;white-space:pre-wrap;word-break:break-word;color:#233044;}
+.kw-hit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;}
+.kw-hit-t{font-size:10.5px;color:var(--faint);letter-spacing:.06em;}
+.kw-term{font-size:11px;color:var(--brand-600);background:var(--brand-soft);border:1px solid #e1e8fd;
+  border-radius:999px;padding:2px 8px;line-height:1.5;}
 .answer strong{font-weight:650;color:#0a1020;}
 .answer .cite-n{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;
   border-radius:4px;background:var(--brand-soft);color:#2a49c8;font-size:9.5px;font-weight:700;padding:0 3px;
@@ -317,7 +310,7 @@ ASK_BODY = """
 ASK_SCRIPT = JS_UTIL + """
 var qEl=document.getElementById('q'), sendBtn=document.getElementById('send'), list=document.getElementById('list');
 var busy=false, LLM_READY=null;
-var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取'};
+var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取',keyword_local:'本地关键词'};
 var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['转人工','warn'],refuse:['拒答','bad']};
 var ART='""" + _ASK_ART.replace("'", "\\'") + """';
 
@@ -376,6 +369,10 @@ function fmtAnswer(t){
 }
 function footHTML(d){
   var html='<div class="ans-foot">';
+  if(d.path==='keyword'){
+    html+=pill('本地直出 · 未调用模型','ok')+pill((d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms');
+    return html+'</div>';
+  }
   if(LLM_READY===false){ html+=pill('离线抽取','warn'); }
   else { html+='<span class="pill brand">'+esc(d.channel||'-')+' / '+esc(d.model||'-')+'</span>'; }
   html+=pill('模式 '+(MODE[d.mode]||d.mode||'-'))
@@ -392,9 +389,14 @@ function similarHTML(items){
     +'</div></div>';
 }
 function answerHTML(d){
-  var h='<div class="ans-card"><div class="ans-label"><span>回答</span>'
+  var local=d.path==='keyword';
+  var h='<div class="ans-card"><div class="ans-label"><span>'+(local?'本地直出':'回答')+'</span>'
     +(d.behavior&&BEHAVIOR[d.behavior]?'<span class="pill '+BEHAVIOR[d.behavior][1]+'">'+BEHAVIOR[d.behavior][0]+'</span>':'')
     +'</div>';
+  if(local&&d.keyword_terms&&d.keyword_terms.length){
+    h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
+      +d.keyword_terms.map(function(t){ return '<span class="kw-term">'+esc(t)+'</span>'; }).join('')+'</div>';
+  }
   h+='<div class="answer">'+fmtAnswer(d.answer)+'</div>';
   if(d.citations&&d.citations.length){
     h+='<div class="refs">'+d.citations.map(function(c){
@@ -582,10 +584,11 @@ KB_CSS = """
 .kb-list{padding:16px;}
 .kb-list table{table-layout:fixed;}
 .kb-list th:nth-child(1){width:auto;}
-.kb-list th:nth-child(2){width:64px;}
-.kb-list th:nth-child(3){width:74px;}
-.kb-list th:nth-child(4){width:116px;}
+.kb-list th:nth-child(2){width:60px;}
+.kb-list th:nth-child(3){width:70px;}
+.kb-list th:nth-child(4){width:70px;}
 .kb-list th:nth-child(5){width:112px;}
+.kb-list th:nth-child(6){width:112px;}
 .kb-list td{white-space:nowrap;}
 .kb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
 .search{position:relative;flex:1;min-width:150px;}
@@ -612,6 +615,18 @@ KB_CSS = """
 .row-actions button{padding:4px 8px;font-size:11.5px;}
 .empty-row td{padding:30px 14px !important;text-align:center;color:var(--faint);font-size:12.5px;}
 .ts{font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap;}
+.kw-btn{border:none;background:none;padding:2px 4px;font:inherit;font-size:12px;color:var(--brand-600);
+  cursor:pointer;border-bottom:1px dashed #c6d3fa;font-variant-numeric:tabular-nums;}
+.kw-btn:hover{color:var(--brand);border-bottom-color:var(--brand);}
+.kw-row td{padding:0 !important;background:#fafbff;}
+.kw-box{padding:13px 16px 15px;border-top:1px solid #eef2fb;}
+.kw-sum{font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:9px;}
+.kw-chips{display:flex;flex-wrap:wrap;gap:6px;}
+.kw-chip{font-size:11.5px;color:#334155;background:#fff;border:1px solid var(--line-2);border-radius:999px;
+  padding:3px 9px;line-height:1.5;}
+.kw-chip.hit{background:var(--brand-soft);border-color:#dbe4fd;color:var(--brand-600);font-weight:600;}
+.kw-empty{font-size:12px;color:var(--faint);}
+.kw-load{font-size:12px;color:var(--faint);}
 
 @media (max-width:900px){
   .kb-layout{grid-template-columns:1fr;}
@@ -625,10 +640,11 @@ KB_CSS = """
   .kb-toolbar .search{flex-basis:100%;}
   .chips{order:2;width:auto;flex:1;}
   .kb-sort{order:3;margin-left:auto;}
-  .kb-list th:nth-child(3), .kb-list td:nth-child(3),
-  .kb-list th:nth-child(4), .kb-list td:nth-child(4){display:none;}
+  .kb-list th:nth-child(4), .kb-list td:nth-child(4),
+  .kb-list th:nth-child(5), .kb-list td:nth-child(5){display:none;}
   .kb-list th:nth-child(2){width:54px;}
-  .kb-list th:nth-child(5){width:104px;}
+  .kb-list th:nth-child(3){width:64px;}
+  .kb-list th:nth-child(6){width:104px;}
 }
 """
 
@@ -666,8 +682,8 @@ KB_BODY = """
       <section class="card tips">
         <div class="side-title">说明</div>
         <div><i></i><span>审批通过后切分并重建索引；本机管理员直通时立即生效。</span></div>
-        <div><i></i><span>PDF / Word 由服务端转成 Markdown；扫描件需先 OCR。</span></div>
-        <div><i></i><span>删除文档后，对应文档用例会在下次运行时自动跳过。</span></div>
+        <div><i></i><span>清单 / 标签类条目命中后本地直出，不调用模型。</span></div>
+        <div><i></i><span>PDF / Word 服务端转 Markdown；扫描件需先 OCR。</span></div>
       </section>
     </div>
 
@@ -694,7 +710,7 @@ KB_BODY = """
 
       <div class="table-wrap">
         <table>
-          <thead><tr><th>文件</th><th class="num">知识块</th><th class="num">大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
+          <thead><tr><th>文件</th><th class="num">知识块</th><th class="num">关键词</th><th class="num">大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
           <tbody id="kbBody"></tbody>
         </table>
       </div>
@@ -745,14 +761,15 @@ function render(){
   $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
   $('kbHint').textContent=total?('合计 '+chunks+' 个知识块'):'';
   if(!list.length){
-    $('kbBody').innerHTML=emptyRow(5,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx');
+    $('kbBody').innerHTML=emptyRow(6,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx');
     return;
   }
   $('kbBody').innerHTML=list.map(function(f){
-    var t=typeOf(f.name);
-    return '<tr><td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
+    var t=typeOf(f.name), kws=f.keywords||[], kc=(f.keyword_count!=null?f.keyword_count:kws.length);
+    return '<tr data-name="'+esc(f.name)+'"><td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
       +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span></div></td>'
       +'<td class="num"><span class="pill">'+f.chunks+'</span></td>'
+      +'<td class="num"><button class="kw-btn" type="button" data-kw="'+esc(f.name)+'" title="'+(kws.length?esc(kws.join(' · ')):'暂无关键词')+'">'+(kc?kc:'—')+'</button></td>'
       +'<td class="num mono" style="font-size:11px;color:var(--muted)">'+sizeText(f.size)+'</td>'
       +'<td class="ts">'+esc(f.mtime||'—')+'</td>'
       +'<td><div class="row-actions">'
@@ -760,6 +777,32 @@ function render(){
       +'<button class="btn danger-ghost sm del" data-name="'+esc(f.name)+'">删除</button>'
       +'</div></td></tr>';
   }).join('');
+  renderKwMeta();
+}
+function renderKwMeta(){
+  var kw=KB.keywords||{}, n=kw.terms||0;
+  $('kbMeta').textContent=(KB.files||[]).length+' 份 · '+(KB.total_chunks||0)+' 块'
+    +(n?(' · 关键词 '+n):'')+(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
+}
+function closeKw(){
+  var row=document.querySelector('.kw-row'); if(row) row.remove();
+}
+async function toggleKw(name,btn){
+  var open=document.querySelector('.kw-row');
+  if(open&&open.dataset.name===name){ open.remove(); return; }
+  if(open) open.remove();
+  var tr=document.createElement('tr'); tr.className='kw-row'; tr.dataset.name=name;
+  tr.innerHTML='<td colspan="6"><div class="kw-box"><span class="kw-load">读取关键词…</span></div></td>';
+  (btn.closest('tr')||btn.parentNode.parentNode).after(tr);
+  try{
+    var d=await (await fetch('/api/keywords?name='+encodeURIComponent(name))).json();
+    var terms=(d.terms||[]).filter(function(t){ return t.kind!=='heading'; });
+    var chips=terms.map(function(t){ return '<span class="kw-chip" title="'+esc(t.section)+'">'+esc(t.term)+'</span>'; }).join('');
+    tr.querySelector('.kw-box').innerHTML=(d.summary?'<div class="kw-sum">'+esc(d.summary)+'</div>':'')
+      +'<div class="kw-chips">'+(chips||'<span class="kw-empty">这份文档没有可直出的条目</span>')+'</div>';
+  }catch(e){
+    tr.querySelector('.kw-box').innerHTML='<span class="kw-empty">读取失败：'+esc(e.message||e)+'</span>';
+  }
 }
 
 async function loadKb(){
@@ -843,6 +886,8 @@ $('kbFilters').onclick=function(e){
 $('kbSort').onchange=function(){ SORT=this.value; render(); };
 
 $('kbBody').onclick=async function(ev){
+  var kw=ev.target.closest('.kw-btn');
+  if(kw){ await toggleKw(kw.dataset.kw, kw); return; }
   var g=ev.target.closest('.gen');
   if(g){
     var n=parseInt(window.prompt('为「'+g.dataset.name+'」生成几条评测用例？（1-8）','3'),10)||3;

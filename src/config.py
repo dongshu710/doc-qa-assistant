@@ -66,6 +66,12 @@ class Settings:
     vector_ivf_nprobe: int = 8
     # 输入
     max_input_chars: int = 500
+    # 关键词直出：结构化条目命中后在本地输出，不调用任何 API
+    keyword_mode: str = "on"            # on | off
+    keyword_llm: str = "auto"           # auto=有 Key 才做整理 | off | on
+    keyword_index: str = "data/index/keywords.json"
+    keyword_top_n: int = 3
+    keyword_llm_max_chars: int = 2400
     # LLM：超时与重试必须显式，禁止依赖默认值
     llm_timeout_s: float = 30.0
     llm_max_retries: int = 3
@@ -108,6 +114,12 @@ def load_settings() -> Settings:
     # 各检索器的分数尺度不同：BM25 是 0~20+ 原始分，hashing/embedding 归一化到 0~1。
     # 阈值必须分模式给默认值，否则换检索器会把所有问题打成“转人工”。
     default_min = {"embedding": "0.38", "hybrid": "0.30", "vector": "0.30"}.get(retrieval, "0.5")
+    keyword_mode = (_first_env("KEYWORD_MODE", default="on") or "on").strip().lower()
+    if keyword_mode not in ("on", "off"):
+        keyword_mode = "on"
+    keyword_llm = (_first_env("KEYWORD_LLM", default="auto") or "auto").strip().lower()
+    if keyword_llm not in ("off", "auto", "on"):
+        keyword_llm = "auto"
     return Settings(
         channel=endpoint_label(base),
         top_k=int(_first_env("TOP_K", default="4")),
@@ -117,6 +129,11 @@ def load_settings() -> Settings:
         query_expansion=expansion,
         profile=(_first_env("APP_PROFILE", default="finance") or "finance").strip().lower(),
         max_input_chars=int(_first_env("MAX_INPUT_CHARS", default="500")),
+        keyword_mode=keyword_mode,
+        keyword_llm=keyword_llm,
+        keyword_index=_first_env("KEYWORD_INDEX", default="data/index/keywords.json"),
+        keyword_top_n=max(1, min(8, int(_first_env("KEYWORD_TOP_N", default="3")))),
+        keyword_llm_max_chars=int(_first_env("KEYWORD_LLM_MAX_CHARS", default="2400")),
         llm_timeout_s=float(_first_env("LLM_TIMEOUT_S", default="30")),
         llm_max_retries=int(_first_env("LLM_MAX_RETRIES", default="3")),
         wall_clock_budget_s=float(_first_env("WALL_CLOCK_BUDGET_S", default="60")),

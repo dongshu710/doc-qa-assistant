@@ -11,7 +11,8 @@
   GET  /metrics          Prometheus 文本指标
   GET  /api/examples     按当前知识库生成示例问题
   GET  /api/metrics      业务聚合指标
-  GET  /api/knowledge    知识库文件、块数与活动版本
+  GET  /api/knowledge    知识库文件、块数、每份文档的关键词与活动版本
+  GET  /api/keywords     关键词总览；带 name= 时返回单文档条目与摘要
   GET  /api/kb/versions  版本列表
   GET  /api/kb/changes   变更审批记录
   GET  /api/kb/doc_history?name=... 单文档版本历史
@@ -23,6 +24,7 @@
   POST /api/ask          {"query": "..."}；支持 Idempotency-Key
   POST /api/feedback     {"trace_id","useful","comment"}
   POST /api/reload       重新加载知识库
+  POST /api/keywords/rebuild {} 重建关键词（接入 API 时整理变更文档，需 admin）
   POST /api/admin/config {"canary_percent","canary_model"} 调整灰度（需 admin）
   POST /api/admin/rollback {} 回滚上一版配置（需 admin）
   POST /api/kb/approve   {"change_id"} 审批并生成新版本（需 admin）
@@ -245,6 +247,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "retrieval": pipe.settings.retrieval,
                     "retrieval_detail": pipe.retrieval_detail,
                     "kb": store.status() if store is not None else {"enabled": False},
+                    "keywords": pipe.keyword_detail,
                     "guards": guards.status(),
                 })
             elif path == "/metrics":
@@ -329,10 +332,35 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                 "mtime": datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M"),
                             })
                 self._json({
-                    "files": files,
+                    "files": [
+                        {**f,
+                         "keywords": pipe.keywords.top_terms(f["name"].rsplit(".", 1)[0], 5),
+                         "keyword_count": len(pipe.keywords.top_terms(
+                             f["name"].rsplit(".", 1)[0], 999))}
+                        for f in files
+                    ],
                     "total_chunks": len(pipe.chunks),
                     "version": store.active_version() if store is not None else None,
                     "pending_changes": store.status()["pending_changes"] if store is not None else 0,
+                    "keywords": pipe.keywords.summary(),
+                })
+            elif path == "/api/keywords":
+                name = _safe_kb_name((qs.get("name") or [""])[0])
+                if name:
+                    doc_id = name.rsplit(".", 1)[0]
+                    if doc_id not in pipe.keywords.docs:
+                        self._json({"error": "文档不存在或未生成关键词"}, 404)
+                        return
+                    self._json(pipe.keywords.doc_view(doc_id))
+                    return
+                self._json({
+                    "summary": pipe.keywords.summary(),
+                    "docs": [
+                        {"doc_id": doc_id, "title": meta.get("title") or doc_id,
+                         "count": sum(1 for e in pipe.keywords.entries if e.doc_id == doc_id),
+                         "terms": pipe.keywords.top_terms(doc_id, 8)}
+                        for doc_id, meta in pipe.keywords.docs.items()
+                    ],
                 })
             elif path == "/api/kb/versions":
                 if store is None:
@@ -379,6 +407,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                             "/api/knowledge/upload_file", "/api/knowledge/delete",
                             "/api/cases/from_doc", "/api/cases/run",
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
+                            "/api/keywords/rebuild",
                             "/api/admin/config", "/api/admin/rollback"):
                 self._json({"error": "not found"}, 404)
                 return
@@ -777,6 +806,20 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._json({"ok": True})
                 return
 
+            if path == "/api/keywords/rebuild":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                try:
+                    detail = pipe.rebuild_keywords(enrich=True)
+                    guards.audit.write("keywords.rebuild", client=self._client(),
+                                       entries=detail.get("entries"), llm=detail.get("llm"))
+                    self._json({"ok": True, "keywords": detail,
+                                "summary": pipe.keywords.summary()})
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": str(exc)}, 500)
+                return
+
             if path == "/api/reload":
                 try:
                     total = reload_kb()
@@ -883,7 +926,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
             behavior = str(result.get("behavior") or "unknown")
             mode = str(result.get("mode") or "none")
+            answer_path = str(result.get("path") or "rag")
             metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
+            metrics.inc("rag_answer_path_total", {"path": answer_path})
+            if answer_path == "keyword":
+                metrics.inc("rag_keyword_hit_total")
+            if not result.get("api_called"):
+                metrics.inc("rag_local_answer_total")
             metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "200"})
             metrics.observe("rag_ask_duration_seconds",
                             result.get("latency_ms", 0) / 1000.0 or (time.time() - started))
@@ -901,12 +950,15 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 retrieval_score=result.get("retrieval_score"), model=result.get("model"),
                 canary=bool(model), budget_blocked=budget_blocked, tokens=tokens,
                 llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
-                latency_ms=result.get("latency_ms"),
+                latency_ms=result.get("latency_ms"), path=answer_path,
+                api_called=bool(result.get("api_called")),
+                keyword_terms=result.get("keyword_terms"),
             )
             self._json(result, extra_headers={
                 "X-RateLimit-Remaining": decision.remaining,
                 "X-Retrieval": str(result.get("retrieval_mode") or pipe.settings.retrieval),
                 "X-Request-Id": request_id,
+                "X-Answer-Path": answer_path,
             })
 
         def log_message(self, fmt: str, *args) -> None:
