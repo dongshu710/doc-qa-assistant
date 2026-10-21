@@ -57,6 +57,15 @@ jobs:
       - name: 关键词评测（应直出 / 不应直出）
         run: python tests/eval_keyword.py
 
+      - name: 多轮会话上下文
+        run: python tests/test_session.py
+
+      - name: 流式问答 SSE
+        run: python tests/test_stream.py
+
+      - name: 生成层流式解析与截断降级
+        run: python tests/test_generator_stream.py
+
       - name: 生产防护单测
         run: python tests/test_guards.py
 

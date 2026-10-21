@@ -340,7 +340,7 @@ def footer(links: bool = True) -> str:
         '<footer class="site-foot"><div class="foot-inner">'
         f'<div class="foot-brand">{MARK}<span>{BRAND}</span></div>'
         f'{nav_links}'
-        '<div class="foot-note">只依据知识库作答，逐条标注出处；资料不足时转人工。<br>'
+        '<div class="foot-note">只依据知识库作答，逐条标注出处；资料不足时明确说明无法找到答案。<br>'
         '演示知识库为模拟样本与公开条款摘录，不构成投资建议。</div>'
         "</div></footer>"
     )

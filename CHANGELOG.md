@@ -2,6 +2,26 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.6.0] - 2026-10-21
+
+P0 五项落地：流式输出、多轮会话、引用原文、审批界面、知识库接口预计算；未命中不再转人工。
+
+### 新增
+
+- **流式问答**：`POST /api/ask/stream` 以 SSE 返回 `delta` / `replace` / `final`；生成层解析上游 `stream:true`，检测 `[DONE]` 缺失（连接被掐断）并整体降级为抽取式；前端边收边渲染，发送按钮在生成中变为「停止」，`AbortController` 可中断。
+- **多轮会话**：`src/sessions.py` 保存最近 3 轮（30 分钟 TTL、最多 1000 会话）；`session_id` 随请求上报，追问（「那 R2 呢」）会拼上上一轮问题，独立问题不拼；`POST /api/session/clear` 清理。
+- **引用原文**：citation 增加 `doc_id` / `chunk_index` / `version` / `snippet`；新增 `GET /api/source?doc=&chunk=`，问答页点击 `[1]` 打开右侧原文抽屉并高亮命中行。
+- **审批界面**：知识库页展示待审批变更、文件动作与风险提示；`GET /api/kb/change?id=` 返回统一 diff，可直接通过/驳回；每份文档新增「历史」入口与文档级回滚；配置 `ADMIN_TOKEN` 时可在面板内填写令牌（存 sessionStorage）。
+- **知识库关键词预计算**：`KeywordIndex._build_doc_terms()` 在建索引时按文档缓存关键词；`/api/knowledge` 与 `/api/keywords` 不再逐文档全量扫描（500 文档/2.5 万条目实测 506 ms → 0.26 ms，构建一次 10 ms）。
+- **测试**：`test_session`（上下文改写/TTL/轮数）、`test_stream`（SSE 事件顺序/多轮/未命中）、`test_generator_stream`（真实 SSE 解析/用量/截断替换）；CI 增加三步。
+
+### 变更
+
+- **未命中不再转人工**：`no_answer` 统一返回「无法找到答案。」；删除 `/api/handoff`、工单表单、`logs/handoff.jsonl` 与页面转人工入口；相似问题保留。
+- `/api/ask` 响应增加 `session_id` / `context_query` / `turn` / `kb_version`；审计记录 `session_id` 与 `stream`。
+- 知识库页每行新增「历史」按钮；问答页引用由纯文本改为可点击按钮。
+- 版本升到 1.6.0。
+
 ## [1.5.0] - 2026-10-21
 
 关键词直出精度治理：命中之后加否定/极性、解释型意图、单文档收敛四道闸门，匹配改为倒排索引。

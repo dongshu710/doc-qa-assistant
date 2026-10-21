@@ -122,15 +122,66 @@ def repair_citation(query: str, hits, answer: str) -> str | None:
     return text.strip() or None
 
 
+def build_messages(query: str, hits) -> list[dict]:
+    """生成与流式共用同一份提示，避免两条路径的答案口径不一致。"""
+    return [
+        {"role": "system", "content": system_prompt()},
+        {"role": "user", "content": f"【资料】\n{_build_context(hits)}\n\n【问题】{query}"},
+    ]
+
+
 def _call_llm(query: str, hits, model: str | None = None) -> tuple[str, dict]:
-    return chat(
-        [
-            {"role": "system", "content": system_prompt()},
-            {"role": "user", "content": f"【资料】\n{_build_context(hits)}\n\n【问题】{query}"},
-        ],
-        temperature=0.1,
-        model=model,
+    return chat(build_messages(query, hits), temperature=0.1, model=model)
+
+
+def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | None = None,
+                timeout_s: float | None = None, usage_out: dict | None = None):
+    """OpenAI 兼容的流式对话：逐段 yield 文本增量。
+
+    只在生成层使用：上游一旦开始输出就不再重试（半截答案重试会产生重复内容），
+    出错由调用方降级为抽取式并让前端整体替换。
+    """
+    settings = load_settings()
+    key = api_key()
+    if not key:
+        raise RuntimeError("LLM_API_KEY 未配置")
+    payload = {
+        "model": model or settings.model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": True,
+    }
+    req = urllib.request.Request(
+        settings.api_base.rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
     )
+    saw_done = False
+    with urllib.request.urlopen(req, timeout=timeout_s or settings.llm_timeout_s) as resp:
+        for raw in resp:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":") or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                saw_done = True
+                break
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if usage_out is not None and isinstance(obj.get("usage"), dict):
+                usage_out.update(obj["usage"])
+            for choice in obj.get("choices") or []:
+                if choice.get("finish_reason"):
+                    saw_done = True
+                delta = (choice.get("delta") or {}).get("content")
+                if delta:
+                    yield delta
+    if not saw_done:
+        # 连接被中途掐断时，半截答案不能当完整答案交付
+        raise RuntimeError("流式响应提前结束")
 
 
 def _is_retryable(exc: Exception) -> bool:

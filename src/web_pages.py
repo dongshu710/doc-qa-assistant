@@ -1,7 +1,7 @@
 """原型页面（首页 / 问答 / 知识库 / 评测看板）。
 
 覆盖一条完整使用路径：首页入口、提问输入、答案与引用、多轮追问、
-答不出转人工、反馈回流、后台（知识库 + 评测看板）。
+答不出明确说明、反馈回流、后台（知识库 + 评测看板）。
 
 设计系统在 theme.py；本文件只放各页面的结构与交互。全部为内联 HTML/CSS/JS，
 不依赖 CDN、字体文件或前端框架，断网也能完整打开。
@@ -190,7 +190,23 @@ ASK_CSS = """
   vertical-align:1px;margin:0 1px;}
 .refs{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;}
 .ref{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;background:var(--brand-tint);border:1px solid #e4eafd;
-  color:#34457a;padding:3px 9px 3px 4px;border-radius:8px;line-height:1.5;}
+  color:#34457a;padding:3px 9px 3px 4px;border-radius:8px;line-height:1.5;cursor:pointer;font-family:inherit;transition:all .14s;}
+.ref:hover{border-color:#c3d0f8;background:var(--brand-soft);color:var(--brand-600);}
+.src-mask{position:fixed;inset:0;background:rgba(10,16,32,.34);z-index:80;}
+.src-drawer{position:fixed;top:0;right:0;height:100%;width:min(540px,94vw);background:#fff;z-index:81;
+  box-shadow:-24px 0 60px -30px rgba(10,16,32,.55);display:flex;flex-direction:column;
+  transform:translateX(8px);opacity:0;transition:transform .18s ease,opacity .18s ease;}
+.src-drawer.open{transform:none;opacity:1;}
+.src-head{display:flex;align-items:flex-start;gap:12px;padding:16px 18px 13px;border-bottom:1px solid var(--line);}
+.src-head b{font-size:14px;color:var(--ink);line-height:1.5;}
+.src-sub{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.6;}
+.src-close{margin-left:auto;border:none;background:#f3f5fa;width:28px;height:28px;border-radius:8px;
+  font-size:17px;line-height:1;color:var(--muted);cursor:pointer;flex:none;}
+.src-close:hover{background:#e9edf7;color:var(--ink);}
+.src-text{margin:0;padding:18px;overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font-size:13px;line-height:1.9;color:#344054;font-family:inherit;flex:1;}
+.src-text mark{background:#fff3bf;color:#6b4b00;border-radius:3px;padding:0 1px;}
+[hidden]{display:none !important;}
 .ref b{width:16px;height:16px;border-radius:5px;background:var(--brand);color:#fff;font-size:9.5px;
   display:flex;align-items:center;justify-content:center;font-weight:600;flex:none;}
 .ans-foot{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;padding-top:11px;border-top:1px dashed #e8ecf5;}
@@ -219,14 +235,6 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 .fb-note input{flex:1;padding:7px 10px;border:1px solid var(--line-2);border-radius:8px;font-size:12px;outline:none;font-family:inherit;}
 .fb-note input:focus{border-color:var(--brand);}
 
-.handoff{background:var(--warn-soft);border:1px solid #f6e4c3;border-radius:4px 14px 14px 14px;padding:16px 17px;}
-.handoff h4{font-size:13.5px;color:#7a4b00;margin-bottom:6px;display:flex;align-items:center;gap:7px;}
-.handoff p{font-size:13px;color:#8a5a10;line-height:1.8;white-space:pre-wrap;}
-.handoff form{display:flex;gap:7px;margin-top:13px;flex-wrap:wrap;}
-.handoff input{flex:1;min-width:180px;padding:8px 11px;border:1px solid #eddbb9;border-radius:8px;font-size:12.5px;
-  outline:none;background:#fff;font-family:inherit;}
-.handoff input:focus{border-color:#d9a94a;box-shadow:0 0 0 3px rgba(217,169,74,.16);}
-.handoff .hint{font-size:10.5px;color:#a97a33;margin-top:9px;line-height:1.6;}
 .sim{margin-top:14px;padding-top:12px;border-top:1px dashed #eddbb9;}
 .sim-title{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#a97a33;margin-bottom:7px;}
 .sim-list{display:flex;flex-direction:column;gap:5px;}
@@ -254,6 +262,7 @@ details.src[open] summary .ic{transform:rotate(90deg);}
   display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;
   box-shadow:0 6px 16px -10px rgba(47,92,246,.95);transition:filter .15s,transform .12s;}
 .send:hover{filter:brightness(1.05);}
+.send.stop{background:#d92d20;box-shadow:0 6px 16px -10px rgba(217,45,32,.8);}
 .send:active{transform:translateY(1px);}
 .send[disabled]{opacity:.5;cursor:not-allowed;}
 .composer-hint{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:10.5px;color:var(--faint);margin-top:7px;padding:0 2px;}
@@ -304,14 +313,32 @@ ASK_BODY = """
       </div>
     </div>
   </section>
+  <div class="src-mask" id="srcMask" hidden></div>
+  <aside class="src-drawer" id="srcDrawer" hidden aria-label="引用原文">
+    <div class="src-head">
+      <div><b id="srcTitle">原文</b><div class="src-sub" id="srcSub"></div></div>
+      <button class="src-close" id="srcClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <pre class="src-text" id="srcText"></pre>
+  </aside>
 </main>
 """
 
 ASK_SCRIPT = JS_UTIL + """
 var qEl=document.getElementById('q'), sendBtn=document.getElementById('send'), list=document.getElementById('list');
 var busy=false, LLM_READY=null;
+var SESSION_KEY='rag_session_id';
+function newSessionId(){
+  try{ if(window.crypto&&crypto.randomUUID) return crypto.randomUUID(); }catch(e){}
+  return 's'+Date.now().toString(36)+Math.random().toString(16).slice(2,10);
+}
+function loadSessionId(){
+  try{ return sessionStorage.getItem(SESSION_KEY)||newSessionId(); }catch(e){ return newSessionId(); }
+}
+function saveSessionId(id){ try{ sessionStorage.setItem(SESSION_KEY,id); }catch(e){} }
+var SESSION_ID=loadSessionId(); saveSessionId(SESSION_ID);
 var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取',keyword_local:'本地关键词'};
-var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['转人工','warn'],refuse:['拒答','bad']};
+var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['未找到','warn'],refuse:['拒答','bad']};
 var ART='""" + _ASK_ART.replace("'", "\\'") + """';
 
 function scrollBottom(){ list.scrollTop=list.scrollHeight; }
@@ -369,6 +396,9 @@ function fmtAnswer(t){
 }
 function footHTML(d){
   var html='<div class="ans-foot">';
+  if(d.behavior!=='answer'){
+    return html+pill((d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms')+'</div>';
+  }
   if(d.path==='keyword'){
     html+=pill('本地直出 · 未调用模型','ok')+pill((d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms');
     return html+'</div>';
@@ -390,8 +420,10 @@ function similarHTML(items){
 }
 function answerHTML(d){
   var local=d.path==='keyword';
-  var h='<div class="ans-card"><div class="ans-label"><span>'+(local?'本地直出':'回答')+'</span>'
+  var head=d.behavior==='no_answer'?'未找到答案':(d.behavior==='refuse'?'拒答':(d.behavior==='ask_clarify'?'需要澄清':(local?'本地直出':'回答')));
+  var h='<div class="ans-card"><div class="ans-label"><span>'+head+'</span>'
     +(d.behavior&&BEHAVIOR[d.behavior]?'<span class="pill '+BEHAVIOR[d.behavior][1]+'">'+BEHAVIOR[d.behavior][0]+'</span>':'')
+    +(d.turn>1?'<span class="pill">第 '+d.turn+' 轮</span>':'')
     +'</div>';
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
@@ -400,7 +432,8 @@ function answerHTML(d){
   h+='<div class="answer">'+fmtAnswer(d.answer)+'</div>';
   if(d.citations&&d.citations.length){
     h+='<div class="refs">'+d.citations.map(function(c){
-      return '<span class="ref"><b>'+esc(c.ref)+'</b>'+esc(c.title)+' · '+esc(c.section)+'</span>';
+      return '<button type="button" class="ref" data-doc="'+esc(c.doc_id||'')+'" data-chunk="'+(c.chunk_index==null?'':c.chunk_index)+'"'
+        +' data-snippet="'+esc(c.snippet||'')+'" title="查看原文"><b>'+esc(c.ref)+'</b>'+esc(c.title)+' · '+esc(c.section)+'</button>';
     }).join('')+'</div>';
   }
   if(d.retrieved&&d.retrieved.length){
@@ -417,34 +450,40 @@ function answerHTML(d){
   h+=footHTML(d)+'</div>';
   return h;
 }
-function handoffHTML(d){
-  return '<div class="handoff"><h4>'
-    +'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17h.01"/></svg>'
-    +'没有在文档中找到相关问题</h4>'
-    +'<p>可以换个问法，或从下面的相似问题开始；也可以留个联系方式转人工。</p>'
-    +similarHTML(d.similar_questions)
-    +'<form><input name="contact" placeholder="联系方式（选填，便于回电）" autocomplete="off">'
-    +'<button class="btn sm" type="submit">提交工单</button></form>'
-    +'<div class="hint">工单会带上本次 trace 供同事复核。</div></div>';
-}
-function bindHandoff(body,d,query){
-  var form=body.querySelector('.handoff form');
-  if(!form) return;
-  form.onsubmit=async function(ev){
-    ev.preventDefault();
-    var btn=form.querySelector('button'); btn.disabled=true; btn.textContent='提交中…';
+function bindSource(){
+  var drawer=document.getElementById('srcDrawer'), mask=document.getElementById('srcMask');
+  var titleEl=document.getElementById('srcTitle'), subEl=document.getElementById('srcSub');
+  var textEl=document.getElementById('srcText');
+  function close(){
+    drawer.classList.remove('open');
+    drawer.hidden=true; mask.hidden=true; textEl.textContent='';
+  }
+  async function open(btn){
+    var doc=btn.dataset.doc, chunk=btn.dataset.chunk, snippet=btn.dataset.snippet||'';
+    if(!doc||chunk===''){ toast('这条引用缺少原文定位',true); return; }
+    mask.hidden=false; drawer.hidden=false;
+    requestAnimationFrame(function(){ drawer.classList.add('open'); });
+    titleEl.textContent='读取原文…'; subEl.textContent=''; textEl.textContent='';
     try{
-      var r=await (await fetch('/api/handoff',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({trace_id:d.trace_id,query:query,contact:form.contact.value})})).json();
-      if(r.ok){
-        form.innerHTML='<span class="pill ok"><span class="dot"></span>已提交 · 工单号 '+esc(r.ticket)+'</span>';
-        toast('工单已创建：'+r.ticket);
-      }else{
-        btn.disabled=false; btn.textContent='提交工单'; toast('提交失败：'+(r.error||''),true);
-      }
-    }catch(e){ btn.disabled=false; btn.textContent='提交工单'; toast('提交失败：'+e,true); }
-  };
+      var r=await fetch('/api/source?doc='+encodeURIComponent(doc)+'&chunk='+encodeURIComponent(chunk));
+      var d=await r.json();
+      if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+      titleEl.textContent=d.title||doc;
+      subEl.textContent=(d.section||'')+' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
+      var safe=esc(d.text||'');
+      var needle=esc(snippet);
+      if(needle && safe.indexOf(needle)>=0){ safe=safe.replace(needle,'<mark>'+needle+'</mark>'); }
+      textEl.innerHTML=safe;
+    }catch(e){
+      titleEl.textContent='读取失败'; textEl.textContent=String(e.message||e);
+    }
+  }
+  document.getElementById('srcClose').onclick=close;
+  mask.onclick=close;
+  return {open:open, close:close};
 }
+var sourceView=bindSource();
+
 function bindFeedback(body,d){
   var fb=document.createElement('div'); fb.className='fb';
   fb.innerHTML='<span class="fb-q">这条回答对你有帮助吗？</span>'
@@ -482,11 +521,40 @@ function bindFeedback(body,d){
   };
 }
 
+var ICON_SEND='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>';
+var ICON_STOP='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
+var controller=null;
+function setBusy(on){
+  busy=on;
+  sendBtn.classList.toggle('stop',on);
+  sendBtn.setAttribute('aria-label',on?'停止生成':'发送');
+  sendBtn.innerHTML=on?ICON_STOP:ICON_SEND;
+}
+async function readSSE(resp,onEvent){
+  var reader=resp.body.getReader(), decoder=new TextDecoder(), buf='';
+  while(true){
+    var step=await reader.read();
+    if(step.done) break;
+    buf+=decoder.decode(step.value,{stream:true});
+    var cut;
+    while((cut=buf.indexOf('\\n\\n'))>=0){
+      var block=buf.slice(0,cut); buf=buf.slice(cut+2);
+      var name='message', data='';
+      block.split('\\n').forEach(function(line){
+        if(line.indexOf('event:')===0) name=line.slice(6).trim();
+        else if(line.indexOf('data:')===0) data+=line.slice(5).trim();
+      });
+      if(data){ onEvent(name, JSON.parse(data)); }
+    }
+  }
+}
+
 async function ask(){
   var query=qEl.value.trim();
   if(!query){ qEl.focus(); return; }
   if(busy) return;
-  busy=true; sendBtn.disabled=true;
+  setBusy(true);
+  controller=new AbortController();
   var empty=list.querySelector('.empty-chat'); if(empty) list.innerHTML='';
 
   addUser(query);
@@ -495,43 +563,87 @@ async function ask(){
   scrollBottom();
   qEl.value=''; autoGrow();
 
+  var answerEl=null, raw='';
+  function ensureAnswer(){
+    if(answerEl) return answerEl;
+    body.innerHTML='<div class="ans-card"><div class="ans-label"><span>回答中</span></div>'
+      +'<div class="answer streaming"></div></div>';
+    answerEl=body.querySelector('.answer');
+    return answerEl;
+  }
+  function finish(data){
+    if(data.session_id){ SESSION_ID=data.session_id; saveSessionId(SESSION_ID); }
+    body.innerHTML=answerHTML(data);
+    if(data.behavior==='answer'){ bindFeedback(body,data); }
+  }
+
   var timer=setTimeout(function(){
     var t=body.querySelector('.think-text'); if(t) t.textContent='正在组织答案并校验引用…';
   },900);
 
   try{
-    var resp=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:query})});
-    var data=await resp.json();
-    clearTimeout(timer);
+    var resp=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:query,session_id:SESSION_ID}),signal:controller.signal});
     if(!resp.ok){
-      if(resp.status===429) throw new Error('请求太频繁，请 '+(data.retry_after||1)+' 秒后重试');
-      throw new Error(data.error||('HTTP '+resp.status));
+      var errData={};
+      try{ errData=await resp.json(); }catch(e){}
+      if(resp.status===429) throw new Error('请求太频繁，请 '+(errData.retry_after||1)+' 秒后重试');
+      throw new Error(errData.error||('HTTP '+resp.status));
     }
-    if(LLM_READY===null && window.healthP){ try{ await healthP; }catch(e){} }
-    if(data.behavior==='answer'){
-      body.innerHTML=answerHTML(data);
-      bindFeedback(body,data);
-    }else{
-      body.innerHTML=handoffHTML(data);
-      bindHandoff(body,data,query);
+    var ctype=resp.headers.get('Content-Type')||'';
+    if(ctype.indexOf('text/event-stream')<0){
+      finish(await resp.json());
+      return;
     }
+    var finalData=null;
+    await readSSE(resp,function(name,data){
+      if(name==='delta'){
+        clearTimeout(timer);
+        ensureAnswer().textContent += (data.text||'');
+        scrollBottom();
+      }else if(name==='replace'){
+        ensureAnswer().textContent = (data.text||'');
+        scrollBottom();
+      }else if(name==='final'){
+        finalData=data;
+      }else if(name==='error'){
+        throw new Error(data.error||'生成失败');
+      }
+    });
+    if(!finalData) throw new Error('流式响应未完成');
+    finish(finalData);
   }catch(err){
     clearTimeout(timer);
-    body.innerHTML='<div class="ans-card" style="border-color:#f6d3d0"><div class="ans-label"><span>请求失败</span></div>'
-      +'<div class="answer">'+esc(err.message||String(err))+'</div></div>';
+    if(err && err.name==='AbortError'){
+      if(answerEl){ answerEl.textContent += '\\n\\n（已停止生成）'; }
+      else { body.innerHTML='<div class="ans-card"><div class="answer">已停止生成。</div></div>'; }
+      toast('已停止生成');
+    }else{
+      body.innerHTML='<div class="ans-card" style="border-color:#f6d3d0"><div class="ans-label"><span>请求失败</span></div>'
+        +'<div class="answer">'+esc(err.message||String(err))+'</div></div>';
+    }
   }finally{
-    busy=false; sendBtn.disabled=false; qEl.focus(); scrollBottom();
+    clearTimeout(timer);
+    setBusy(false); controller=null; qEl.focus(); scrollBottom();
   }
 }
 
-sendBtn.onclick=ask;
+sendBtn.onclick=function(){
+  if(busy && controller){ controller.abort(); return; }
+  ask();
+};
 qEl.addEventListener('input',autoGrow);
 qEl.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); ask(); }
 });
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') sourceView.close(); });
 document.getElementById('clear').onclick=function(){
   if(!list.querySelector('.msg')){ return; }
-  list.innerHTML=''; renderEmpty(); toast('已清空本轮对话');
+  var old=SESSION_ID;
+  SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
+  fetch('/api/session/clear',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({session_id:old})}).catch(function(){});
+  list.innerHTML=''; renderEmpty(); toast('已清空对话');
 };
 
 var healthP=fetch('/api/health').then(function(r){return r.json();}).then(function(h){
@@ -539,6 +651,8 @@ var healthP=fetch('/api/health').then(function(r){return r.json();}).then(functi
 }).catch(function(){});
 
 list.addEventListener('click',function(e){
+  var ref=e.target.closest('.ref');
+  if(ref){ sourceView.open(ref); return; }
   var b=e.target.closest('.sim-q');
   if(!b) return;
   qEl.value=b.textContent; autoGrow(); ask();
@@ -628,6 +742,36 @@ KB_CSS = """
 .kw-empty{font-size:12px;color:var(--faint);}
 .kw-load{font-size:12px;color:var(--faint);}
 
+.approve{margin:0 0 12px;padding:0 13px 13px;border:1px solid #f0dfc0;background:#fffdf7;border-radius:12px;}
+.approve-head{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px dashed #f0e2c8;}
+.approve-head b{font-size:12.5px;color:#7a4b00;}
+.approve-head .sp{margin-left:auto;display:flex;gap:6px;}
+.appr-item{padding:10px 0;border-bottom:1px solid #f7edda;}
+.appr-item:last-of-type{border-bottom:none;}
+.appr-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.appr-top b{font-size:12px;font-family:var(--mono);color:#6b4b00;}
+.appr-files{font-size:11.5px;color:#8a6a33;margin-top:4px;line-height:1.7;word-break:break-word;}
+.appr-actions{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;}
+.appr-token{display:flex;gap:6px;margin-top:10px;align-items:center;font-size:11.5px;color:#8a6a33;flex-wrap:wrap;}
+.appr-token input{flex:1;min-width:160px;padding:6px 9px;border:1px solid #e8d7b6;border-radius:7px;font-size:12px;
+  font-family:inherit;outline:none;background:#fff;}
+.kb-mask{position:fixed;inset:0;background:rgba(10,16,32,.35);z-index:80;}
+.kb-modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(780px,94vw);max-height:86vh;
+  background:#fff;border-radius:14px;z-index:81;display:flex;flex-direction:column;
+  box-shadow:0 30px 80px -30px rgba(10,16,32,.55);}
+.kb-modal-head{display:flex;align-items:center;gap:10px;padding:14px 17px;border-bottom:1px solid var(--line);}
+.kb-modal-head b{font-size:14px;color:var(--ink);}
+.kb-modal-head button{margin-left:auto;border:none;background:#f3f5fa;width:28px;height:28px;border-radius:8px;
+  font-size:17px;line-height:1;color:var(--muted);cursor:pointer;}
+.kb-modal-body{padding:14px 17px;overflow:auto;}
+.diff{background:#0f172a;color:#dbe4f3;border-radius:10px;padding:12px;font-family:var(--mono);font-size:11.5px;
+  line-height:1.65;white-space:pre-wrap;overflow:auto;max-height:52vh;}
+.diff .add{color:#7ee2a8;} .diff .del{color:#ff9b9b;} .diff .meta{color:#93a4c3;}
+.diff-title{display:flex;align-items:center;gap:8px;margin:12px 0 6px;font-size:12px;color:var(--muted);}
+.hist-item{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap;}
+.hist-item:last-child{border-bottom:none;}
+[hidden]{display:none !important;}
+
 @media (max-width:900px){
   .kb-layout{grid-template-columns:1fr;}
   .kb-side{position:static;display:grid;grid-template-columns:1fr 1fr;}
@@ -688,6 +832,19 @@ KB_BODY = """
     </div>
 
     <section class="card kb-list">
+      <div class="approve" id="approvePanel" hidden>
+        <div class="approve-head">
+          <b>待审批变更</b><span class="pill warn" id="apprCount">0</span>
+          <span class="sp"><button class="btn ghost sm" id="apprRefresh" type="button">刷新</button></span>
+        </div>
+        <div id="apprList"></div>
+        <div class="appr-token" id="apprToken" hidden>
+          <span>管理员令牌</span>
+          <input id="adminToken" type="password" placeholder="配置 ADMIN_TOKEN 时需要" autocomplete="off">
+          <button class="btn ghost sm" id="adminSave" type="button">保存</button>
+        </div>
+      </div>
+
       <div class="kb-toolbar">
         <div class="search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -716,6 +873,12 @@ KB_BODY = """
       </div>
       <div class="kb-foot"><span id="kbFoot"></span><span id="kbHint"></span></div>
     </section>
+  </div>
+  <div class="kb-mask" id="kbMask" hidden></div>
+  <div class="kb-modal" id="kbModal" hidden>
+    <div class="kb-modal-head"><b id="kbModalTitle">版本</b>
+      <button id="kbModalClose" type="button" aria-label="关闭">×</button></div>
+    <div class="kb-modal-body" id="kbModalBody"></div>
   </div>
 </main>
 """
@@ -773,6 +936,7 @@ function render(){
       +'<td class="num mono" style="font-size:11px;color:var(--muted)">'+sizeText(f.size)+'</td>'
       +'<td class="ts">'+esc(f.mtime||'—')+'</td>'
       +'<td><div class="row-actions">'
+      +'<button class="btn ghost sm hist" data-name="'+esc(f.name)+'">历史</button>'
       +'<button class="btn ghost sm gen" data-name="'+esc(f.name)+'">出题</button>'
       +'<button class="btn danger-ghost sm del" data-name="'+esc(f.name)+'">删除</button>'
       +'</div></td></tr>';
@@ -805,10 +969,127 @@ async function toggleKw(name,btn){
   }
 }
 
+
+/* ---------- 审批与文档历史 ---------- */
+var TOKEN_KEY='rag_admin_token';
+function adminToken(){ try{ return sessionStorage.getItem(TOKEN_KEY)||''; }catch(e){ return ''; } }
+function adminHeaders(){
+  var h={'Content-Type':'application/json'}, t=adminToken();
+  if(t) h['X-Admin-Token']=t;
+  return h;
+}
+function openKbModal(title,html){
+  $('kbModalTitle').textContent=title;
+  $('kbModalBody').innerHTML=html;
+  $('kbMask').hidden=false; $('kbModal').hidden=false;
+}
+function closeKbModal(){
+  $('kbMask').hidden=true; $('kbModal').hidden=true; $('kbModalBody').innerHTML='';
+}
+function diffHtml(text){
+  var nl=String.fromCharCode(10);
+  return esc(text||'').split(nl).map(function(line){
+    var cls='';
+    if(line.indexOf('+++')===0||line.indexOf('---')===0) cls='meta';
+    else if(line.charAt(0)==='+') cls='add';
+    else if(line.charAt(0)==='-') cls='del';
+    return '<span class="'+cls+'">'+line+'</span>';
+  }).join(nl);
+}
+function actionText(a){ return a==='add'?'新增':(a==='delete'?'删除':'修改'); }
+function renderApprovals(items){
+  var panel=$('approvePanel');
+  if(!items.length){ panel.hidden=true; $('apprList').innerHTML=''; return; }
+  panel.hidden=false; $('apprCount').textContent=items.length;
+  $('apprList').innerHTML=items.map(function(c){
+    var files=(c.files||[]).map(function(f){ return actionText(f.action)+' '+f.name; });
+    var dels=(c.deletes||[]).map(function(n){ return '删除 '+n; });
+    var warn=(c.warnings||[]).length?'<div class="appr-files">注意：'+esc((c.warnings||[]).join('；'))+'</div>':'';
+    return '<div class="appr-item">'
+      +'<div class="appr-top"><b>'+esc(c.change_id||'')+'</b>'
+      +'<span class="pill">'+esc(c.author||'—')+'</span>'
+      +'<span class="ts">'+esc(String(c.created_at||'').replace('T',' ').slice(0,19))+'</span></div>'
+      +'<div class="appr-files">'+esc(files.concat(dels).join('；')||'—')+(c.note?(' · '+esc(c.note)):'')+'</div>'+warn
+      +'<div class="appr-actions">'
+      +'<button class="btn ghost sm appr-diff" type="button" data-id="'+esc(c.change_id||'')+'">查看 diff</button>'
+      +'<button class="btn sm appr-ok" type="button" data-id="'+esc(c.change_id||'')+'">通过</button>'
+      +'<button class="btn danger-ghost sm appr-no" type="button" data-id="'+esc(c.change_id||'')+'">驳回</button>'
+      +'</div></div>';
+  }).join('');
+}
+async function loadApprovals(){
+  try{
+    var r=await (await fetch('/api/kb/changes?status=pending')).json();
+    if(r.error){ $('approvePanel').hidden=true; return; }
+    renderApprovals(r.items||[]);
+  }catch(e){ $('approvePanel').hidden=true; }
+}
+async function showDiff(changeId){
+  openKbModal('变更 '+changeId,'<div class="kw-load">读取 diff…</div>');
+  try{
+    var d=await (await fetch('/api/kb/change?id='+encodeURIComponent(changeId))).json();
+    if(d.error){ $('kbModalBody').innerHTML='<div class="kw-empty">'+esc(d.error)+'</div>'; return; }
+    var html=(d.diffs||[]).map(function(x){
+      return '<div class="diff-title"><span class="pill">'+esc(actionText(x.action))+'</span><span class="mono">'+esc(x.name)+'</span>'
+        +'<span class="muted">+'+x.added+' / -'+x.removed+'</span></div>'
+        +'<pre class="diff">'+diffHtml(x.diff)+'</pre>';
+    }).join('');
+    $('kbModalBody').innerHTML=html||'<div class="kw-empty">没有文本差异</div>';
+  }catch(e){ $('kbModalBody').innerHTML='<div class="kw-empty">读取失败：'+esc(e.message||e)+'</div>'; }
+}
+async function decide(changeId,kind){
+  var body={change_id:changeId};
+  if(kind==='reject'){
+    var reason=window.prompt('驳回原因（可选）','')||'';
+    body.reason=reason;
+  }
+  setMsg(kind==='approve'?'正在通过 '+changeId+'…':'正在驳回 '+changeId+'…');
+  try{
+    var resp=await fetch(kind==='approve'?'/api/kb/approve':'/api/kb/reject',
+      {method:'POST',headers:adminHeaders(),body:JSON.stringify(body)});
+    var d=await resp.json();
+    if(resp.status===403){ $('apprToken').hidden=false; setMsg('需要管理员令牌，请在面板下方填写','err'); return; }
+    if(!resp.ok){ setMsg('操作失败：'+(d.error||('HTTP '+resp.status)),'err'); return; }
+    setMsg(kind==='approve'?('已通过，新版本 '+(d.version||'')):'已驳回','ok');
+    toast(kind==='approve'?'变更已通过':'变更已驳回');
+    await loadKb();
+  }catch(e){ setMsg('操作失败：'+(e.message||e),'err'); }
+}
+async function openHistory(name){
+  openKbModal('历史版本 · '+name,'<div class="kw-load">读取中…</div>');
+  try{
+    var d=await (await fetch('/api/kb/doc_history?name='+encodeURIComponent(name))).json();
+    if(d.error){ $('kbModalBody').innerHTML='<div class="kw-empty">'+esc(d.error)+'</div>'; return; }
+    var items=(d.items||[]).slice().reverse();
+    $('kbModalBody').innerHTML=items.length?items.map(function(v){
+      var cur=(v.version===KB.version);
+      return '<div class="hist-item"><b class="mono">'+esc(v.version)+'</b>'
+        +'<span class="ts">'+esc(String(v.created_at||'').slice(0,10))+'</span>'
+        +'<span class="pill">'+esc(v.kind||'')+'</span>'
+        +'<span class="muted">'+sizeText(v.size)+'</span>'
+        +'<span style="margin-left:auto"><button class="btn ghost sm hist-rb" type="button" data-name="'+esc(name)+'" data-v="'+esc(v.version)+'"'
+        +(cur?' disabled':'')+'>'+(cur?'当前版本':'回滚到此版本')+'</button></span></div>';
+    }).join(''):'<div class="kw-empty">没有历史版本</div>';
+  }catch(e){ $('kbModalBody').innerHTML='<div class="kw-empty">读取失败：'+esc(e.message||e)+'</div>'; }
+}
+async function rollbackTo(name,version){
+  if(!confirm('把「'+name+'」回滚到 '+version+'？会生成一个新版本，历史不改。')) return;
+  try{
+    var resp=await fetch('/api/kb/rollback_doc',{method:'POST',headers:adminHeaders(),
+      body:JSON.stringify({name:name,to_version:version})});
+    var d=await resp.json();
+    if(resp.status===403){ $('apprToken').hidden=false; closeKbModal(); setMsg('需要管理员令牌','err'); return; }
+    if(!resp.ok){ toast('回滚失败：'+(d.error||''),true); return; }
+    closeKbModal(); setMsg('已回滚到 '+version+'，新版本 '+(d.version||''),'ok');
+    toast('已回滚，新版本 '+(d.version||''));
+    await loadKb();
+  }catch(e){ toast('回滚失败：'+(e.message||e),true); }
+}
+
 async function loadKb(){
   try{
     var r=await (await fetch('/api/knowledge')).json();
-    KB=r; render();
+    KB=r; render(); await loadApprovals();
   }catch(e){ setMsg('加载失败：'+(e.message||e),'err'); }
 }
 
@@ -885,9 +1166,15 @@ $('kbFilters').onclick=function(e){
 };
 $('kbSort').onchange=function(){ SORT=this.value; render(); };
 
+$('kbModalBody').onclick=function(ev){
+  var b=ev.target.closest('.hist-rb');
+  if(b && !b.disabled){ rollbackTo(b.dataset.name,b.dataset.v); }
+};
 $('kbBody').onclick=async function(ev){
   var kw=ev.target.closest('.kw-btn');
   if(kw){ await toggleKw(kw.dataset.kw, kw); return; }
+  var h=ev.target.closest('.hist');
+  if(h){ await openHistory(h.dataset.name); return; }
   var g=ev.target.closest('.gen');
   if(g){
     var n=parseInt(window.prompt('为「'+g.dataset.name+'」生成几条评测用例？（1-8）','3'),10)||3;
@@ -910,6 +1197,23 @@ $('kbBody').onclick=async function(ev){
     else{ setMsg('删除失败：'+(d.error||''),'err'); }
   }catch(e){ setMsg('删除失败：'+(e.message||e),'err'); }
 };
+
+$('apprRefresh').onclick=loadApprovals;
+$('adminSave').onclick=function(){
+  var v=($('adminToken').value||'').trim();
+  try{
+    if(v) sessionStorage.setItem(TOKEN_KEY,v); else sessionStorage.removeItem(TOKEN_KEY);
+  }catch(e){}
+  $('apprToken').hidden=true; toast(v?'令牌已保存':'令牌已清除'); loadApprovals();
+};
+$('apprList').onclick=function(ev){
+  var d=ev.target.closest('.appr-diff'); if(d){ showDiff(d.dataset.id); return; }
+  var a=ev.target.closest('.appr-ok'); if(a){ decide(a.dataset.id,'approve'); return; }
+  var r=ev.target.closest('.appr-no'); if(r){ decide(r.dataset.id,'reject'); }
+};
+$('kbModalClose').onclick=closeKbModal;
+$('kbMask').onclick=closeKbModal;
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeKbModal(); });
 
 $('reload').onclick=async function(){
   var btn=this; btn.disabled=true; setMsg('正在重建索引…');
@@ -1130,7 +1434,7 @@ DASHBOARD_BODY = """
       <label for="mBehavior">期望行为</label>
       <select id="mBehavior">
         <option value="answer">answer · 正常作答</option>
-        <option value="no_answer">no_answer · 资料不足转人工</option>
+        <option value="no_answer">no_answer · 资料不足</option>
         <option value="refuse">refuse · 合规拒答</option>
         <option value="ask_clarify">ask_clarify · 追问澄清</option>
       </select>
@@ -1146,7 +1450,7 @@ DASHBOARD_BODY = """
 DASHBOARD_SCRIPT = JS_UTIL + """
 function $(id){ return document.getElementById(id); }
 var COLORS={answer:'#2f5cf6',ask_clarify:'#0ea5a5',no_answer:'#d97706',refuse:'#94a3b8'};
-var BEHAVIOR={answer:'作答',ask_clarify:'追问澄清',no_answer:'转人工',refuse:'拒答'};
+var BEHAVIOR={answer:'作答',ask_clarify:'追问澄清',no_answer:'未找到',refuse:'拒答'};
 var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取'};
 var MODE_COLORS={llm:'#2f5cf6',extractive:'#7a5cfb',extractive_fallback:'#d97706'};
 var I={
@@ -1181,7 +1485,7 @@ function renderKpis(m,cs,l3){
   $('kpis').innerHTML=
     kpi('chat','请求数',req,'累计处理')+
     kpi('check','答案率',req?pct(rate):'—','正常作答占比',true)+
-    kpi('alert','转人工',bb.no_answer||0,'置信度不足')+
+    kpi('alert','未找到',bb.no_answer||0,'置信度不足')+
     kpi('target','引用覆盖率',m.avg_citation_coverage==null?'—':Math.round(m.avg_citation_coverage*100)+'%','近 500 条均值');
 }
 function renderBehavior(m){

@@ -6,7 +6,9 @@
 import json
 import sys
 import threading
+import urllib.parse
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +62,24 @@ try:
     print("ask:", {k: data.get(k) for k in ("channel", "model", "behavior", "mode", "degraded", "latency_ms")})
     print("answer:", data["answer"])
 
+    # 引用必须能回原文：doc_id/chunk_index 齐全，/api/source 能取到同一块
+    cite = data["citations"][0]
+    assert cite.get("doc_id") and cite.get("chunk_index") is not None, cite
+    assert "kb_version" in data, "响应应带版本字段（未启用版本库时为 None）"
+    src_url = (f"http://127.0.0.1:{port}/api/source?doc="
+               + urllib.parse.quote(str(cite["doc_id"]))
+               + f"&chunk={cite['chunk_index']}")
+    with urllib.request.urlopen(src_url, timeout=10) as resp:
+        src = json.loads(resp.read().decode("utf-8"))
+    assert src["doc_id"] == cite["doc_id"] and src["text"].strip(), src
+    assert src.get("version") == data.get("kb_version"), src
+    print("source:", src["title"], "·", src["section"], "|", len(src["text"]), "chars")
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/source?doc=x&chunk=99999", timeout=10)
+        raise AssertionError("越界 chunk 应 404")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 404
+
     with urllib.request.urlopen(req, timeout=90) as resp:
         replay = json.loads(resp.read().decode("utf-8"))
         replay_header = resp.headers.get("X-Idempotent-Replay")
@@ -75,7 +95,7 @@ try:
     with urllib.request.urlopen(miss_req, timeout=30) as resp:
         miss = json.loads(resp.read().decode("utf-8"))
     assert miss["behavior"] == "no_answer"
-    assert miss["answer"] == "没有在文档中找到相关问题。"
+    assert miss["answer"] == "无法找到答案。"
     assert miss.get("similar_questions")
     print("no-answer:", miss["answer"], "| similar:", len(miss["similar_questions"]))
 

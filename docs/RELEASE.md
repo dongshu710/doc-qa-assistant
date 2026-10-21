@@ -58,7 +58,7 @@ git push -u origin main
 
 仓库描述建议：
 
-> 零依赖的文档问答（RAG）原型：强制引用、答不出转人工、L1/L3 双层评测与可分享汇报页。
+> 零依赖的文档问答（RAG）原型：强制引用、答不出明确说明、L1/L3 双层评测与可分享汇报页。
 
 Topics：`rag` `llm` `document-qa` `python` `bm25` `evaluation` `llm-as-judge` `deepseek` `zero-dependencies`。
 

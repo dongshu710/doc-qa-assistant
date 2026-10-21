@@ -61,6 +61,10 @@ def main() -> None:
             port = httpd.server_address[1]
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
             try:
+                page = urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/kb", timeout=10).read().decode("utf-8")
+                assert "待审批变更" in page and "历史" in page, "知识库页应有审批与历史入口"
+
                 health = get(port, "/api/health")
                 assert health["kb"]["active"] == "v0001", health["kb"]
                 assert health["kb"]["docs"] == 2, health["kb"]
@@ -79,6 +83,13 @@ def main() -> None:
                 assert kb["version"] == "v0001" and len(kb["files"]) == 2, kb
                 assert kb["pending_changes"] == 1
                 print("upload -> pending OK:", change_id)
+
+                # 待审批 diff：新增文件应能看到 + 行
+                detail = get(port, f"/api/kb/change?id={change_id}")
+                assert detail["change"]["change_id"] == change_id
+                assert detail["diffs"] and detail["diffs"][0]["action"] == "add", detail
+                assert "采购合同" in detail["diffs"][0]["diff"], detail["diffs"][0]
+                print("change diff OK: +%d" % detail["diffs"][0]["added"])
 
                 # 审批 -> 新版本 + 检索立即包含新文档
                 status, approved = post(port, "/api/kb/approve", {"change_id": change_id})

@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import difflib
 import shutil
 import time
 from datetime import datetime, timezone
@@ -385,6 +386,43 @@ class KnowledgeStore:
             except (KnowledgeError, OSError, json.JSONDecodeError):
                 continue
         return rows
+
+    def change_detail(self, change_id: str) -> dict:
+        """待审批变更的文本 diff：只读 base_version 与 pending 暂存文件，不改任何状态。"""
+        request = self._load_request(change_id)
+        base_version = request.get("base_version") or self._state().get("active")
+        base = self._read_files(base_version) if base_version else {}
+        staged: dict[str, bytes] = {}
+        folder = os.path.join(self.pending_dir, change_id, "files")
+        if os.path.isdir(folder):
+            for name in sorted(os.listdir(folder)):
+                if name.lower().endswith(ALLOWED_EXT):
+                    with open(os.path.join(folder, name), "rb") as f:
+                        staged[name] = f.read()
+        deletes = set(request.get("deletes") or [])
+        diffs = []
+        for name in sorted(set(base) | set(staged) | deletes):
+            old_raw = base.get(name, b"").decode("utf-8", errors="replace")
+            new_raw = "" if name in deletes else staged.get(name, b"").decode("utf-8", errors="replace")
+            if name in deletes:
+                action = "delete"
+            elif name in staged and name in base:
+                action = "update"
+            elif name in staged:
+                action = "add"
+            else:
+                continue
+            diff = "".join(difflib.unified_diff(
+                old_raw.splitlines(True), new_raw.splitlines(True),
+                fromfile=f"a/{name}", tofile=f"b/{name}", n=2))
+            if len(diff) > 16000:
+                diff = diff[:16000] + "\n…（diff 过长，已截断）"
+            diffs.append({
+                "name": name, "action": action, "diff": diff,
+                "added": sum(1 for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")),
+                "removed": sum(1 for line in diff.splitlines() if line.startswith("-") and not line.startswith("---")),
+            })
+        return {"change": request, "active": base_version, "diffs": diffs}
 
     def changes(self, status: str | None = None) -> list[dict]:
         rows = []

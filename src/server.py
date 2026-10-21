@@ -4,7 +4,7 @@
 
 路由：
   GET  /                 首页
-  GET  /ask              问答（输入/答案/引用/追问/转人工/反馈）
+  GET  /ask              问答（流式输出/引用原文/多轮追问/反馈）
   GET  /kb               知识库（上传/检索/出题/删除）
   GET  /dashboard        评测看板（指标/语义质量/用例/反馈/最近对话）
   GET  /api/health       端点 / 模型 / 检索详情 / 知识库版本 / 防护状态
@@ -15,13 +15,17 @@
   GET  /api/keywords     关键词总览；带 name= 时返回单文档条目与摘要
   GET  /api/kb/versions  版本列表
   GET  /api/kb/changes   变更审批记录
+  GET  /api/kb/change?id=... 待审批变更的文本 diff
   GET  /api/kb/doc_history?name=... 单文档版本历史
+  GET  /api/source?doc=...&chunk=... 引用原文（按知识块定位）
   GET  /api/feedback/list?limit=20
   GET  /api/trace?limit=20
   GET  /api/audit?limit=20       审计日志（需 admin）
   GET  /api/admin/config         灰度配置（需 admin）
   GET  /api/admin/cost           成本上限状态（需 admin）
-  POST /api/ask          {"query": "..."}；支持 Idempotency-Key
+  POST /api/ask          {"query","session_id"}；支持 Idempotency-Key
+  POST /api/ask/stream   同上，SSE 流式（delta / replace / final）
+  POST /api/session/clear {"session_id"} 清空会话上下文
   POST /api/feedback     {"trace_id","useful","comment"}
   POST /api/reload       重新加载知识库
   POST /api/keywords/rebuild {} 重建关键词（接入 API 时整理变更文档，需 admin）
@@ -142,7 +146,6 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
     log_dir = os.path.dirname(pipe.log_path)
     guards = Guards(pipe.settings, log_dir)
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
-    handoff_path = os.path.join(os.path.dirname(pipe.log_path), "handoff.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
     raw_dir = _raw_dir()
     doc_cases_path = os.path.join(project_root, "tests", "eval_cases_docs.jsonl")
@@ -189,6 +192,92 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if mode == "on":
                 return False
             return self._is_admin()
+
+
+        def _ask_preflight(self, payload: dict):
+            """问答前置：限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
+            query = str(payload.get("query", ""))
+            session_id = str(payload.get("session_id") or "").strip()[:64] or None
+            client = self._client()
+            request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]
+            decision = guards.rate.allow(client)
+            if not decision.allowed:
+                metrics.inc("rag_rate_limited_total")
+                metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
+                guards.audit.write("ask.rate_limited", client=client, query=query[:200],
+                                   retry_after=decision.retry_after, request_id=request_id)
+                return None, ({"error": "rate limited", "retry_after": decision.retry_after,
+                               "request_id": request_id}, 429,
+                              {"Retry-After": decision.retry_after, "X-Request-Id": request_id})
+            idem_key = (self.headers.get("Idempotency-Key")
+                        or str(payload.get("request_id") or "")).strip()
+            return {
+                "query": query, "session_id": session_id, "client": client,
+                "request_id": request_id, "decision": decision, "idem_key": idem_key,
+                "cached": guards.idem.get(idem_key),
+                "model": guards.runtime.pick_model(f"{client}|{query}"),
+                "budget_blocked": guards.cost.blocked,
+            }, None
+
+        def _annotate_result(self, result: dict, pre: dict) -> None:
+            kb_version = store.active_version() if store is not None else None
+            result["kb_version"] = kb_version
+            for citation in result.get("citations") or []:
+                citation.setdefault("version", kb_version)
+            result["canary"] = bool(pre["model"])
+            result["budget_blocked"] = pre["budget_blocked"]
+            result["request_id"] = pre["request_id"]
+
+        def _record_ask(self, result: dict, pre: dict, started: float, path_label: str) -> None:
+            llm_tokens = int((result.get("usage") or {}).get("total_tokens") or 0)
+            embed_tokens = int(result.get("embedding_tokens") or 0)
+            tokens = llm_tokens + embed_tokens
+            price = float(getattr(pipe.settings, "token_price_per_1k", 0) or 0)
+            cost_usd = round(tokens / 1000 * price, 6) if price > 0 else 0.0
+            result["cost_usd"] = cost_usd
+            guards.cost.add(tokens)
+            guards.idem.put(pre["idem_key"], result)
+
+            behavior = str(result.get("behavior") or "unknown")
+            mode = str(result.get("mode") or "none")
+            answer_path = str(result.get("path") or "rag")
+            metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
+            metrics.inc("rag_answer_path_total", {"path": answer_path})
+            if answer_path == "keyword":
+                metrics.inc("rag_keyword_hit_total")
+            for item in result.get("keyword_rejected") or []:
+                metrics.inc("rag_keyword_rejected_total",
+                            {"reason": str(item.get("reason") or "unknown")})
+            if result.get("keyword_gate"):
+                metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
+            if not result.get("api_called"):
+                metrics.inc("rag_local_answer_total")
+            metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
+            metrics.observe("rag_ask_duration_seconds",
+                            result.get("latency_ms", 0) / 1000.0 or (time.time() - started))
+            metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
+            metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
+            if cost_usd:
+                metrics.inc("rag_cost_usd_total", value=cost_usd)
+            if result.get("degraded"):
+                metrics.inc("rag_retrieval_degraded_total",
+                            {"reason": str(result.get("degrade_reason") or "unknown")})
+
+            guards.audit.write(
+                "ask", client=pre["client"], query=pre["query"][:200],
+                trace_id=result.get("trace_id"), request_id=pre["request_id"],
+                behavior=behavior, mode=mode, session_id=pre["session_id"],
+                retrieval_score=result.get("retrieval_score"), model=result.get("model"),
+                canary=bool(pre["model"]), budget_blocked=pre["budget_blocked"], tokens=tokens,
+                llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
+                latency_ms=result.get("latency_ms"), path=answer_path,
+                api_called=bool(result.get("api_called")),
+                keyword_terms=result.get("keyword_terms"),
+                keyword_gate=result.get("keyword_gate"),
+                keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
+                                  for r in (result.get("keyword_rejected") or [])],
+                stream=path_label.endswith("/stream"),
+            )
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -248,6 +337,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "retrieval_detail": pipe.retrieval_detail,
                     "kb": store.status() if store is not None else {"enabled": False},
                     "keywords": pipe.keyword_detail,
+                    "sessions": pipe.sessions.status(),
                     "guards": guards.status(),
                 })
             elif path == "/metrics":
@@ -367,6 +457,15 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
                     return
                 self._json({"active": store.active_version(), "items": store.versions()})
+            elif path == "/api/kb/change":
+                if store is None:
+                    self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
+                    return
+                change_id = (qs.get("id") or [""])[0].strip()
+                try:
+                    self._json(store.change_detail(change_id))
+                except kbstore.KnowledgeError as exc:
+                    self._json({"error": str(exc)}, 404)
             elif path == "/api/kb/changes":
                 if store is None:
                     self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
@@ -382,6 +481,18 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     self._json({"name": name, "items": store.doc_history(name)})
                 except kbstore.KnowledgeError as exc:
                     self._json({"error": str(exc)}, 400)
+            elif path == "/api/source":
+                doc = (qs.get("doc") or [""])[0]
+                try:
+                    chunk_index = int((qs.get("chunk") or ["-1"])[0])
+                except (TypeError, ValueError):
+                    chunk_index = -1
+                src = pipe.source_chunk(doc, chunk_index)
+                if not src:
+                    self._json({"error": "原文不存在或索引已更新"}, 404)
+                    return
+                src["version"] = store.active_version() if store is not None else None
+                self._json(src)
             elif path == "/api/feedback/list":
                 limit = int(qs.get("limit", ["20"])[0])
                 self._json({"items": list(reversed(_read_jsonl(feedback_path, limit)))})
@@ -402,12 +513,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path not in ("/api/ask", "/api/feedback", "/api/reload", "/api/cases/from_feedback",
-                            "/api/handoff", "/api/knowledge/upload", "/api/knowledge/upload_pdf",
+            if path not in ("/api/ask", "/api/ask/stream", "/api/feedback", "/api/reload",
+                            "/api/cases/from_feedback",
+                            "/api/knowledge/upload", "/api/knowledge/upload_pdf",
                             "/api/knowledge/upload_file", "/api/knowledge/delete",
                             "/api/cases/from_doc", "/api/cases/run",
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
-                            "/api/keywords/rebuild",
+                            "/api/keywords/rebuild", "/api/session/clear",
                             "/api/admin/config", "/api/admin/rollback"):
                 self._json({"error": "not found"}, 404)
                 return
@@ -820,6 +932,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     self._json({"ok": False, "error": str(exc)}, 500)
                 return
 
+            if path == "/api/session/clear":
+                sid = str(payload.get("session_id") or "").strip()[:64]
+                pipe.sessions.clear(sid)
+                self._json({"ok": True, "session_id": sid, "sessions": pipe.sessions.status()})
+                return
+
             if path == "/api/reload":
                 try:
                     total = reload_kb()
@@ -860,114 +978,83 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._json({"ok": True, "case": case, "total": seq})
                 return
 
-            if path == "/api/handoff":
-                ticket = "H" + datetime.now().strftime("%Y%m%d%H%M%S")
-                record = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "ticket": ticket,
-                    "trace_id": str(payload.get("trace_id", "")),
-                    "query": str(payload.get("query", ""))[:500],
-                    "contact": str(payload.get("contact", ""))[:100],
-                }
-                with open(handoff_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                guards.audit.write("handoff", client=self._client(), ticket=ticket,
-                                   trace_id=record["trace_id"])
-                self._json({"ok": True, "ticket": ticket})
+            if path == "/api/ask/stream":
+                pre, err = self._ask_preflight(payload)
+                if err:
+                    body, code, headers = err
+                    self._json(body, code, extra_headers=headers)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+
+                def send(event: str, data: dict) -> None:
+                    chunk = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
+
+                if pre["cached"] is not None:
+                    metrics.inc("rag_idempotent_replay_total")
+                    guards.audit.write("ask.idempotent_replay", client=pre["client"],
+                                       key=pre["idem_key"],
+                                       trace_id=pre["cached"].get("trace_id"),
+                                       request_id=pre["request_id"])
+                    send("final", pre["cached"])
+                    return
+
+                started = time.time()
+                try:
+                    for event, data in pipe.ask_stream(
+                            pre["query"], model=pre["model"],
+                            force_extractive=pre["budget_blocked"],
+                            session_id=pre["session_id"]):
+                        if event == "delta":
+                            send("delta", {"text": data})
+                        elif event == "replace":
+                            send("replace", {"text": data})
+                        elif event == "final":
+                            self._annotate_result(data, pre)
+                            self._record_ask(data, pre, started, "/api/ask/stream")
+                            send("final", data)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                except Exception as exc:  # noqa: BLE001 —— 已经开始写 SSE，只能发错误事件
+                    try:
+                        send("error", {"error": str(exc)[:300]})
+                    except Exception:  # noqa: BLE001
+                        pass
                 return
 
-            query = str(payload.get("query", ""))
-            client = self._client()
-
-            # 限流：按客户端 IP 令牌桶（配置 REDIS_URL 后为跨实例共享）
-            request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]
-            decision = guards.rate.allow(client)
-            if not decision.allowed:
-                metrics.inc("rag_rate_limited_total")
-                metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
-                guards.audit.write("ask.rate_limited", client=client, query=query[:200],
-                                   retry_after=decision.retry_after, request_id=request_id)
-                self._json(
-                    {"error": "rate limited", "retry_after": decision.retry_after,
-                     "request_id": request_id},
-                    429, extra_headers={"Retry-After": decision.retry_after,
-                                        "X-Request-Id": request_id},
-                )
+            pre, err = self._ask_preflight(payload)
+            if err:
+                body, code, headers = err
+                self._json(body, code, extra_headers=headers)
                 return
-
-            # 幂等：同一 Idempotency-Key 复用首次结果，避免重试重复计费
-            idem_key = (self.headers.get("Idempotency-Key") or str(payload.get("request_id") or "")).strip()
-            cached = guards.idem.get(idem_key)
-            if cached is not None:
+            if pre["cached"] is not None:
                 metrics.inc("rag_idempotent_replay_total")
-                guards.audit.write("ask.idempotent_replay", client=client, key=idem_key,
-                                   trace_id=cached.get("trace_id"), request_id=request_id)
-                self._json(cached, extra_headers={"X-Idempotent-Replay": "true",
-                                                  "X-Request-Id": request_id})
+                guards.audit.write("ask.idempotent_replay", client=pre["client"],
+                                   key=pre["idem_key"],
+                                   trace_id=pre["cached"].get("trace_id"),
+                                   request_id=pre["request_id"])
+                self._json(pre["cached"], extra_headers={"X-Idempotent-Replay": "true",
+                                                          "X-Request-Id": pre["request_id"]})
                 return
 
-            # 灰度 + 成本上限
-            model = guards.runtime.pick_model(f"{client}|{query}")
-            budget_blocked = guards.cost.blocked
             started = time.time()
-            result = pipe.ask(query, model=model, force_extractive=budget_blocked)
-            result["canary"] = bool(model)
-            result["budget_blocked"] = budget_blocked
-            result["request_id"] = request_id
-
-            llm_tokens = int((result.get("usage") or {}).get("total_tokens") or 0)
-            embed_tokens = int(result.get("embedding_tokens") or 0)
-            tokens = llm_tokens + embed_tokens
-            price = float(getattr(pipe.settings, "token_price_per_1k", 0) or 0)
-            cost_usd = round(tokens / 1000 * price, 6) if price > 0 else 0.0
-            result["cost_usd"] = cost_usd
-            guards.cost.add(tokens)
-            guards.idem.put(idem_key, result)
-
-            behavior = str(result.get("behavior") or "unknown")
-            mode = str(result.get("mode") or "none")
-            answer_path = str(result.get("path") or "rag")
-            metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
-            metrics.inc("rag_answer_path_total", {"path": answer_path})
-            if answer_path == "keyword":
-                metrics.inc("rag_keyword_hit_total")
-            # 被闸门挡下的命中：按原因计数，用来判断规则是「救火」还是「误伤」
-            for item in result.get("keyword_rejected") or []:
-                metrics.inc("rag_keyword_rejected_total",
-                            {"reason": str(item.get("reason") or "unknown")})
-            if result.get("keyword_gate"):
-                metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
-            if not result.get("api_called"):
-                metrics.inc("rag_local_answer_total")
-            metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "200"})
-            metrics.observe("rag_ask_duration_seconds",
-                            result.get("latency_ms", 0) / 1000.0 or (time.time() - started))
-            metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
-            metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
-            if cost_usd:
-                metrics.inc("rag_cost_usd_total", value=cost_usd)
-            if result.get("degraded"):
-                metrics.inc("rag_retrieval_degraded_total",
-                            {"reason": str(result.get("degrade_reason") or "unknown")})
-
-            guards.audit.write(
-                "ask", client=client, query=query[:200], trace_id=result.get("trace_id"),
-                request_id=request_id, behavior=behavior, mode=mode,
-                retrieval_score=result.get("retrieval_score"), model=result.get("model"),
-                canary=bool(model), budget_blocked=budget_blocked, tokens=tokens,
-                llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
-                latency_ms=result.get("latency_ms"), path=answer_path,
-                api_called=bool(result.get("api_called")),
-                keyword_terms=result.get("keyword_terms"),
-                keyword_gate=result.get("keyword_gate"),
-                keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
-                                  for r in (result.get("keyword_rejected") or [])],
-            )
+            result = pipe.ask(pre["query"], model=pre["model"],
+                              force_extractive=pre["budget_blocked"],
+                              session_id=pre["session_id"])
+            self._annotate_result(result, pre)
+            self._record_ask(result, pre, started, "/api/ask")
             self._json(result, extra_headers={
-                "X-RateLimit-Remaining": decision.remaining,
+                "X-RateLimit-Remaining": pre["decision"].remaining,
                 "X-Retrieval": str(result.get("retrieval_mode") or pipe.settings.retrieval),
-                "X-Request-Id": request_id,
-                "X-Answer-Path": answer_path,
+                "X-Request-Id": pre["request_id"],
+                "X-Answer-Path": str(result.get("path") or "rag"),
             })
 
         def log_message(self, fmt: str, *args) -> None:

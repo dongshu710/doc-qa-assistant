@@ -41,7 +41,7 @@ class Settings:
     channel: str = "deepseek"      # 端点标识（展示用，不参与分支）
     # 检索
     top_k: int = 4
-    min_score: float = 0.3      # 检索置信度阈值：低于此值按“未命中”转人工（阈值随检索模式不同）
+    min_score: float = 0.3      # 检索置信度阈值：低于此值返回「无法找到答案」（阈值随检索模式不同）
     retrieval: str = "vector"   # embedding | vector（零依赖基线）| bm25 | hybrid
     rrf_k: int = 60
     query_expansion: str = "auto"  # off | auto | llm：auto=有 Key 时启用 LLM 查询扩展
@@ -114,7 +114,7 @@ def load_settings() -> Settings:
         expansion = "auto"
     base = (_first_env("LLM_BASE_URL", default=DEFAULT_BASE_URL) or DEFAULT_BASE_URL).rstrip("/")
     # 各检索器的分数尺度不同：BM25 是 0~20+ 原始分，hashing/embedding 归一化到 0~1。
-    # 阈值必须分模式给默认值，否则换检索器会把所有问题打成“转人工”。
+    # 阈值必须分模式给默认值，否则换检索器会把所有问题打成「无法找到答案」。
     default_min = {"embedding": "0.38", "hybrid": "0.30", "vector": "0.30"}.get(retrieval, "0.5")
     keyword_mode = (_first_env("KEYWORD_MODE", default="on") or "on").strip().lower()
     if keyword_mode not in ("on", "off"):

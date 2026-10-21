@@ -320,6 +320,9 @@ class KeywordIndex:
         self._built = False
         self._key_index: dict[str, list[Entry]] | None = None
         self._max_key = 0
+        # 按文档预计算的关键词列表：/api/knowledge 每请求会查所有文档，
+        # 不能每次都遍历 entries（500 文档/2.5 万条目实测 500ms+）
+        self._doc_terms: dict[str, list[str]] = {}
 
     # ---------- 路径与配置 ----------
     def _default_path(self) -> str:
@@ -398,6 +401,7 @@ class KeywordIndex:
         self.docs = docs
         self.entries = self._build_entries(by_doc, docs)
         self._build_key_index()
+        self._build_doc_terms()
         self.meta = {
             "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "fingerprint": fingerprint,
@@ -641,6 +645,30 @@ class KeywordIndex:
         except OSError as exc:
             self.last_error = f"关键词索引写入失败: {exc}"
 
+    def _build_doc_terms(self) -> None:
+        """按文档缓存展示用关键词，顺序与旧 top_terms 一致（权重降序、短词优先）。"""
+        grouped: dict[str, list[Entry]] = {doc_id: [] for doc_id in self.docs}
+        for entry in self.entries:
+            grouped.setdefault(entry.doc_id, []).append(entry)
+        terms: dict[str, list[str]] = {}
+        for doc_id, rows in grouped.items():
+            primary = [e for e in rows if e.kind != "heading"]
+            chosen = list(primary)
+            if len(primary) < 3:  # 没有清单的文档，用章节名兜底
+                chosen += [e for e in rows if e.kind == "heading"]
+            chosen.sort(key=lambda e: (-e.weight, len(e.term)))
+            out: list[str] = []
+            for entry in chosen:
+                if entry.term not in out:
+                    out.append(entry.term)
+            terms[doc_id] = out
+        self._doc_terms = terms
+
+    def term_count(self, doc_id: str) -> int:
+        if not self._doc_terms:
+            self._build_doc_terms()
+        return len(self._doc_terms.get(doc_id) or [])
+
     # ---------- 匹配与输出 ----------
     def _build_key_index(self) -> None:
         """key -> 条目 的倒排表：匹配时枚举问句子串，而不是逐个条目做包含判断。"""
@@ -786,6 +814,11 @@ class KeywordIndex:
         return out
 
     @staticmethod
+    def snippet(hit: Hit) -> str:
+        """展示用原文片段（去掉 Markdown 行首标记，保留原标点）。"""
+        return _display(hit.entry.snippet)
+
+    @staticmethod
     def compose(hits: list[Hit]) -> str:
         if not hits:
             return ""
@@ -802,18 +835,9 @@ class KeywordIndex:
 
     # ---------- 视图 ----------
     def top_terms(self, doc_id: str, n: int = 6) -> list[str]:
-        primary = [e for e in self.entries if e.doc_id == doc_id and e.kind != "heading"]
-        rows = list(primary)
-        if len(rows) < 3:  # 没有清单的文档，用章节名兜底，避免展示空关键词
-            rows += [e for e in self.entries if e.doc_id == doc_id and e.kind == "heading"]
-        rows.sort(key=lambda e: (-e.weight, len(e.term)))
-        out: list[str] = []
-        for entry in rows:
-            if entry.term not in out:
-                out.append(entry.term)
-            if len(out) >= n:
-                break
-        return out
+        if not self._doc_terms:
+            self._build_doc_terms()
+        return list((self._doc_terms.get(doc_id) or [])[:max(0, n)])
 
     def doc_view(self, doc_id: str) -> dict:
         doc = self.docs.get(doc_id) or {}

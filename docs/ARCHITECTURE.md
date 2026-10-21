@@ -28,7 +28,7 @@ flowchart LR
   KW -->|未命中| R[Retriever<br/>向量召回 + 重排]
   KQ[(keywords.json<br/>条目 / 摘要 / 同义词)] -.-> KW
   R --> Q{置信度闸门<br/>min_score=0.30}
-  Q -->|未命中| H[未命中提示<br/>相似问题 / handoff 工单]
+  Q -->|未命中| H[未命中提示<br/>相似问题]
   Q -->|命中| L{LLM 通道}
   L -->|有 Key| M[OpenAI 兼容 API<br/>默认 DeepSeek]
   L -->|无 Key / 失败| E[抽取式降级]
@@ -117,7 +117,7 @@ sequenceDiagram
 | 关键词 | 命中条目 | `answer` + `path=keyword` | 原文片段直出，不调用模型；`api_called=false` |
 | 关键词 | 未命中 / 索引构建失败 | 继续走检索 | 失败原因写 `/api/health.keywords.error` |
 | 检索 | 最高分 < 0.30（embedding 默认 0.38） | `no_answer` | 提示未找到，并展示相似问题 / 工单入口 |
-| 检索 | 检索器异常 | 空结果 + `degraded=true` | 转人工，不硬答 |
+| 检索 | 检索器异常 | 空结果 + `degraded=true` | 返回「无法找到答案」，不硬答 |
 | embedding | 超时 / 429 / 维度不一致 | 当次回退 BM25 重排，标 `embedding_error` | 有答案但标注降级 |
 | 索引 | manifest 指纹不匹配 | 启动/首次查询时重建 | 首次查询延迟增加 |
 | Redis | 连接失败 / 超时 | 回退进程内限流/幂等/成本，30s 后重试 | 服务可用；多实例状态短暂不一致 |

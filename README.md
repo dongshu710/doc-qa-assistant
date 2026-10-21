@@ -1,7 +1,7 @@
 # 文档问答助手（RAG）
 
 把你的制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
-资料不足时明确说不知道，并给出相似问题或转人工入口。金融制度是首版示例，换一套文档 + `APP_PROFILE=generic` 就是另一个领域的助手。
+资料不足时明确说不知道，并给出相似问题。金融制度是首版示例，换一套文档 + `APP_PROFILE=generic` 就是另一个领域的助手。
 
 不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。
 
@@ -83,7 +83,7 @@ flowchart TD
 | `query` | 语料自适应查询扩展：把章节标题当词表，让改写贴合文档术语 | 超时/异常静默回退原问题 |
 | `profiles` | finance / generic 两套提示词与合规护栏 | 未知 profile 回退默认 |
 | `generator` | LLM 生成 / 无 Key 抽取式 | 超时·重试·退避·抖动；最终降级抽取并标 `degraded` |
-| `pipeline` | 输入校验、关键词直出、编排、引用校验、trace | 注入/越权直接拒；关键词不命中走检索；无命中转人工 |
+| `pipeline` | 输入校验、关键词直出、多轮改写、编排、引用校验、trace | 注入/越权直接拒；关键词不命中走检索；无命中返回「无法找到答案」 |
 | `cli` | 单次问答 / 交互模式 | — |
 
 ## 2. 目录
@@ -105,6 +105,7 @@ doc-qa-assistant/
 │  ├─ kbstore.py               # 知识库版本目录 / 审批 / 文档级回滚
 │  ├─ redis_client.py          # 零依赖 RESP 客户端（限流 / 幂等 / 成本）
 │  ├─ metrics_exporter.py      # Prometheus 文本指标
+│  ├─ sessions.py              # 多轮会话：最近 3 轮、TTL、LRU
 │  ├─ suggest.py               # 示例问题与相似问题（按文档章节生成）
 │  ├─ keywords.py              # 关键词条目：本地抽取 + 可选 API 整理 + 命中直出
 │  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚（本地 / Redis）
@@ -158,6 +159,9 @@ doc-qa-assistant/
 │  ├─ test_keywords.py         # 关键词抽取/命中/API 增强/零调用验证
 │  ├─ test_keyword_api.py      # 关键词 HTTP 接口与命中路径
 │  ├─ test_keyword_precision.py # 否定/极性/意图/单文档/索引一致性
+│  ├─ test_session.py           # 多轮上下文改写 / TTL / 轮数
+│  ├─ test_stream.py            # SSE 事件顺序 / 多轮 / 未命中
+│  ├─ test_generator_stream.py  # 上游 SSE 解析 / 用量 / 截断降级
 │  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
 │  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
@@ -283,7 +287,9 @@ API：
 
 - `GET /api/health` → 端点 / 模型 / 检索详情（索引状态、维度、降级原因）/ 知识库版本 / 限流与预算状态
 - `GET /api/examples?n=4` → 按当前知识库生成的示例问题
-- `POST /api/ask` `{"query": "..."}` → 结构化结果（answer / citations / behavior / mode / path / api_called / similar_questions）；
+- `POST /api/ask` `{"query", "session_id"}` → 结构化结果（answer / citations / behavior / mode / path / api_called / turn / context_query / kb_version / similar_questions）；
+- `POST /api/ask/stream` 同上，SSE 返回 `delta` / `replace` / `final`；
+- `POST /api/session/clear` `{"session_id"}` → 清空该会话上下文；
   `path=keyword` 表示命中关键词本地直出，响应头带 `X-Answer-Path: keyword`
   - 可选请求头 `Idempotency-Key: <key>`：TTL 内重复请求返回首次结果，并带 `X-Idempotent-Replay: true`
 - `GET /api/metrics` → 业务聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
@@ -305,7 +311,8 @@ API：
 - `POST /api/cases/run` `{"scope":"docs"|"all","sleep"}` → 跑用例，回传通过率 / 失败原因 / 耗时
 - `GET /api/cases` → 评测用例数（基础 + 反馈 + 文档）
 - `POST /api/cases/from_feedback` `{"trace_id","keywords","behavior","note"}` → 差评一键转回归用例
-- `POST /api/handoff` `{"trace_id","query","contact"}` → 模拟工单，写 `logs/handoff.jsonl`
+- `GET /api/source?doc=&chunk=` → 引用的原文块（含版本与章节）；
+- `GET /api/kb/change?id=` → 待审批变更的文本 diff；
 - `GET /api/kb/versions` → 版本列表与活动版本
 - `GET /api/kb/changes?status=pending|approved|rejected` → 变更审批记录
 - `GET /api/kb/doc_history?name=...` → 单份文档的版本历史
@@ -699,6 +706,45 @@ python tests/bench_keyword.py                 # 倒排索引 vs 线性扫描
 - 关键词索引按文档 hash 全量重算条目（本地抽取很便宜）；模型整理只对新增/变更文档调用一次。
 - 没有 API Key 时只有本地条目，没有摘要和同义词；这是可用性差异，不是静默降级。
 
+## 4.10 流式、多轮与引用原文（v1.6.0）
+
+### 流式输出
+
+问答页默认请求 `POST /api/ask/stream`，服务端以 SSE 推送：
+
+| 事件 | 含义 | 前端动作 |
+|---|---|---|
+| `delta` | 生成中的文本增量 | 追加到答案区 |
+| `replace` | 上游中断，整段降级为抽取式 | 替换已渲染的文本 |
+| `final` | 完整结果（含引用、校验后的答案） | 用正式答案卡替换，绑定反馈与引用 |
+
+生成中发送按钮变为「停止」，`AbortController` 中断请求；服务端写失败即停止。
+流式不重试半截答案：上游在 `[DONE]` 前断开会被识别为截断，整体降级并让前端替换。
+
+### 多轮会话
+
+`session_id` 由前端生成并存 `sessionStorage`，服务端只保留最近 3 轮（30 分钟过期、最多 1000 个会话）。
+只有指代/省略式追问（「那 R2 呢」「还有呢」）才把上一轮问题拼进检索问题，独立问题不拼，
+避免「R2 需要双录吗」被上一轮带偏。`context_query` 会写进响应与 trace，可复核。
+
+边界：会话存在单实例内存里；多实例部署需要把它换到 Redis，否则负载均衡后追问可能落到另一台。
+
+### 引用原文
+
+每条 citation 带 `doc_id`、`chunk_index`、`version`、`snippet`。问答页的 `[n]` 是可点击按钮，
+调用 `/api/source` 打开右侧原文抽屉，展示完整知识块并高亮命中行；不做文件路径拼接，
+只接受当前索引里真实存在的块，越界返回 404。
+
+### 审批界面
+
+知识库页顶部展示待审批变更（作者、文件动作、风险提示），「查看 diff」调用
+`/api/kb/change` 展示统一 diff；「通过 / 驳回」直接调用审批接口。每份文档新增「历史」，
+可查看版本列表并回滚。配置 `ADMIN_TOKEN` 时，审批面板会出现令牌输入框（存 sessionStorage）。
+
+### 未命中
+
+不再提交工单：统一返回「无法找到答案。」，同时保留相似问题。`/api/handoff` 与工单表单已删除。
+
 ## 5. 评测
 
 ```bash
@@ -835,7 +881,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 
 ## 8. 已知风险与边界
 
-- **不承诺零幻觉**：靠「只依据资料 + 强制引用 + 答不出就转人工」降低概率、缩小影响面。
+- **不承诺零幻觉**：靠「只依据资料 + 强制引用 + 答不出就明确说明无法找到答案」降低概率、缩小影响面。
 - **离线抽取是兜底，不是正式答案**：无 Key 时只做抽取式回填，语义质量有限，上线前务必接真实模型。
 - **知识库 6 份**：3 份手写样本 + 3 份 PDF 解析；换成真实制度 PDF 后需重建评测集（用真实 badcase）。
 - **PDF 解析边界**：只还原文本层——扫描件需 OCR（未含，上传时会被 422 拦下并提示）；加密 PDF 直接拒绝；表格结构与多栏/旋转排版不保证还原，只做行级输出。
