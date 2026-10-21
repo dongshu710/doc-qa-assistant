@@ -164,7 +164,7 @@ class RAGPipeline:
         # ---------- 关键词直出（本地，不调用任何 API）----------
         # 放在检索之前：命中即答，省掉 embedding 与生成两次调用，也避免模型改写引入偏差。
         # 只对结构化条目生效（清单/表格/标签/显式关键词），标题与普通词不在此列。
-        # 命中后还要过极性/否定、解释型意图、单文档三道闸门；被挡下的原因写入 trace。
+        # 命中后还要过否定、极性、解释型意图、单文档四道闸门；被挡下的原因写入 trace。
         if self.settings.keyword_mode != "off" and not force_extractive:
             try:
                 report = self.keywords.match_report(clean)

@@ -239,7 +239,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `KEYWORD_TOP_N` | `3` | 单次直出最多几条条目 |
 | `KEYWORD_INDEX` | `data/index/keywords.json` | 关键词与整理结果缓存路径 |
 | `KEYWORD_LLM_MAX_CHARS` | `2400` | 单份文档送去整理的字符上限 |
-| `KEYWORD_GUARD` | `on` | 极性/否定、解释型意图、单文档收敛三道闸门；`off` 回到 1.4.0 行为，用于 A/B |
+| `KEYWORD_GUARD` | `on` | 极性/否定、解释型意图、单文档收敛四道闸门；`off` 回到 1.4.0 行为，用于 A/B |
 | `KEYWORD_MULTI_DOC` | `off` | `on` 允许一次直出跨多份文档（默认收敛到一份） |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
@@ -632,9 +632,9 @@ Q: 我不吃香菜
 个人偏好类条目的核心词（「喜欢的音乐」→「音乐」）只在第一人称提问时生效，
 「明天天气」不会因为文档里有「讨厌的天气」被截胡。
 
-### 命中之后的三道闸门
+### 命中之后的四道闸门
 
-命中不等于直出。下面三道闸门（`KEYWORD_GUARD=on`，可关掉做 A/B）在 v1.5.0 加入，
+命中不等于直出。下面四道闸门（`KEYWORD_GUARD=on`，可关掉做 A/B）在 v1.5.0 加入，
 对应的是实测翻车现场，不是纸面规则：
 
 | 闸门 | 触发例子 | 处理 | 记录 |
