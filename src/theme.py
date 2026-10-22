@@ -37,6 +37,8 @@ ICON = {
     "book": '<path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 3v18"/>',
     "chevron": '<path d="m9 6 6 6-6 6"/>',
     "target": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
+    "moon": '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
 }
 
 
@@ -150,6 +152,17 @@ main{flex:1 0 auto;}
   .brand-text b{font-size:13px;}
   .nav nav a{padding:6px 7px;font-size:12px;}
 }
+.theme-toggle{
+  flex:none;width:32px;height:32px;margin-left:2px;border-radius:9px;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  transition:background .16s ease,color .16s ease,border-color .16s ease;
+}
+.theme-toggle:hover{background:#f3f5fa;color:var(--ink);border-color:var(--line-2);}
+.theme-toggle .ic-sun{display:none;}
+[data-theme="dark"] .theme-toggle .ic-sun{display:inline-flex;}
+[data-theme="dark"] .theme-toggle .ic-moon{display:none;}
+@media (max-width:640px){.theme-toggle{width:30px;height:30px;}}
 
 /* ============ 页脚 ============ */
 .site-foot{border-top:1px solid var(--line);background:#fff;margin-top:20px;}
@@ -309,6 +322,111 @@ pre.cmd .c{color:#7d8db3;}
   .nav,.site-foot,#toasts,.no-print{display:none !important;}
   .card,.kpi{box-shadow:none;break-inside:avoid;}
 }
+/* ============ 深色模式 ============
+   只换令牌 + 少量写死浅色的组件；页面私有样式在 theme 之后输出，
+   所以这段必须最后加载（shell/报告页都把 DARK_CSS 放在页面 CSS 之后）。 */
+[data-theme="dark"]{
+  color-scheme:dark;
+  --ink:#eef2ff; --text:#d5dcec; --muted:#a9b4c9; --faint:#8f9bb3;
+  --line:#243049; --line-2:#2f3d59;
+  --bg:#0b1120; --surface:#111827; --surface-2:#0f172a;
+  --brand:#7f9cff; --brand-600:#93aaff; --brand-2:#a78bfa; --brand-soft:#1b2a4d; --brand-tint:#141f38;
+  --ok:#34d399; --ok-soft:#0f2f26; --warn:#fbbf24; --warn-soft:#33260c; --bad:#f87171; --bad-soft:#3a1518;
+  --sh-1:0 1px 2px rgba(0,0,0,.45); --sh-2:0 12px 32px -18px rgba(0,0,0,.85);
+  --sh-3:0 30px 70px -30px rgba(0,0,0,.9);
+}
+[data-theme="dark"] body{
+  background-image:radial-gradient(900px 420px at 50% -180px,#17244d 0%,rgba(11,17,32,0) 70%);
+}
+[data-theme="dark"] ::selection{background:#2b3f75;color:#eef2ff;}
+[data-theme="dark"] code{background:#182338;border-color:var(--line);color:#c7d2e8;}
+[data-theme="dark"] .nav{background:rgba(15,23,42,.86);border-bottom-color:rgba(36,48,73,.9);}
+[data-theme="dark"] .nav nav a:hover{background:#182338;color:var(--ink);}
+[data-theme="dark"] .nav .nav-tag{background:#16213a;border-color:var(--line);color:#b9c6e2;}
+[data-theme="dark"] .site-foot{background:var(--surface);}
+[data-theme="dark"] .theme-toggle{border-color:var(--line-2);background:#16213a;color:#c7d2e8;}
+[data-theme="dark"] .theme-toggle:hover{background:#1d2a44;color:var(--ink);}
+[data-theme="dark"] .btn.ghost{background:var(--surface);border-color:var(--line-2);color:var(--text);}
+[data-theme="dark"] .btn.ghost:hover{background:#182338;border-color:#3a4a6b;color:var(--ink);}
+[data-theme="dark"] .btn.quiet:hover{background:#1a253c;color:var(--ink);}
+[data-theme="dark"] .btn.danger-ghost{background:var(--surface);border-color:#5a2a2d;color:#fca5a5;}
+[data-theme="dark"] .btn.danger-ghost:hover{background:var(--bad-soft);}
+[data-theme="dark"] .kpi{background:var(--surface);}
+[data-theme="dark"] .kpi:hover{border-color:#33425f;}
+[data-theme="dark"] .kpi.accent{background:linear-gradient(160deg,#15213c,#111827 62%);border-color:#2b3a5c;}
+[data-theme="dark"] .table-wrap{background:var(--surface);}
+[data-theme="dark"] thead th{background:#16213a;color:#93a1bb;border-bottom-color:var(--line);}
+[data-theme="dark"] tbody td{border-bottom-color:#1d2942;}
+[data-theme="dark"] tbody tr:hover td{background:#16213a;}
+[data-theme="dark"] .bar{background:#1c2942;}
+[data-theme="dark"] .empty .ic{color:#4a5a78;}
+[data-theme="dark"] .pill{background:#182338;border-color:var(--line);color:#b6c2da;}
+[data-theme="dark"] .pill.ok{background:var(--ok-soft);border-color:#1f5a45;color:#6ee7b7;}
+[data-theme="dark"] .pill.warn{background:var(--warn-soft);border-color:#5a4413;color:#fcd34d;}
+[data-theme="dark"] .pill.bad{background:var(--bad-soft);border-color:#5a2a2d;color:#fca5a5;}
+[data-theme="dark"] .pill.brand{background:var(--brand-soft);border-color:#2f4a86;color:#a9bcff;}
+[data-theme="dark"] .tag{background:var(--brand-soft);color:#a9bcff;}
+[data-theme="dark"] .note{background:var(--warn-soft);border-color:#4a3a14;color:#f4d58a;}
+[data-theme="dark"] .note.info{background:var(--brand-tint);border-color:#26375c;color:#b9c8ef;}
+[data-theme="dark"] .modal-card{background:var(--surface);}
+[data-theme="dark"] .field label{color:#a9b4c9;}
+[data-theme="dark"] .field input,[data-theme="dark"] .field select,[data-theme="dark"] .field textarea{
+  background:#0f172a;border-color:var(--line-2);color:var(--text);
+}
+[data-theme="dark"] #toasts .toast{background:#1b2743;border:1px solid #2f3d59;color:#eef2ff;}
+
+/* ---------- 页面私有组件 ---------- */
+[data-theme="dark"] .stat-strip{background:var(--surface);}
+[data-theme="dark"] .chat-shell,[data-theme="dark"] .ans-card,[data-theme="dark"] .ex-card,
+[data-theme="dark"] .composer,[data-theme="dark"] .src-drawer{background:var(--surface);}
+[data-theme="dark"] .empty-chat .art{background:linear-gradient(160deg,#182544,#0f172a);}
+[data-theme="dark"] .src-close,[data-theme="dark"] .kb-modal-head button{background:#1c2942;color:var(--text);}
+[data-theme="dark"] .src-text mark{background:#4a3a12;color:#fde68a;}
+[data-theme="dark"] .sim-q{background:#241c0c;border-color:#4a3a14;color:#f4d58a;}
+[data-theme="dark"] .sim-q:hover{border-color:#7a6224;background:#2b2210;}
+[data-theme="dark"] .sk{background:linear-gradient(90deg,#182338 0%,#21304d 40%,#182338 80%);}
+[data-theme="dark"] .composer-box{background:#0f172a;border-color:var(--line-2);}
+[data-theme="dark"] .composer-hint kbd{background:#1c2942;border-color:var(--line);color:#a9b4c9;}
+[data-theme="dark"] .drop{background:linear-gradient(180deg,#141f38,#0f172a);border-color:#33425f;}
+[data-theme="dark"] .chips input,[data-theme="dark"] .kb-search,[data-theme="dark"] .appr-token input{background:#0f172a;color:var(--text);}
+[data-theme="dark"] .chips button:hover{background:#1c2942;color:var(--ink);}
+[data-theme="dark"] .ftype.pdf{background:#3a1518;color:#fca5a5;}
+[data-theme="dark"] .ftype.docx{background:#1b2a4d;color:#a9bcff;}
+[data-theme="dark"] .ftype.md{background:#0f2f26;color:#6ee7b7;}
+[data-theme="dark"] .ftype.txt{background:#1c2942;color:#b6c2da;}
+[data-theme="dark"] .kw-row td{background:#141f38;}
+[data-theme="dark"] .kw-chip{background:#0f172a;border-color:var(--line-2);color:#c7d2e8;}
+[data-theme="dark"] .approve{background:#1f1a0d;border-color:#4a3a14;}
+[data-theme="dark"] .kb-modal{background:var(--surface);}
+[data-theme="dark"] .tabs a.active{background:var(--surface);border-color:var(--line);}
+[data-theme="dark"] .donut::after{background:var(--surface);box-shadow:0 0 0 1px #1c2942 inset;}
+[data-theme="dark"] .score-tile{background:linear-gradient(180deg,#141f38,#111827);}
+[data-theme="dark"] .dash-select{background:var(--surface);color:var(--text);}
+
+/* ---------- 汇报页 ---------- */
+[data-theme="dark"] .rp-nav{background:linear-gradient(180deg,rgba(11,17,32,.97) 62%,rgba(11,17,32,0));}
+[data-theme="dark"] .rp-nav a:hover{background:#1c2942;color:var(--ink);}
+[data-theme="dark"] .rp-nav a.active{background:var(--surface);border-color:var(--line);}
+[data-theme="dark"] .arch{background:linear-gradient(180deg,#141f38,#111827);}
+[data-theme="dark"] .rp-score{background:linear-gradient(180deg,#141f38,#111827);}
+[data-theme="dark"] .rp-list{color:#c3ccdf;}
+[data-theme="dark"] .rp-list li::marker{color:#6b7a96;}
+[data-theme="dark"] .axis .ic.is,.score.s5,.score.s4{background:#0f2f26;color:#6ee7b7;}
+[data-theme="dark"] .axis .ic.not,.score.s2,.score.s1{background:#3a1518;color:#fca5a5;}
+[data-theme="dark"] .score.s3{background:#33260c;color:#fcd34d;}
+
+/* ---------- 减动效 ----------
+   系统开启「减少动态效果」后，所有过渡/动画压到 0.01ms：
+   不是关掉可见性，只是让位移、脉动、淡入不再发生。 */
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto;}
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+    scroll-behavior:auto !important;
+  }
+}
 """
 
 
@@ -328,7 +446,11 @@ def nav(active: str = "", links: bool = True) -> str:
         f'<a class="brand" href="/">{MARK}'
         f'<span class="brand-text"><b>{BRAND}</b><i>{TOPIC}</i></span></a>'
         f'<span class="nav-tag">v{__version__}</span>'
-        f"{nav_html}</div></header>"
+        f"{nav_html}"
+        f'<button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色模式">'
+        f'<span class="ic-moon">{icon("moon", 16)}</span>'
+        f'<span class="ic-sun">{icon("sun", 16)}</span></button>'
+        "</div></header>"
     )
 
 
@@ -348,15 +470,38 @@ def footer(links: bool = True) -> str:
     )
 
 
+THEME_HEAD = (
+    "<script>(function(){try{var s=localStorage.getItem('rag_theme');"
+    "var t=(s==='dark'||s==='light')?s:(window.matchMedia&&"
+    "window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');"
+    "document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>"
+)
+
+THEME_JS = """
+(function(){
+  var root=document.documentElement;
+  var btn=document.getElementById('themeToggle');
+  function current(){return root.getAttribute('data-theme')==='dark'?'dark':'light';}
+  function apply(t){
+    root.setAttribute('data-theme',t);
+    try{ localStorage.setItem('rag_theme',t); }catch(e){}
+    if(btn) btn.setAttribute('aria-label',t==='dark'?'切换到浅色模式':'切换到深色模式');
+  }
+  if(btn) btn.addEventListener('click',function(){ apply(current()==='dark'?'light':'dark'); });
+})();
+"""
+
+
 def shell(active: str, title: str, body: str, script: str = "", css: str = "") -> str:
     """完整页面骨架。css 为页面私有样式，追加在设计系统之后。"""
     return (
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f'<meta name="color-scheme" content="light">'
+        f"{THEME_HEAD}"
+        f'<meta name="color-scheme" content="light dark">'
         f"<title>{title}</title><style>{BASE_CSS}{css}</style></head><body>"
         f"{nav(active)}{body}{footer()}"
-        f"<div id=\"toasts\"></div><script>{script}</script></body></html>"
+        f"<div id=\"toasts\"></div><script>{script}</script><script>{THEME_JS}</script></body></html>"
     )
 
 

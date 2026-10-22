@@ -2,6 +2,34 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.8.0] - 2026-10-22
+
+P2 五项：后台/增量重建索引、汇报页缓存与版本硬链接、深色模式 / 减动效 / 图标统一、API Key + OpenAPI、Playwright 五页 E2E。
+
+### 新增
+
+- **后台重建索引**：`KB_ASYNC_RELOAD=on`（默认）时，上传 / 删除 / 审批后接口立即返回（实测约 100 ms），索引在后台线程构建，构建期间继续用旧索引服务；`GET /api/health` 新增 `index`（`rebuilding` / `pending` / `builds` / `last_ms` / `last_error` / `parsed_docs` / `reused_docs`），知识库页轮询后自动刷新。连续上传只置 `pending`，由同一线程再跑一轮，不并发重建。
+- **增量解析**：`load_corpus` 按文件 `mtime+size` 缓存分块结果，只重读变更文件；配合版本硬链接保留 mtime，修改一份文档时实测「解析 1 / 复用 3」。
+- **版本硬链接与保留策略**：新版本对未变更文件用 `os.link`（不支持硬链接的文件系统自动回退复制），版本写入从 O(全量) 降为 O(变更)；`KB_KEEP_VERSIONS`（默认 30，0=不清理）保留最近 N 版，活动版本与待审批基线版本永不删除。版本 manifest 记录 `linked_docs`。
+- **汇报页缓存**：`report.collect()` 以知识库文件 + 评测报告 `mtime/size` + 检索配置为签名，命中直接复用；trace 指标用 `REPORT_CACHE_TTL`（默认 60s）容忍延迟，避免每问一次就失效。实测 `collect` 32.9 ms → 0.87 ms，`/report` 整页 53 ms → 16 ms。
+- **深色模式**：`data-theme` + 设计令牌，导航右侧一键切换并记忆（`localStorage`），首屏前置脚本避免闪烁；覆盖五个页面与独立汇报页。`prefers-reduced-motion: reduce` 时关闭过渡、动画与平滑滚动。
+- **图标统一**：反馈按钮的 👍/👎 换成与全站一致的 1.7 描边 SVG；新增太阳/月亮图标。
+- **API Key**：`API_KEYS=web:sk_xxx,ci:sk_yyy`（也接受不命名），支持 `Authorization: Bearer` 与 `X-API-Key`，常量时间比较；未配置时保持开放。401 带 `WWW-Authenticate`，限流与成本按 Key 统计（`rag_api_tokens_total` / `rag_api_cost_usd_total`），审计只记名字不记密钥。问答页在启用后出现 Key 输入条，存 `sessionStorage`。
+- **OpenAPI**：`GET /openapi.json`，18 个路径、请求/响应 schema、鉴权方案与检索配置（`x-retrieval` / `x-model`）。
+- **Playwright 五页 E2E**：`tests/e2e_pages.mjs` 自启服务，检查五页 HTTP 200、关键选择器、标题、5 项导航、1280/390px 无横向溢出、无控制台错误，以及深色模式持久化、减动效；无浏览器时明确跳过。CI 增加独立 e2e job。
+- **测试**：`test_async_reload`（立即返回 / 重建中可问答 / 增量复用 / 重复触发合并）、`test_report_cache`（命中 / 报告失效 / 知识库失效 / TTL=0）、`test_kb_hardlink`（inode 复用 / 保留 N 版 / 回退复制）、`test_auth_openapi`（401 / 两种携带方式 / 契约）。
+
+### 变更
+
+- 上传、删除、审批、回滚的响应新增 `rebuilding` 与 `index`；重建中 `chunks` 返回 `null`，不再回旧值误导。
+- 知识库列表以版本库活动目录为准，重建期间新文件不会短暂“消失”。
+- `/api/health` 增加 `auth`（只回模式与 Key 数量，不回名字）。
+- 版本升到 1.8.0。
+
+### 修复
+
+- `reload_async` 在「已有重建进行中」分支内重复获取非重入锁会自锁；改用 `RLock`，并由 `test_async_reload` 的连续触发用例守住。
+
 ## [1.7.0] - 2026-10-22
 
 P1 七项：传输优化、日志轮转尾读、判域前置、对比度与字号、未命中反馈与答案元信息、会话历史与导出、表格入库。

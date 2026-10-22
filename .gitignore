@@ -10,6 +10,7 @@ data/kb/
 data/index/
 tests/report_doc_cases.json
 tests/eval_cases_docs.jsonl
+tests/e2e-server.log
 __pycache__/
 *.py[cod]
 .pytest_cache/

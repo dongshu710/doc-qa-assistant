@@ -12,6 +12,7 @@
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -70,13 +71,32 @@ def _build_vocabulary(chunks, limit: int = 30) -> list[str]:
     return out[:limit]
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 class RAGPipeline:
     def __init__(self, knowledge_dir: str):
         self.settings = load_settings()
         self.knowledge_dir = knowledge_dir
-        self.chunks = load_corpus(knowledge_dir)
+        self._corpus_cache: dict[str, tuple] = {}
+        self._parsed_docs = 0
+        self._reused_docs = 0
+        # 索引替换必须成组：chunks 与 _chunk_pos 是配对读取的，分开赋值会让
+        # 正在飞的引用定位到 -1。构建在锁外，只有替换在锁内。
+        self._swap_lock = threading.RLock()
+        self._build_lock = threading.Lock()
+        self._rebuild_lock = threading.RLock()
+        self._rebuild = {
+            "rebuilding": False, "pending": False, "builds": 0,
+            "started_at": None, "last_at": None, "last_ms": None,
+            "last_error": None, "parsed_docs": 0, "reused_docs": 0,
+            "target": knowledge_dir, "chunks": 0,
+        }
+        self.chunks = self._load_chunks(knowledge_dir)
         if not self.chunks:
             raise ValueError("知识库为空，无法启动")
+        self._rebuild["chunks"] = len(self.chunks)
         self._chunk_pos = {id(chunk): i for i, chunk in enumerate(self.chunks)}
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.project_root = root
@@ -105,6 +125,19 @@ class RAGPipeline:
             # 模型/索引不可用（网络、维度错、索引损坏）：降级但显式暴露，不静默
             self._retrieval_error = f"{type(exc).__name__}: {exc}"[:300]
             return build_retriever(chunks, "vector")
+
+    def _load_chunks(self, knowledge_dir: str) -> list:
+        """增量解析：只重读 mtime/size 变化的文件，其余复用上次结果。"""
+        self._parsed_docs = 0
+        self._reused_docs = 0
+        files = [n for n in os.listdir(knowledge_dir)
+                 if n.lower().endswith((".md", ".txt"))] if os.path.isdir(knowledge_dir) else []
+        chunks = load_corpus(
+            knowledge_dir, cache=self._corpus_cache,
+            on_parse=lambda _name: setattr(self, "_parsed_docs", self._parsed_docs + 1),
+        )
+        self._reused_docs = max(0, len(files) - self._parsed_docs)
+        return chunks
 
     def _make_keywords(self, chunks, enrich: bool):
         configured = self.settings.keyword_index or "data/index/keywords.json"
@@ -427,23 +460,99 @@ class RAGPipeline:
         ]
         return self._finish(result, ctx["t0"])
 
-    def reload(self) -> int:
-        """重新加载知识库（知识库页上传/删除、版本审批后调用）。"""
-        chunks = load_corpus(self.knowledge_dir)
-        if not chunks:
-            raise ValueError("知识库为空，拒绝加载")
-        self._retrieval_error = None
-        retriever = self._make_retriever(chunks)
-        # 先构建成功再替换，避免构建失败把在线检索打空
-        self.chunks = chunks
-        self._chunk_pos = {id(chunk): i for i, chunk in enumerate(chunks)}
-        self.retriever = retriever
-        self.vocabulary = _build_vocabulary(chunks)
-        if not hasattr(self, "sessions"):
-            self.sessions = SessionStore()
-        # 上传/审批后重建：只对新增或变更的文档做一次模型整理，其余走缓存
-        self.keywords = self._make_keywords(chunks, enrich=True)
-        return len(chunks)
+    def _build_index(self, knowledge_dir: str):
+        """构建一份新索引，返回 (chunks, retriever, keywords, parsed, reused)。
+
+        全部在锁外完成：embedding / 关键词整理可能耗时数秒，不能挡住在线问答。
+        构建失败直接抛异常，旧索引继续服务。
+        """
+        with self._build_lock:
+            chunks = self._load_chunks(knowledge_dir)
+            if not chunks:
+                raise ValueError("知识库为空，拒绝加载")
+            parsed, reused = self._parsed_docs, self._reused_docs
+            self._retrieval_error = None
+            retriever = self._make_retriever(chunks)
+            keywords = self._make_keywords(chunks, enrich=True)
+        return chunks, retriever, keywords, parsed, reused
+
+    def _swap_index(self, knowledge_dir: str, chunks, retriever, keywords) -> int:
+        with self._swap_lock:
+            # 先算好新映射，再一次性换掉引用，缩小 chunks/pos 不一致的窗口
+            pos = {id(chunk): i for i, chunk in enumerate(chunks)}
+            self._chunk_pos = pos
+            self.chunks = chunks
+            self.vocabulary = _build_vocabulary(chunks)
+            self.retriever = retriever
+            self.keywords = keywords
+            self.knowledge_dir = knowledge_dir
+            return len(chunks)
+
+    def reload(self, knowledge_dir: str | None = None) -> int:
+        """同步重建（测试、CLI、KB_ASYNC_RELOAD=off 时使用）。"""
+        target = knowledge_dir or self.knowledge_dir
+        chunks, retriever, keywords, parsed, reused = self._build_index(target)
+        total = self._swap_index(target, chunks, retriever, keywords)
+        with self._rebuild_lock:
+            self._rebuild.update({
+                "builds": self._rebuild["builds"] + 1, "last_at": _now_iso(),
+                "last_error": None, "chunks": total, "target": target,
+                "parsed_docs": parsed, "reused_docs": reused,
+            })
+        return total
+
+    def reload_async(self, knowledge_dir: str | None = None) -> dict:
+        """后台重建：接口立即返回，查询继续用旧索引，新索引就绪后原子替换。
+
+        重建期间再次提交（连续上传多份）只置 pending，由同一个线程再跑一轮，
+        避免并发重建互相覆盖，也不会为每次上传都起一个线程。
+        """
+        target = knowledge_dir or self.knowledge_dir
+        with self._rebuild_lock:
+            self._rebuild["target"] = target
+            if self._rebuild["rebuilding"]:
+                self._rebuild["pending"] = True
+                return self.rebuild_state()
+            self._rebuild.update({"rebuilding": True, "pending": False,
+                                  "started_at": _now_iso(), "last_error": None})
+        threading.Thread(target=self._rebuild_worker, name="kb-rebuild", daemon=True).start()
+        return self.rebuild_state()
+
+    def _rebuild_worker(self) -> None:
+        while True:
+            with self._rebuild_lock:
+                target = self._rebuild["target"]
+            started = time.time()
+            try:
+                chunks, retriever, keywords, parsed, reused = self._build_index(target)
+                total = self._swap_index(target, chunks, retriever, keywords)
+                with self._rebuild_lock:
+                    self._rebuild.update({
+                        "builds": self._rebuild["builds"] + 1,
+                        "last_at": _now_iso(), "last_ms": round((time.time() - started) * 1000, 1),
+                        "last_error": None, "chunks": total,
+                        "parsed_docs": parsed, "reused_docs": reused,
+                    })
+            except Exception as exc:  # noqa: BLE001 —— 后台失败只记录，不能让线程静默死掉
+                with self._rebuild_lock:
+                    self._rebuild.update({
+                        "last_at": _now_iso(), "last_ms": round((time.time() - started) * 1000, 1),
+                        "last_error": f"{type(exc).__name__}: {exc}"[:300],
+                    })
+            with self._rebuild_lock:
+                if self._rebuild["pending"]:
+                    self._rebuild["pending"] = False
+                    self._rebuild["started_at"] = _now_iso()
+                    continue
+                self._rebuild["rebuilding"] = False
+                self._rebuild["started_at"] = None
+                return
+
+    def rebuild_state(self) -> dict:
+        with self._rebuild_lock:
+            state = dict(self._rebuild)
+        state["chunks_now"] = len(self.chunks)
+        return state
 
     def rebuild_keywords(self, enrich: bool = True) -> dict:
         """只重建关键词（不动检索索引）；enrich=True 时对变更文档做一次模型整理。"""
@@ -452,12 +561,13 @@ class RAGPipeline:
 
     def _cite(self, chunk, ref: int, snippet: str = "") -> dict:
         """引用必须能回到原文：带 doc_id / chunk_index，前端可据此打开原文抽屉。"""
-        return {
-            "ref": ref, "title": chunk.title, "section": chunk.section,
-            "doc_id": chunk.doc_id,
-            "chunk_index": self._chunk_pos.get(id(chunk), -1),
-            "snippet": snippet,
-        }
+        with self._swap_lock:
+            return {
+                "ref": ref, "title": chunk.title, "section": chunk.section,
+                "doc_id": chunk.doc_id,
+                "chunk_index": self._chunk_pos.get(id(chunk), -1),
+                "snippet": snippet,
+            }
 
     def source_chunk(self, doc_id: str, chunk_index: int) -> dict | None:
         """按引用定位原文；只接受当前索引里真实存在的块，不做文件路径拼接。"""

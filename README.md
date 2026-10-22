@@ -123,7 +123,9 @@ doc-qa-assistant/
 │  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
 │  ├─ server.py                # Web 服务（五页原型 + API）
-│  ├─ theme.py                 # 设计系统（令牌 / 组件 / 页头页脚），五页共用
+│  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
+│  ├─ openapi.py               # OpenAPI 3.0 契约（18 个路径）
+│  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），五页共用
 │  ├─ web_pages.py             # 页面模板（首页/问答/知识库/看板）
 │  ├─ report.py                # 汇报页 + 独立 HTML 导出
 │  ├─ version.py               # 版本号（读根目录 VERSION）
@@ -164,6 +166,11 @@ doc-qa-assistant/
 │  ├─ test_session.py           # 多轮上下文改写 / TTL / 轮数
 │  ├─ test_stream.py            # SSE 事件顺序 / 多轮 / 未命中
 │  ├─ test_generator_stream.py  # 上游 SSE 解析 / 用量 / 截断降级
+│  ├─ test_async_reload.py      # 上传立即返回 / 重建中可问答 / 增量复用
+│  ├─ test_report_cache.py      # 汇报缓存命中 / 失效 / TTL
+│  ├─ test_kb_hardlink.py       # 版本硬链接 / 保留 N 版 / 回退复制
+│  ├─ test_auth_openapi.py      # API Key 401 / 两种携带方式 / OpenAPI 契约
+│  ├─ e2e_pages.mjs             # Playwright 五页 E2E（开发期依赖）
 │  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
 │  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
@@ -812,6 +819,82 @@ ETag 取内容 sha256 前 20 位并标 `W/`，这样同一内容在压缩/未压
 **边界**：不解析样式，日期显示为序列号、合并单元格只在左上角有值。需要保留格式就另存为 CSV。
 扫描件 PDF 的提示改为可操作步骤（先 OCR、另存为 docx/txt 再上传），响应带 `need_ocr`。
 
+## 4.12 后台重建、深色模式与开放接口（v1.8.0）
+
+### 后台 + 增量重建索引
+
+上传 / 删除 / 审批通过后，接口只等版本落盘就返回，索引在后台线程里构建：
+
+```text
+POST /api/knowledge/upload  → 约 100ms 返回 {rebuilding:true, chunks:null}
+                              后台：解析变更文件 → 重建检索器/关键词 → 原子替换
+GET  /api/health            → index.rebuilding=false, last_ms, parsed_docs, reused_docs
+```
+
+- **重建期间继续服务**：旧索引不会被清空，问答照常；代价是新文档有短暂的「已入库但还搜不到」窗口（本机 31 块约 15 ms，600 文档按 embedding 耗时而定）。
+- **只重读变更文件**：`load_corpus` 用文件 `mtime+size` 做签名，未变的文档复用上次分块；实测改一份文档时「解析 1 / 复用 3」。
+- **连续触发合并**：重建中再次上传只置 `pending`，同一个线程跑完当前轮再跑一轮，不并发重建、不为每次上传起线程。
+- **失败可见**：构建异常写入 `index.last_error`，旧索引继续服务；知识库页轮询到失败会提示，不静默。
+- **开关**：`KB_ASYNC_RELOAD=off` 回到同步语义（测试与批量导入用）。
+
+### 汇报页缓存与版本硬链接
+
+`collect()` 原来每次重算评测汇总、知识库统计与 trace 指标。现在用签名缓存：
+
+| 输入 | 是否参与签名 | 说明 |
+|---|---|---|
+| 知识库文件 `mtime/size` | 是 | 上传、审批、回滚都会改文件 |
+| `tests/*.json`、`eval_cases*.jsonl` | 是 | 跑完评测立即刷新 |
+| 检索配置（`top_k` / 阈值等） | 是 | 配置变了数字含义也变 |
+| `logs/trace.jsonl` | 否，用 TTL | 每问一次都变，参与签名就永不命中；`REPORT_CACHE_TTL` 默认 60s |
+
+实测 `collect` 32.9 ms → **0.87 ms**，`/report` 整页 53 ms → **16 ms**（剩余是 HTML 渲染与 gzip）。
+
+版本目录改为**硬链接 + 保留策略**：未变更文件直接 `os.link` 到上一版，新版本磁盘增量只等于改动量；
+不支持硬链接的文件系统（跨盘、FAT/exFAT）自动回退为复制。硬链接还保留了原 `mtime`，增量重建才能认出「这份没变」。
+`KB_KEEP_VERSIONS`（默认 30，0=不清理）保留最近 N 版，活动版本与待审批变更的基线版本永不删除。
+
+### 深色模式、减动效与图标
+
+- 导航右侧一键切换，选择存 `localStorage`；`<head>` 里的前置脚本在 CSS 之前设好 `data-theme`，不闪白。
+- 深色令牌覆盖背景、卡片、表格、表单、语义色与汇报页；不是简单反色，正文对比度仍满足 AA。
+- `prefers-reduced-motion: reduce` 时把动画/过渡压到 0.01 ms、关闭平滑滚动，照顾前庭敏感用户。
+- 反馈按钮的 emoji 换成与全站一致的 1.7 描边 SVG，不再出现「一半图标一半表情」。
+- 汇报页导出同样带主题切换，离线打开也能用。
+
+### API Key 与 OpenAPI
+
+```bash
+API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥
+```
+
+- 配置后 `/api/ask` 与 `/api/ask/stream` 必须带 `Authorization: Bearer <key>` 或 `X-API-Key: <key>`；
+  未配置时保持开放（按 IP 限流），不破坏本地演示。
+- 校验用 `hmac.compare_digest`；401 带 `WWW-Authenticate: Bearer`；审计只记 Key 名字与末 4 位，不记密钥本身。
+- 限流、灰度、成本统计的身份从 IP 换成 `key:<name>`，多调用方互不挤占；Prometheus 增加
+  `rag_api_tokens_total{key}` 与 `rag_api_cost_usd_total{key}`。
+- 问答页检测到 `auth.mode=key` 时显示 Key 输入条（存 `sessionStorage`，关标签页即清），401 会自动展开。
+- `GET /openapi.json` 输出 OpenAPI 3.0.3：18 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
+  `x-retrieval` / `x-model`，可直接导入 Postman / Apifox / Swagger UI。
+
+### 五页 Playwright E2E
+
+`tests/e2e_pages.mjs` 会自己起服务（随机端口、离线模式），逐页检查：
+
+- HTTP 200、标题、关键选择器、5 项导航、数据加载完成；
+- 1280px 与 390px 都没有横向溢出；
+- 控制台无报错（过滤 favicon 等噪声）；
+- 深色模式切换生效、刷新后保持，卡片不再是白底；
+- `prefers-reduced-motion` 下过渡被压到近零、平滑滚动关闭。
+
+```bash
+npm i playwright-core          # 开发期依赖，不进运行时
+node tests/e2e_pages.mjs       # 没装浏览器会明确 SKIP
+```
+
+**取舍**：E2E 依赖本机 Edge/Chrome 或 CI 安装的 Chromium；没有浏览器时跳过而不是失败，
+避免「零依赖」项目因为测试工具装不上而红。CI 单独一个 job 安装 Chromium 后强制执行。
+
 ## 5. 评测
 
 ```bash
@@ -924,20 +1007,22 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 
 已实现：
 
-1. **切分与入库**：标题/条款感知切分；PDF / DOCX 由服务端解析为 Markdown；知识库可上传、删除、重建索引。
+1. **切分与入库**：标题/条款感知切分；PDF / DOCX 由服务端解析为 Markdown；知识库可上传、删除、重建索引；索引后台构建、按文件增量解析。
 2. **检索**：向量召回 + 重排为默认；BM25 / Hybrid 保留为对照；查询扩展可选，`build_retriever` 工厂隔离实现。
 3. **生成与引用**：OpenAI 兼容端点；超时、重试、退避；引用强制与降级抽取；未命中返回相似问题。
 4. **评测**：L1 确定性断言、L3 语义评分、Recall@k / MRR 召回评测；差评与上传文档可转用例。
 5. **可观测**：`logs/trace.jsonl`、`/api/metrics`、`/metrics`（Prometheus）、`/api/health`、`/api/audit`；审计可输出 stdout 供采集。
 6. **生产控制**：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚；多实例状态可切 Redis。
 7. **真向量检索**：OpenAI 兼容 embedding（bge 同协议）+ FAISS / NumPy / 纯 Python 三档索引，manifest 记录模型/维度/指纹。
-8. **知识库版本化**：版本目录、审批流、按文档粒度回滚，版本只增不改。
+8. **知识库版本化**：版本目录、审批流、按文档粒度回滚，版本只增不改；未变更文件硬链接，保留最近 N 版。
+9. **界面与可达性**：五页统一设计系统、深色模式、减动效、12px 字号下限与 AA 对比度；Playwright 五页 E2E 守住加载、溢出与控制台错误。
+10. **开放接口**：可选 API Key（按 Key 限流与计成本）+ `/openapi.json`，可直接生成客户端或导入调试工具。
 
 可继续扩展：
 
 - 用 Chroma 承载元数据过滤与多租户（当前 FAISS 足够，接口已隔离）。
 - 在多实例上把灰度配置与知识库写锁也搬到 Redis / 配置中心。
-- 给 embedding 索引加增量更新，避免整库重建。
+- 索引对象仍是整体重建（分块已增量、向量按内容缓存），10⁵ 块以上可换成可增量写的索引结构。
 
 ## 7. 回滚
 
@@ -968,7 +1053,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - **embedding 增加一次在线查询延迟与费用**：每题一次 `/embeddings` 调用（已加 128 条查询缓存），超时默认 8s；批量建库按 `EMBEDDING_BATCH` 计费。索引构建失败/服务不可达时降级词法检索，答案会标 `degraded`。
 - **Redis 是新的单点**：限流/幂等/成本依赖它；不可用时回退进程内状态（仍有限流），但多实例之间不再一致。生产建议主从 + 哨兵或托管 Redis，并把 `REDIS_TIMEOUT_S` 控制在 1~2s。
 - **知识库审批锁是本机文件锁**：`state.lock` 保证同机多进程串行；多实例部署时审批应由单实例处理，或把锁换成 Redis 分布式锁。上传本身不写活动目录，不会出现半写。
-- **索引是全量重建**：语料指纹变化会重算所有缺失向量（有内容缓存，未变块不重复计费），10⁵ 块以上建议改增量索引与后台构建。
+- **索引构建是「分块增量、索引整体替换」**：未变更文档复用分块、未变更块复用向量缓存（不重复计费），但检索器对象仍按全量块重建（O(N) 内存与一次扫描），10⁵ 块以上建议换可增量写的索引；重建期间旧索引继续服务，新文档有短暂搜不到窗口。
 - **查询扩展有延迟成本**：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。
 - **上传支持 `.md` / `.txt` / `.pdf` / `.docx` / `.xlsx` / `.csv` / `.tsv`**：全部由服务端解析为 Markdown，上传即入库。`.doc` / `.xls` 老格式需先另存为新格式；扫描 PDF 无文本层，需先 OCR。
 - **DOCX 解析边界**：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。

@@ -100,6 +100,10 @@ class Settings:
     kb_approval: str = "auto"         # auto=本机管理员直通，其他走审批 | on | off
     kb_dir: str = "data/kb"
     kb_seed_dir: str = "data/knowledge"   # 首次初始化版本库时的种子目录
+    kb_async_reload: str = "on"       # on=上传后立即返回、后台重建索引 | off=同步重建
+    kb_keep_versions: int = 30        # 保留最近 N 个版本（0=不清理），活动版本永不删除
+    # 对外接口鉴权：为空=开放（仅按 IP 限流）；配置后 /api/ask* 必须带 Key
+    api_keys: str = ""
     # 日志与成本
     log_sink: str = "file"            # file | stdout | both（stdout 供 Fluent Bit/Vector 采集）
     log_max_bytes: int = 16 * 1024 * 1024   # 单个 JSONL 超过即轮转（0=关闭）
@@ -159,6 +163,9 @@ def load_settings() -> Settings:
         kb_approval=(_first_env("KB_APPROVAL", default="auto") or "auto").strip().lower(),
         kb_dir=_first_env("KB_DIR", default="data/kb"),
         kb_seed_dir=_first_env("KB_SEED_DIR", default="data/knowledge"),
+        kb_async_reload=(_first_env("KB_ASYNC_RELOAD", default="on") or "on").strip().lower(),
+        kb_keep_versions=max(0, int(_first_env("KB_KEEP_VERSIONS", default="30"))),
+        api_keys=_first_env("API_KEYS", default="").strip(),
         log_sink=(_first_env("LOG_SINK", default="file") or "file").strip().lower(),
         log_max_bytes=max(0, int(_first_env("LOG_MAX_BYTES", default=str(16 * 1024 * 1024)))),
         log_keep=max(1, min(9, int(_first_env("LOG_KEEP", default="3")))),

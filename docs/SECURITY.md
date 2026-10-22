@@ -36,19 +36,20 @@
 
 | 能力 | 实现 |
 |---|---|
-| 限流 | 按客户端 IP 令牌桶，默认 5 rps / burst 10；超限 429 + `Retry-After` |
+| 限流 | 按客户端 IP（或 API Key）令牌桶，默认 5 rps / burst 10；超限 429 + `Retry-After` |
+| API Key | `API_KEYS=名字:密钥,...`；支持 `Authorization: Bearer` 与 `X-API-Key`；常量时间比较；审计只记名字与末 4 位 |
 | 幂等 | `Idempotency-Key` 在 TTL 内复用首次结果，避免重试重复计费 |
 | 审计 | 问答摘要、上传/删除、审批/回滚、用例运行、灰度变更写入 `logs/audit.jsonl`；`LOG_SINK=stdout` 可输出 JSON 供集中采集 |
 | 多实例状态 | 配置 `REDIS_URL` 后限流/幂等/成本跨实例共享；连接支持密码，失败回退本地 |
 | 知识库审批 | `KB_APPROVAL=on` 时上传只进 `pending/`，管理员审批后才成为活动版本；审批/回滚需 admin |
 | 成本上限 | 每日 token 预算，超限跳过模型调用并标记 `budget_exceeded` |
-| 灰度 | 按 `IP + query` 哈希稳定分流到灰度模型，比例可运行时调整 |
+| 灰度 | 按调用方身份（API Key 或 IP）+ query 哈希稳定分流到灰度模型，比例可运行时调整 |
 | 回滚 | 运行配置保留历史快照，`POST /api/admin/rollback` 恢复上一版 |
 | 管理接口 | 设置 `ADMIN_TOKEN` 后需 `X-Admin-Token`；未设置时仅本机可调用（含审批/回滚） |
 
 ## 已知缺口
 
-1. **业务接口无鉴权**：`/api/ask` 与上传接口未做用户认证，依赖部署侧网关；`ADMIN_TOKEN` 只保护管理接口。
+1. **业务接口鉴权是可选的**：`API_KEYS` 为空时 `/api/ask` 仍依赖部署侧网关；上传/删除接口未做调用方认证（管理动作由 `ADMIN_TOKEN` 保护）。对外暴露时必须配置 `API_KEYS` 并在网关再做一层鉴权与配额。
 2. **Redis 自身的安全**：连接支持密码，但没有内置 TLS 校验与 ACL 管理；`REDIS_URL` 必须只在内网可达，禁止裸奔到公网。Redis 失联时会回退进程内状态，此时多实例限流不再一致。
 3. **trace 与审计会记录用户问题原文**：`logs/trace.jsonl`、`logs/audit.jsonl` 用于评测与排查。接入真实业务前需要脱敏（手机号、身份证、卡号）并设置保留期。
 4. **上传解析在进程内完成**：没有沙箱与杀毒扫描。只接受文本型 PDF/DOCX；不要接受来源不明的文件。
@@ -63,6 +64,7 @@
 ## 部署建议
 
 - 只在本机或内网使用；如需公网访问，放在反向代理后面并加认证与 HTTPS。
+- 对外提供 API 时设置 `API_KEYS`（按调用方命名），并把用量与 `rag_api_cost_usd_total{key}` 接入告警；Key 轮换期间可让新旧 Key 同名并存。
 - 设置 `ADMIN_TOKEN`，并限制 `/api/admin/*`、`/api/kb/approve|reject|rollback_doc` 的来源 IP。
 - Redis 只监听内网，启用 `requirepass` / ACL，禁止公网暴露；`REDIS_TIMEOUT_S` 控制在 1~2s，避免故障时拖垮请求。
 - 用内网 embedding 端点处理敏感语料；外部 API 场景先在数据合规侧确认出网范围。

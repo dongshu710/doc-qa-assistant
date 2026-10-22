@@ -111,9 +111,10 @@ class _FileLock:
 
 
 class KnowledgeStore:
-    def __init__(self, root: str, seed_dir: str | None = None):
+    def __init__(self, root: str, seed_dir: str | None = None, keep_versions: int = 0):
         self.root = os.path.abspath(root)
         self.seed_dir = os.path.abspath(seed_dir) if seed_dir else None
+        self.keep_versions = max(0, int(keep_versions or 0))
         self.versions_dir = os.path.join(self.root, "versions")
         self.pending_dir = os.path.join(self.root, "pending")
         self.changes_dir = os.path.join(self.root, "changes")
@@ -198,12 +199,36 @@ class KnowledgeStore:
             raise KnowledgeError(f"版本已存在: {version}")
         files_dir = os.path.join(target, "files")
         os.makedirs(files_dir)
+        # 未变更的文件优先硬链接到上一版：不重复占磁盘，也保留原 mtime，
+        # 增量重建索引才能凭 mtime 认出「这份没变」。
+        parent_docs: dict[str, dict] = {}
+        if parent:
+            try:
+                parent_docs = {d["name"]: d for d in self._read_manifest(parent).get("docs") or []}
+            except (KnowledgeError, OSError, json.JSONDecodeError):
+                parent_docs = {}
         docs = []
+        linked = 0
         for name in sorted(files):
             data = files[name]
-            with open(os.path.join(files_dir, name), "wb") as f:
-                f.write(data)
-            docs.append({"name": name, "sha256": _sha256(data), "size": len(data)})
+            digest = _sha256(data)
+            size = len(data)
+            target_path = os.path.join(files_dir, name)
+            source_path = (os.path.join(self.version_dir(parent), "files", name)
+                           if parent_docs.get(name, {}).get("sha256") == digest else None)
+            written = False
+            if source_path and os.path.exists(source_path):
+                try:
+                    os.link(source_path, target_path)
+                    linked += 1
+                    written = True
+                except OSError:
+                    # 跨盘、FAT/exFAT 或不支持硬链接的文件系统：回退为复制
+                    written = False
+            if not written:
+                with open(target_path, "wb") as f:
+                    f.write(data)
+            docs.append({"name": name, "sha256": digest, "size": size})
         manifest = {
             "version": version,
             "created_at": _now(),
@@ -215,10 +240,39 @@ class KnowledgeStore:
             "change_id": change_id,
             "restored_from": restored_from,
             "deletes": deletes or [],
+            "linked_docs": linked,
             "docs": docs,
         }
         _atomic_json(os.path.join(target, "manifest.json"), manifest)
         return manifest
+
+    def _prune(self, state: dict) -> list[str]:
+        """保留最近 N 个版本；活动版本与待审批变更的基线版本永不删除。
+
+        保留策略是磁盘与可回滚深度的折中：删掉的版本无法再作为回滚目标，
+        因此默认保留 30 版，可用 KB_KEEP_VERSIONS 调整，0 表示不清理。
+        """
+        if self.keep_versions <= 0:
+            return []
+        names = sorted((n for n in os.listdir(self.versions_dir) if n.startswith("v")),
+                       key=lambda n: int(n[1:]) if n[1:].isdigit() else 0)
+        keep = set(names[-self.keep_versions:])
+        if state.get("active"):
+            keep.add(state["active"])
+        # 待审批变更基于某个版本；删了它，审批会因 base_version 不存在而失败
+        if os.path.isdir(self.pending_dir):
+            for change_id in os.listdir(self.pending_dir):
+                try:
+                    keep.add(self._load_request(change_id).get("base_version"))
+                except (KnowledgeError, OSError, json.JSONDecodeError):
+                    continue
+        removed = []
+        for name in names:
+            if name in keep:
+                continue
+            shutil.rmtree(self.version_dir(name), ignore_errors=True)
+            removed.append(name)
+        return removed
 
     def _read_manifest(self, version: str) -> dict:
         path = os.path.join(self.version_dir(version), "manifest.json")
@@ -327,13 +381,15 @@ class KnowledgeStore:
             state["active"] = version
             state["next_version"] += 1
             self._write_state(state)
+            pruned = self._prune(state)
 
             request.update({"status": "approved", "decided_at": _now(),
                             "approver": approver, "version": version,
                             "decision_note": note[:300]})
             _atomic_json(os.path.join(self.changes_dir, f"{change_id}.json"), request)
             shutil.rmtree(os.path.join(self.pending_dir, change_id), ignore_errors=True)
-            return {"change_id": change_id, "version": version, "manifest": manifest}
+            return {"change_id": change_id, "version": version, "manifest": manifest,
+                    "pruned": pruned}
 
     def reject(self, change_id: str, approver: str, reason: str = "") -> dict:
         with _FileLock(self.lock_path):
@@ -372,8 +428,9 @@ class KnowledgeStore:
             state["active"] = version
             state["next_version"] += 1
             self._write_state(state)
+            pruned = self._prune(state)
             return {"version": version, "restored": name, "from": to_version,
-                    "manifest": manifest}
+                    "manifest": manifest, "pruned": pruned}
 
     # ---------- 查询 ----------
     def versions(self) -> list[dict]:

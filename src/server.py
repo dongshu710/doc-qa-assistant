@@ -7,7 +7,8 @@
   GET  /ask              问答（流式输出/引用原文/多轮追问/反馈）
   GET  /kb               知识库（上传/检索/出题/删除）
   GET  /dashboard        评测看板（指标/语义质量/用例/反馈/最近对话）
-  GET  /api/health       端点 / 模型 / 检索详情 / 知识库版本 / 防护状态
+  GET  /api/health       端点 / 模型 / 检索详情 / 知识库版本 / 防护状态 / 索引重建状态
+  GET  /openapi.json     OpenAPI 3.0 契约（含鉴权方案与检索配置）
   GET  /metrics          Prometheus 文本指标
   GET  /api/examples     按当前知识库生成示例问题
   GET  /api/metrics      业务聚合指标
@@ -58,10 +59,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import casegen, evaluator, ingest, jsonl, kbstore, suggest
+from .auth import ApiKeyStore
 from .config import load_settings
 from .guards import Guards
 from .metrics import summarize
 from .metrics_exporter import Metrics
+from .openapi import build_spec
 from .pipeline import RAGPipeline
 from .report import collect as collect_report
 from .report import render as render_report
@@ -130,7 +133,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
     if knowledge_dir is None and settings.kb_store not in ("off", "0", "false", "no"):
         kb_root = settings.kb_dir if os.path.isabs(settings.kb_dir) else os.path.join(project_root, settings.kb_dir)
         seed = settings.kb_seed_dir if os.path.isabs(settings.kb_seed_dir) else os.path.join(project_root, settings.kb_seed_dir)
-        store = kbstore.KnowledgeStore(kb_root, seed_dir=seed)
+        store = kbstore.KnowledgeStore(kb_root, seed_dir=seed,
+                                       keep_versions=settings.kb_keep_versions)
         store.bootstrap()
         pipe = RAGPipeline(store.active_dir())
     else:
@@ -138,6 +142,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
     log_dir = os.path.dirname(pipe.log_path)
     guards = Guards(pipe.settings, log_dir)
+    api_keys = ApiKeyStore(pipe.settings.api_keys)
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
     raw_dir = _raw_dir()
@@ -146,12 +151,36 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
     def kb_dir() -> str:
         """活动版本目录；审批通过后只换这个指针，不在原目录上打补丁。"""
-        return pipe.knowledge_dir
+        # 异步重建期间 pipe.knowledge_dir 还是旧的，列表必须以版本库为准，
+        # 否则刚上传的文件在页面上“消失”几秒。
+        return store.active_dir() if store is not None else pipe.knowledge_dir
 
-    def reload_kb() -> int:
-        if store is not None:
-            pipe.knowledge_dir = store.active_dir()
-        return pipe.reload()
+    def async_reload() -> bool:
+        # 传统单目录模式（测试/批量导入）保持同步：调用方拿到的 chunks 必须是最终值。
+        return store is not None and (pipe.settings.kb_async_reload or "on").strip().lower() == "on"
+
+    def reload_kb(wait: bool | None = None) -> int | None:
+        """重建索引。默认按 KB_ASYNC_RELOAD 走后台；返回 None 表示“已排队”。"""
+        target = store.active_dir() if store is not None else None
+        if wait is None:
+            wait = not async_reload()
+        if wait:
+            return pipe.reload(target or pipe.knowledge_dir)
+        pipe.reload_async(target or pipe.knowledge_dir)
+        return None
+
+    def index_payload() -> dict:
+        return pipe.rebuild_state()
+
+    def index_fields(before: int | None = None) -> dict:
+        """接口响应用的索引字段：重建中时 chunks 返回 null，避免报旧值误导。"""
+        state = pipe.rebuild_state()
+        building = bool(state.get("rebuilding"))
+        out = {"rebuilding": building, "index": state,
+               "chunks": None if building else len(pipe.chunks)}
+        if before is not None:
+            out["added_chunks"] = None if building else len(pipe.chunks) - before
+        return out
 
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
@@ -231,18 +260,47 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             return self._is_admin()
 
 
+        def _presented_key(self) -> str:
+            auth = (self.headers.get("Authorization") or "").strip()
+            if auth.lower().startswith("bearer "):
+                return auth[7:].strip()
+            return (self.headers.get("X-API-Key") or "").strip()
+
+        def _api_auth(self) -> tuple[str | None, str | None]:
+            """未配置 API_KEYS 时保持开放；配置后必须带有效 Key。"""
+            if not api_keys.enabled:
+                return None, None
+            return api_keys.identify(self._presented_key())
+
         def _ask_preflight(self, payload: dict):
-            """问答前置：限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
+            """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
             query = str(payload.get("query", ""))
             session_id = str(payload.get("session_id") or "").strip()[:64] or None
             client = self._client()
             request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]
-            decision = guards.rate.allow(client)
+
+            key_name, auth_err = self._api_auth()
+            if auth_err:
+                metrics.inc("rag_unauthorized_total")
+                metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "401"})
+                guards.audit.write("ask.unauthorized", client=client, query=query[:200],
+                                   reason=auth_err, key=api_keys.mask(self._presented_key()),
+                                   request_id=request_id)
+                return None, ({
+                    "error": "unauthorized",
+                    "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key",
+                    "request_id": request_id,
+                }, 401, {"WWW-Authenticate": 'Bearer realm="rag"', "X-Request-Id": request_id})
+
+            # 配了 Key 就按 Key 限流与计成本；未配置时退回按 IP（本机/内网场景）
+            identity = f"key:{key_name}" if key_name else client
+            decision = guards.rate.allow(identity)
             if not decision.allowed:
                 metrics.inc("rag_rate_limited_total")
                 metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
                 guards.audit.write("ask.rate_limited", client=client, query=query[:200],
-                                   retry_after=decision.retry_after, request_id=request_id)
+                                   retry_after=decision.retry_after, request_id=request_id,
+                                   api_key=key_name)
                 return None, ({"error": "rate limited", "retry_after": decision.retry_after,
                                "request_id": request_id}, 429,
                               {"Retry-After": decision.retry_after, "X-Request-Id": request_id})
@@ -250,9 +308,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         or str(payload.get("request_id") or "")).strip()
             return {
                 "query": query, "session_id": session_id, "client": client,
+                "api_key": key_name, "identity": identity,
                 "request_id": request_id, "decision": decision, "idem_key": idem_key,
                 "cached": guards.idem.get(idem_key),
-                "model": guards.runtime.pick_model(f"{client}|{query}"),
+                "model": guards.runtime.pick_model(f"{identity}|{query}"),
                 "budget_blocked": guards.cost.blocked,
             }, None
 
@@ -296,6 +355,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
             if cost_usd:
                 metrics.inc("rag_cost_usd_total", value=cost_usd)
+            if pre.get("api_key"):
+                metrics.inc("rag_api_tokens_total", {"key": pre["api_key"]}, tokens)
+                if cost_usd:
+                    metrics.inc("rag_api_cost_usd_total", {"key": pre["api_key"]}, value=cost_usd)
             if result.get("degraded"):
                 metrics.inc("rag_retrieval_degraded_total",
                             {"reason": str(result.get("degrade_reason") or "unknown")})
@@ -314,6 +377,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
                                   for r in (result.get("keyword_rejected") or [])],
                 stream=path_label.endswith("/stream"),
+                api_key=pre.get("api_key"),
             )
 
         def do_GET(self) -> None:  # noqa: N802
@@ -359,6 +423,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         "hallucinations": len(d.get("hallucinations") or []),
                         "gate": d.get("gate"),
                     })
+            elif path == "/openapi.json":
+                self._json(build_spec(__version__, api_keys.describe(),
+                                      pipe.settings.model, pipe.settings.retrieval))
             elif path == "/api/health":
                 if store is not None:
                     metrics.set_gauge("rag_kb_version", 1, {"version": store.active_version()})
@@ -376,6 +443,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "keywords": pipe.keyword_detail,
                     "sessions": pipe.sessions.status(),
                     "guards": guards.status(),
+                    "index": index_payload(),
+                    "auth": api_keys.describe(),
                 })
             elif path == "/metrics":
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
@@ -467,6 +536,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         for f in files
                     ],
                     "total_chunks": len(pipe.chunks),
+                    "rebuilding": bool(pipe.rebuild_state().get("rebuilding")),
                     "version": store.active_version() if store is not None else None,
                     "pending_changes": store.status()["pending_changes"] if store is not None else 0,
                     "keywords": pipe.keywords.summary(),
@@ -626,6 +696,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                              note=str(payload.get("note") or "")[:200])
                         change_id = staged["change"]["change_id"]
                         approved = None
+                        total = None
                         if self._auto_approve():
                             approved = store.approve(change_id, approver=self._client(),
                                                      note="auto-approve")
@@ -641,11 +712,11 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         "pending": approved is None,
                         "change_id": change_id,
                         "version": store.active_version(),
-                        "chunks": len(pipe.chunks),
                         "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                        **index_fields(),
                     })
                     guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
-                                       chunks=len(pipe.chunks), chars=len(content),
+                                       chunks=total, chars=len(content),
                                        change_id=change_id, version=store.active_version(),
                                        auto_approved=approved is not None)
                     return
@@ -724,6 +795,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                              note=f"由 {name} 解析（{res.get('engine')}）")
                         change_id = staged["change"]["change_id"]
                         approved = None
+                        total = None
                         if self._auto_approve():
                             approved = store.approve(change_id, approver=self._client(),
                                                      note="auto-approve")
@@ -744,12 +816,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         "sheets": res.get("sheets"), "rows": res.get("rows"),
                         "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
                         "pending": approved is None, "change_id": change_id,
-                        "version": store.active_version(), "chunks": len(pipe.chunks),
-                        "added_chunks": len(pipe.chunks) - before,
+                        "version": store.active_version(),
                         "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                        **index_fields(before),
                     })
                     guards.audit.write("kb.upload", client=self._client(), name=name,
-                                       kind=res.get("format") or ext.lstrip("."), chunks=len(pipe.chunks),
+                                       kind=res.get("format") or ext.lstrip("."), chunks=total,
                                        bytes=len(data), engine=res.get("engine"),
                                        change_id=change_id, version=store.active_version(),
                                        auto_approved=approved is not None)
@@ -801,18 +873,19 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                              note=f"删除 {name}")
                         change_id = staged["change"]["change_id"]
                         approved = None
+                        total = None
                         if self._auto_approve():
                             approved = store.approve(change_id, approver=self._client(),
                                                      note="auto-approve")
-                            reload_kb()
+                            total = reload_kb()
                     except (kbstore.KnowledgeError, ValueError) as exc:
                         self._json({"ok": False, "error": str(exc)}, 400)
                         return
                     self._json({"ok": True, "name": name, "pending": approved is None,
                                 "change_id": change_id, "version": store.active_version(),
-                                "chunks": len(pipe.chunks)})
+                                **index_fields()})
                     guards.audit.write("kb.delete", client=self._client(), name=name,
-                                       chunks=len(pipe.chunks), change_id=change_id,
+                                       chunks=total, change_id=change_id,
                                        version=store.active_version())
                     return
 
@@ -837,7 +910,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 guards.audit.write("kb.approve", client=self._client(), change_id=change_id,
                                    version=res["version"], chunks=total)
                 self._json({"ok": True, "change_id": change_id, "version": res["version"],
-                            "chunks": total})
+                            **index_fields()})
                 return
 
             if path == "/api/kb/reject":
@@ -871,7 +944,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 guards.audit.write("kb.rollback_doc", client=self._client(), name=name,
                                    from_version=to_version, version=res["version"], chunks=total)
                 self._json({"ok": True, "name": name, "from": to_version,
-                            "version": res["version"], "chunks": total})
+                            "version": res["version"], **index_fields()})
                 return
 
             if path == "/api/cases/from_doc":
@@ -996,7 +1069,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 try:
                     total = reload_kb()
                     guards.audit.write("kb.reload", client=self._client(), chunks=total)
-                    self._json({"ok": True, "chunks": total})
+                    self._json({"ok": True, **index_fields()})
                 except Exception as exc:  # noqa: BLE001
                     self._json({"ok": False, "error": str(exc)}, 500)
                 return

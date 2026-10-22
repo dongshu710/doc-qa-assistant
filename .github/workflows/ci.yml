@@ -75,6 +75,18 @@ jobs:
       - name: HTTP 传输（保活 / gzip / 304 / HEAD）
         run: python tests/test_http_transport.py
 
+      - name: 后台重建与增量解析
+        run: python tests/test_async_reload.py
+
+      - name: 汇报页缓存
+        run: python tests/test_report_cache.py
+
+      - name: 版本硬链接与保留策略
+        run: python tests/test_kb_hardlink.py
+
+      - name: API Key 与 OpenAPI
+        run: python tests/test_auth_openapi.py
+
       - name: 判域前置、扩展后置
         run: python tests/test_retrieval_order.py
 
@@ -131,3 +143,28 @@ jobs:
             dist/doc-qa-assistant-*.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
+
+  e2e:
+    name: e2e · chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 安装 Chromium（仅测试期依赖）
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: 五页 E2E（加载 / 溢出 / 控制台 / 深色 / 减动效）
+        run: node tests/e2e_pages.mjs

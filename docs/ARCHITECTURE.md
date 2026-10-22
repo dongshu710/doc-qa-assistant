@@ -89,19 +89,21 @@ sequenceDiagram
 | 组件 | 文件 | 职责 | 失败时 |
 |---|---|---|---|
 | 配置 | `src/config.py` | 通道、超时、重试、阈值、profile | 缺失 Key → 离线模式；非法通道 → 回退默认 |
-| 切分 | `src/chunking.py` | 标题/条款感知切块，中文二元组检索单元 | 目录不存在 → 启动失败并明确报错 |
+| 切分 | `src/chunking.py` | 标题/条款感知切块；按文件 mtime 缓存，增量重建只重解析变更文档 | 目录不存在 → 启动失败并明确报错 |
 | 关键词 | `src/keywords.py` | 清单/表格/标签抽条目，命中本地直出；可选 API 补摘要与同义词 | 构建失败只记录；不命中走检索，不影响主链路 |
 | 检索 | `src/retriever.py` | embedding 召回 + 多信号重排；n-gram / BM25 兜底 | embedding 失败 → 当次回退词法检索并标 `degraded` |
 | embedding | `src/embeddings.py` | OpenAI 兼容 `/embeddings`；批请求、超时、重试、维度探测、内容缓存 | 抛 `EmbeddingError`，由检索层降级 |
 | 向量索引 | `src/vector_store.py` | 纯 Python / NumPy / FAISS；manifest 记录模型、维度、语料指纹 | 指纹不匹配自动重建；维度不一致报错 |
-| 知识库版本 | `src/kbstore.py` | 版本目录、审批流、按文档回滚 | 版本只增不改；激活原子替换 |
+| 知识库版本 | `src/kbstore.py` | 版本目录、审批流、按文档回滚；未变更文件硬链接，保留最近 N 版 | 版本只增不改；激活原子替换；硬链接失败回退复制 |
 | Redis 客户端 | `src/redis_client.py` | RESP2；GET/SET NX PX/INCRBY/EVAL；超时与重连 | 抛 `RedisError`，guard 回退本地 |
 | 示例问题 | `src/suggest.py` | 按文档章节生成示例问题与相似问题 | 无候选 → 回退文档级问题 |
 | 生产防护 | `src/guards.py` | 限流、幂等、成本上限、审计、灰度、回滚；本地 / Redis 双后端 | 本地状态落盘 `logs/`；Redis 失败回退并暴露 |
 | 指标导出 | `src/metrics_exporter.py` | Prometheus 文本格式：请求、延迟、降级、token | 采集失败不影响业务 |
 | 查询扩展 | `src/query.py` | 用语料词表扩展问题，提升召回 | 失败自动回退原问题（重试一次） |
 | 生成 | `src/generator.py` | LLM 调用、抽取式兜底、引用修复 | 超时/429 → 退避重试；最终降级 |
-| 编排 | `src/pipeline.py` | 校验、闸门、生成、引用、trace | 任一步失败都有明确行为（见下表） |
+| 编排 | `src/pipeline.py` | 校验、闸门、生成、引用、trace；索引后台重建与原子替换 | 任一步失败都有明确行为（见下表）；重建失败保留旧索引 |
+| 鉴权 | `src/auth.py` | API Key 解析、常量时间校验、脱敏 | 缺失/错误 → 401 + `WWW-Authenticate` |
+| 契约 | `src/openapi.py` | OpenAPI 3.0 描述（问答、知识库、运维） | 静态生成，无运行时依赖 |
 | 指标 | `src/metrics.py` | 从 trace 聚合 P50/P95、行为分布、降级率 | 无 trace → 返回空指标 |
 | 文档解析 | `src/pdf_text.py` / `src/docx_text.py` | 纯标准库解析 PDF / DOCX | 扫描件 / 加密 / 假后缀 → 4xx 明确报错 |
 | 评测 | `src/evaluator.py` | L1 断言内核，CLI 与服务端共用 | 用例引用文档已删 → skip，不算失败 |
@@ -120,6 +122,9 @@ sequenceDiagram
 | 检索 | 检索器异常 | 空结果 + `degraded=true` | 返回「无法找到答案」，不硬答 |
 | embedding | 超时 / 429 / 维度不一致 | 当次回退 BM25 重排，标 `embedding_error` | 有答案但标注降级 |
 | 索引 | manifest 指纹不匹配 | 启动/首次查询时重建 | 首次查询延迟增加 |
+| 索引 | 后台重建失败 | 保留旧索引，写 `index.last_error`，不自动重试 | 知识库页提示；问答不受影响 |
+| 索引 | 重建进行中 | 旧索引继续服务，新索引就绪后原子替换 | 新文档有短暂「已入库但搜不到」窗口 |
+| 鉴权 | 缺少 / 错误 API Key | 401 + `WWW-Authenticate` | 明确提示携带方式（仅配置 `API_KEYS` 后） |
 | Redis | 连接失败 / 超时 | 回退进程内限流/幂等/成本，30s 后重试 | 服务可用；多实例状态短暂不一致 |
 | 审批 | 基线版本已过期 | 拒绝审批，提示重新提交 | `409` + 明确原因 |
 | LLM | 超时（30s）/ 429 | 指数退避重试 3 次，尊重 `Retry-After` | 延迟增加，最终可能降级 |
@@ -144,6 +149,7 @@ sequenceDiagram
 
 ## 7. 不在范围内
 
-- 多租户与统一 SSO：当前只有可选的 `ADMIN_TOKEN` 保护管理接口，业务接口鉴权交给网关。
+- 多租户与统一 SSO：当前只有可选的 `API_KEYS`（调用方级）与 `ADMIN_TOKEN`（管理接口），
+  租户隔离、配额分级、OIDC 登录不在范围内。
 - 扫描件 OCR：仅处理文本型 PDF。
 - 投资建议与收益承诺：触发即拒答。

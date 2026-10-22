@@ -252,6 +252,13 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 @keyframes shimmer{from{background-position:120% 0;}to{background-position:-120% 0;}}
 
 .composer{padding:11px 16px 13px;border-top:1px solid var(--line);background:#fff;}
+.keybar{display:flex;align-items:center;gap:8px;margin-bottom:9px;padding:8px 10px;border-radius:9px;
+  border:1px solid #f0dfc0;background:var(--warn-soft);color:var(--warn);font-size:12.5px;}
+.keybar[hidden]{display:none;}
+.keybar input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--line-2);border-radius:7px;
+  background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;outline:none;}
+.keybar input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,92,246,.12);}
+.keybar .key-note{color:var(--faint);font-size:12px;}
 .composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--line-2);border-radius:14px;
   padding:7px 7px 7px 14px;background:#fff;transition:border .15s,box-shadow .15s;}
 .composer-box:focus-within{border-color:#b9c8f7;box-shadow:0 0 0 4px rgba(47,92,246,.08);}
@@ -302,6 +309,12 @@ ASK_BODY = """
   <section class="chat-shell">
     <div id="list" class="chat-list" aria-live="polite"></div>
     <div class="composer">
+      <div class="keybar" id="keyBar" hidden>
+        <span>接口已启用 API Key</span>
+        <input id="apiKey" type="password" placeholder="粘贴 Key 后回车" autocomplete="off">
+        <button class="btn sm" id="keySave" type="button">保存</button>
+        <span class="key-note" id="keyNote"></span>
+      </div>
       <div class="composer-box">
         <textarea id="q" rows="1" placeholder="输入问题…" autocomplete="off"></textarea>
         <button class="send" id="send" type="button" aria-label="发送">
@@ -341,6 +354,37 @@ function loadSessionId(){
 }
 function saveSessionId(id){ try{ sessionStorage.setItem(SESSION_KEY,id); }catch(e){} }
 var SESSION_ID=loadSessionId(); saveSessionId(SESSION_ID);
+
+/* ---------- API Key ----------
+   配置 API_KEYS 后，问答接口需要 Key；页面把 Key 放 sessionStorage，
+   只在当前标签页有效，关闭即清。 */
+var KEY_STORE='rag_api_key';
+function apiKey(){ try{ return sessionStorage.getItem(KEY_STORE)||''; }catch(e){ return ''; } }
+function apiHeaders(base){
+  var h=base||{}, k=apiKey();
+  if(k) h['X-API-Key']=k;
+  return h;
+}
+function showKeyBar(msg){
+  var bar=document.getElementById('keyBar'); if(!bar) return;
+  bar.hidden=false;
+  if(msg) document.getElementById('keyNote').textContent=msg;
+}
+function bindKeyBar(){
+  var bar=document.getElementById('keyBar'), input=document.getElementById('apiKey');
+  if(!bar||!input) return;
+  input.value=apiKey();
+  document.getElementById('keySave').onclick=function(){
+    var v=(input.value||'').trim();
+    try{ if(v) sessionStorage.setItem(KEY_STORE,v); else sessionStorage.removeItem(KEY_STORE); }catch(e){}
+    document.getElementById('keyNote').textContent=v?'已保存，下次请求携带':'已清除';
+    if(v) bar.hidden=true;
+  };
+  input.onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('keySave').click(); } };
+  fetch('/api/health').then(function(r){ return r.json(); }).then(function(h){
+    if(h.auth&&h.auth.mode==='key'&&!apiKey()) showKeyBar('需填写 API Key 才能提问');
+  }).catch(function(){});
+}
 var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取',keyword_local:'本地关键词'};
 var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['未找到','warn'],refuse:['拒答','bad']};
 var ART='""" + _ASK_ART.replace("'", "\\'") + """';
@@ -645,9 +689,11 @@ function bindMissFeedback(body,d,query){
 
 function bindFeedback(body,d){
   var fb=document.createElement('div'); fb.className='fb';
+  var up='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></svg>';
+  var down='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(180 12 12)"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></g></svg>';
   fb.innerHTML='<span class="fb-q">这条回答对你有帮助吗？</span>'
-    +'<button type="button" class="fb-up">👍 有用</button>'
-    +'<button type="button" class="fb-down">👎 有问题</button>'
+    +'<button type="button" class="fb-up">'+up+' 有用</button>'
+    +'<button type="button" class="fb-down">'+down+' 有问题</button>'
     +'<button type="button" class="fb-copy">复制</button>'
     +'<div class="fb-note"><input placeholder="哪里不对？可留空，用于 badcase 复盘"><button type="button" class="btn sm fb-send">提交</button></div>';
   body.querySelector('.ans-card').appendChild(fb);
@@ -739,11 +785,12 @@ async function ask(){
   },900);
 
   try{
-    var resp=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+    var resp=await fetch('/api/ask/stream',{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),
       body:JSON.stringify({query:query,session_id:SESSION_ID}),signal:controller.signal});
     if(!resp.ok){
       var errData={};
       try{ errData=await resp.json(); }catch(e){}
+      if(resp.status===401){ showKeyBar('Key 无效或已过期，请重新填写'); throw new Error('需要有效的 API Key'); }
       if(resp.status===429) throw new Error('请求太频繁，请 '+(errData.retry_after||1)+' 秒后重试');
       throw new Error(errData.error||('HTTP '+resp.status));
     }
@@ -817,6 +864,7 @@ list.addEventListener('click',function(e){
   qEl.value=b.textContent; autoGrow(); ask();
 });
 if(!restoreHistory()){ renderEmpty(); }
+bindKeyBar();
 var pre=new URLSearchParams(location.search).get('q');
 if(pre){ qEl.value=pre; autoGrow(); ask(); }
 """
@@ -1077,7 +1125,8 @@ function visibleFiles(){
 
 function render(){
   var total=(KB.files||[]).length, chunks=KB.total_chunks||0;
-  $('kbMeta').textContent=total+' 份 · '+chunks+' 块'+(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
+  $('kbMeta').textContent=total+' 份 · '+chunks+' 块'+(KB.rebuilding?' · 索引重建中':'')
+    +(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
   $('kbVersion').textContent=KB.version?('版本 '+KB.version):'单目录模式';
   var list=visibleFiles();
   $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
@@ -1105,6 +1154,7 @@ function render(){
 function renderKwMeta(){
   var kw=KB.keywords||{}, n=kw.terms||0;
   $('kbMeta').textContent=(KB.files||[]).length+' 份 · '+(KB.total_chunks||0)+' 块'
+    +(KB.rebuilding?' · 索引重建中':'')
     +(n?(' · 关键词 '+n):'')+(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
 }
 function closeKw(){
@@ -1211,7 +1261,7 @@ async function decide(changeId,kind){
     if(!resp.ok){ setMsg('操作失败：'+(d.error||('HTTP '+resp.status)),'err'); return; }
     setMsg(kind==='approve'?('已通过，新版本 '+(d.version||'')):'已驳回','ok');
     toast(kind==='approve'?'变更已通过':'变更已驳回');
-    await loadKb();
+    await settleIndex(kind==='approve'&&d.rebuilding, kind==='approve'?'变更已通过':'已驳回');
   }catch(e){ setMsg('操作失败：'+(e.message||e),'err'); }
 }
 async function openHistory(name){
@@ -1241,7 +1291,7 @@ async function rollbackTo(name,version){
     if(!resp.ok){ toast('回滚失败：'+(d.error||''),true); return; }
     closeKbModal(); setMsg('已回滚到 '+version+'，新版本 '+(d.version||''),'ok');
     toast('已回滚，新版本 '+(d.version||''));
-    await loadKb();
+    await settleIndex(d.rebuilding, '已回滚');
   }catch(e){ toast('回滚失败：'+(e.message||e),true); }
 }
 
@@ -1250,6 +1300,32 @@ async function loadKb(){
     var r=await (await fetch('/api/knowledge')).json();
     KB=r; render(); await loadApprovals();
   }catch(e){ setMsg('加载失败：'+(e.message||e),'err'); }
+}
+
+/* ---------- 后台重建索引 ----------
+   入库接口只等版本落盘，索引在后台建；轮询到重建结束再刷新列表，
+   否则刚上传的文档会短暂显示 0 块，像是没入库。 */
+async function waitRebuild(timeoutMs){
+  var deadline=Date.now()+(timeoutMs||90000);
+  while(Date.now()<deadline){
+    try{
+      var h=await (await fetch('/api/health')).json();
+      var ix=h.index||{};
+      if(!ix.rebuilding) return ix;
+    }catch(e){}
+    await new Promise(function(r){setTimeout(r,700);});
+  }
+  return null;
+}
+async function settleIndex(rebuilding,label){
+  if(rebuilding){
+    setMsg((label||'已入库')+'，正在后台重建索引…');
+    var ix=await waitRebuild();
+    if(!ix){ setMsg((label||'已入库')+'；索引仍在重建，请稍后刷新',''); return; }
+    if(ix.last_error){ setMsg('索引重建失败：'+ix.last_error,'err'); toast('索引重建失败，旧索引仍在服务',true); }
+    else{ toast('索引已重建：'+(ix.chunks||0)+' 块'); }
+  }
+  await loadKb();
 }
 
 /* ---------- 上传 ---------- */
@@ -1280,13 +1356,14 @@ async function uploadFiles(files){
   var arr=[].slice.call(files||[]);
   if(!arr.length||BUSY) return;
   BUSY=true;
-  var ok=0, fail=0, added=0, pend=0, firstErr='', notes=[];
+  var ok=0, fail=0, added=0, pend=0, rebuilding=false, firstErr='', notes=[];
   for(var i=0;i<arr.length;i++){
     setMsg('上传中 '+(i+1)+'/'+arr.length+'：'+arr[i].name);
     try{
       var r=await uploadOne(arr[i]);
       if(r&&r.ok){
         ok++; added+=r.added_chunks||0; if(r.pending) pend++;
+        if(r.rebuilding) rebuilding=true;
         var bits=[];
         if(r.format) bits.push(String(r.format).toUpperCase());
         if(r.rows) bits.push(r.rows+' 行');
@@ -1304,10 +1381,11 @@ async function uploadFiles(files){
       toast('已提交 '+pend+' 份，等待审批');
     }else{
       var tail=(ok===1&&notes.length)?('：'+notes[0]):'';
-      setMsg('已入库 '+ok+' 份'+tail+(fail?('，失败 '+fail+' 份（'+firstErr+'）'):'')+'，新增 '+added+' 块', fail?'':'ok');
-      toast('已入库 '+ok+' 份，新增 '+added+' 块');
+      var count=rebuilding?'':('，新增 '+added+' 块');
+      setMsg('已入库 '+ok+' 份'+tail+count+(fail?('，失败 '+fail+' 份（'+firstErr+'）'):''), fail?'':'ok');
+      toast('已入库 '+ok+' 份'+(rebuilding?'，索引重建中':'，新增 '+added+' 块'));
     }
-    await loadKb();
+    await settleIndex(rebuilding&&!pend, '已入库 '+ok+' 份');
   }else{
     setMsg('上传失败：'+firstErr,'err');
     toast('上传失败：'+firstErr,true);
@@ -1363,7 +1441,7 @@ $('kbBody').onclick=async function(ev){
   try{
     var d=await (await fetch('/api/knowledge/delete',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:b.dataset.name})})).json();
-    if(d.ok){ setMsg('已删除 '+d.name,'ok'); toast('已删除：'+d.name); await loadKb(); }
+    if(d.ok){ setMsg('已删除 '+d.name,'ok'); toast('已删除：'+d.name); await settleIndex(d.rebuilding,'已删除'); }
     else{ setMsg('删除失败：'+(d.error||''),'err'); }
   }catch(e){ setMsg('删除失败：'+(e.message||e),'err'); }
 };
@@ -1389,10 +1467,13 @@ $('reload').onclick=async function(){
   var btn=this; btn.disabled=true; setMsg('正在重建索引…');
   try{
     var r=await (await fetch('/api/reload',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
-    if(r.ok){ setMsg('索引已重建：'+r.chunks+' 个知识块','ok'); toast('已加载 '+r.chunks+' 块'); await loadKb(); }
-    else{ setMsg('重建失败：'+r.error,'err'); }
-  }catch(e){ setMsg('重建失败：'+(e.message||e),'err'); }
-  finally{ btn.disabled=false; }
+    if(r.ok){
+      if(r.rebuilding){ setMsg('正在后台重建索引…'); await settleIndex(true,'已开始重建'); }
+      else{ setMsg('索引已重建：'+r.chunks+' 个知识块','ok'); toast('已加载 '+r.chunks+' 块'); await loadKb(); }
+      btn.disabled=false;
+    }
+    else{ setMsg('重建失败：'+r.error,'err'); btn.disabled=false; }
+  }catch(e){ setMsg('重建失败：'+(e.message||e),'err'); btn.disabled=false; }
 };
 
 loadKb();
@@ -1773,7 +1854,7 @@ async function runCases(scope){
 function renderFeedback(fb){
   var items=fb.items||[];
   $('fbCount').textContent=items.length+' 条';
-  if(!items.length){ $('fbBody').innerHTML=emptyRow(5,'暂无反馈。到问答页点一下 👎 试试。'); return; }
+  if(!items.length){ $('fbBody').innerHTML=emptyRow(5,'暂无反馈。到问答页点一下「有问题」试试。'); return; }
   $('fbBody').innerHTML=items.map(function(x){
     return '<tr><td class="ts">'+esc((x.ts||'').replace('T',' ').slice(5,19))+'</td>'
       +'<td>'+(x.useful?'<span class="pill ok"><span class="dot"></span>有用</span>':'<span class="pill bad"><span class="dot"></span>有问题</span>')+'</td>'

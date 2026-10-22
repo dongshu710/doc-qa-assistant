@@ -49,6 +49,9 @@ def main() -> None:
             "KB_DIR": str(Path(tmp) / "kb"),
             "KB_SEED_DIR": str(seed),
             "KB_APPROVAL": "on",
+            # 这个用例断言「审批后立即可检索」，需要同步语义；
+            # 异步重建由 test_async_reload.py 单独覆盖。
+            "KB_ASYNC_RELOAD": "off",
             "RETRIEVAL": "vector",
             "EMBEDDING_PROVIDER": "none",
             "LLM_API_KEY": "",

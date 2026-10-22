@@ -9,12 +9,14 @@
 import argparse
 import json
 import os
+import threading
+import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 from .metrics import summarize
-from .theme import BASE_CSS, BRAND, footer, nav
+from .theme import BASE_CSS, BRAND, THEME_HEAD, THEME_JS, footer, nav
 from .version import __version__
 
 REPORT_CSS = """
@@ -136,15 +138,84 @@ def _report_label(report: dict, filename: str) -> str:
     return f"{channel} / {model}"
 
 
-def collect(pipe=None, root: Path | None = None) -> dict:
-    """汇总页面所需的全部数据（不发起任何网络请求）。"""
-    project_root = root or Path(__file__).resolve().parents[1]
-    tests_dir = project_root / "tests"
+_COLLECT_CACHE: dict[tuple, tuple[float, dict]] = {}
+_COLLECT_LOCK = threading.Lock()
+_CACHE_STATS = {"hit": 0, "miss": 0}
+# 参与签名的静态输入：评测报告与用例集变更就重算
+_CACHE_FILES = (
+    "baseline.json", "report_llm.json", "report_l3.json", "report_hard.json",
+    "report_retrieval.json", "report_l3_hard_same.json", "report_l3_hard_cross.json",
+    "eval_cases.jsonl", "eval_cases_feedback.jsonl",
+)
 
+
+def _stat_sig(path: Path) -> tuple:
+    try:
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (0, 0)
+
+
+def _collect_key(pipe, tests_dir: Path) -> tuple:
+    """缓存键：知识库文件 + 评测报告 mtime/size + 检索配置。
+
+    trace 不参与签名：每问一次都会变，参与就等于永不命中。指标改用 TTL
+    （REPORT_CACHE_TTL，默认 60s）容忍最多一分钟延迟，汇报页不需要秒级。
+    """
+    kb = []
+    try:
+        for name in sorted(os.listdir(pipe.knowledge_dir)):
+            if name.lower().endswith((".md", ".txt")):
+                kb.append((name, _stat_sig(Path(pipe.knowledge_dir) / name)))
+    except OSError:
+        pass
+    return (
+        str(Path(pipe.knowledge_dir).resolve()), len(pipe.chunks),
+        tuple(kb), tuple((name, _stat_sig(tests_dir / name)) for name in _CACHE_FILES),
+        repr(pipe.settings),
+    )
+
+
+def collect(pipe=None, root: Path | None = None, use_cache: bool = True) -> dict:
+    """汇总页面所需的全部数据；带 mtime 签名缓存，静态输入不变就直接复用。"""
+    project_root = Path(root) if root else Path(__file__).resolve().parents[1]
+    tests_dir = project_root / "tests"
     if pipe is None:
         from .pipeline import RAGPipeline
         pipe = RAGPipeline(str(project_root / "data" / "knowledge"))
 
+    ttl = max(0, int(os.getenv("REPORT_CACHE_TTL", "60") or "60"))
+    key = _collect_key(pipe, tests_dir) if (use_cache and ttl) else None
+    now = time.time()
+    if key is not None:
+        with _COLLECT_LOCK:
+            entry = _COLLECT_CACHE.get(key)
+        if entry and now - entry[0] <= ttl:
+            _CACHE_STATS["hit"] += 1
+            data = dict(entry[1])
+            data["cache"] = {"hit": True, "age_s": round(now - entry[0], 1), "ttl_s": ttl}
+            return data
+
+    _CACHE_STATS["miss"] += 1
+    data = _collect_uncached(pipe, project_root, tests_dir)
+    data["cache"] = {"hit": False, "age_s": 0.0, "ttl_s": ttl}
+    if key is not None:
+        with _COLLECT_LOCK:
+            _COLLECT_CACHE[key] = (now, data)
+            # 同一进程里换知识库/重建会留下旧键，只保留最近 8 个
+            if len(_COLLECT_CACHE) > 8:
+                oldest = min(_COLLECT_CACHE, key=lambda k: _COLLECT_CACHE[k][0])
+                _COLLECT_CACHE.pop(oldest, None)
+    return data
+
+
+def cache_stats() -> dict:
+    with _COLLECT_LOCK:
+        return {**_CACHE_STATS, "entries": len(_COLLECT_CACHE)}
+
+
+def _collect_uncached(pipe, project_root: Path, tests_dir: Path) -> dict:
     counts = Counter(c.doc_id for c in pipe.chunks)
     files = []
     kb_dir = Path(pipe.knowledge_dir)
@@ -463,6 +534,8 @@ def render(data: dict, standalone: bool = False) -> str:
 
     html = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{THEME_HEAD}
+<meta name="color-scheme" content="light dark">
 <title>项目汇报 · {BRAND}</title><style>{BASE_CSS}{REPORT_CSS}</style></head>
 <body>
 {header}
@@ -632,6 +705,7 @@ python -m src.report --out dist/report.html</pre>
   window.addEventListener('scroll',sync,{{passive:true}}); sync();
 }})();
 </script>
+<script>{THEME_JS}</script>
 </body></html>"""
     return html
 
