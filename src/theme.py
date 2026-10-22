@@ -58,7 +58,7 @@ MARK = (
 BASE_CSS = """
 /* ============ 设计令牌 ============ */
 :root{
-  --ink:#0a1020; --text:#1b2436; --muted:#667085; --faint:#98a2b3;
+  --ink:#0a1020; --text:#1b2436; --muted:#4a5468; --faint:#667085;
   --line:#e8ebf2; --line-2:#dce1ec;
   --bg:#f6f7fb; --surface:#fff; --surface-2:#fbfcfe;
   --brand:#2f5cf6; --brand-600:#2449d8; --brand-2:#7a5cfb; --brand-soft:#eef2ff; --brand-tint:#f6f8ff;
@@ -95,7 +95,7 @@ main{flex:1 0 auto;}
 .muted{color:var(--muted);}
 .faint{color:var(--faint);}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums;}
-.eyebrow{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);display:flex;align-items:center;gap:8px;}
+.eyebrow{font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--brand);display:flex;align-items:center;gap:8px;}
 .eyebrow::before{content:"";width:16px;height:1.5px;background:var(--brand);border-radius:2px;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
@@ -122,7 +122,7 @@ main{flex:1 0 auto;}
 .mark svg{width:18px;height:18px;}
 .brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0;}
 .brand-text b{font-size:14.5px;font-weight:700;color:var(--ink);letter-spacing:-.01em;white-space:nowrap;}
-.brand-text i{font-style:normal;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.brand-text i{font-style:normal;font-size:12px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .nav nav{display:flex;gap:2px;margin-left:auto;}
 .nav nav a{
   position:relative;padding:8px 13px;border-radius:9px;font-size:13.5px;color:var(--muted);
@@ -131,10 +131,12 @@ main{flex:1 0 auto;}
 .nav nav a:hover{background:#f3f5fa;color:var(--ink);}
 .nav nav a.active{color:var(--brand);font-weight:600;background:var(--brand-soft);}
 .nav .nav-tag{
-  font-size:11px;font-weight:600;color:#4b5b7c;background:#f2f5fb;border:1px solid var(--line);
+  font-size:12px;font-weight:600;color:#4b5b7c;background:#f2f5fb;border:1px solid var(--line);
   padding:3px 9px;border-radius:999px;white-space:nowrap;
 }
 @media (max-width:640px){
+  /* iOS Safari 在输入框字号 <16px 时会强制放大页面，表现为「点一下界面就变大」 */
+  input,textarea,select{font-size:16px;}
   .nav-inner{padding:0 14px;gap:8px;}
   .brand-text i{display:none;}
   .nav-tag{display:none;}
@@ -157,7 +159,7 @@ main{flex:1 0 auto;}
 .foot-brand .mark svg{width:15px;height:15px;}
 .foot-links{display:flex;gap:18px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;}
 .foot-links a:hover{color:var(--brand);}
-.foot-note{margin-left:auto;max-width:420px;font-size:11.5px;color:var(--faint);line-height:1.7;text-align:right;}
+.foot-note{margin-left:auto;max-width:420px;font-size:12px;color:var(--faint);line-height:1.7;text-align:right;}
 @media (max-width:760px){.foot-note{margin-left:0;text-align:left;}}
 
 /* ============ 按钮 ============ */
@@ -196,7 +198,7 @@ main{flex:1 0 auto;}
 
 /* ============ 徽标 / 胶囊 ============ */
 .pill{
-  display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;
+  display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:500;
   padding:3px 9px;border-radius:999px;background:#f4f6fa;border:1px solid var(--line);color:#54617a;
   white-space:nowrap;
 }
@@ -205,7 +207,7 @@ main{flex:1 0 auto;}
 .pill.bad{background:var(--bad-soft);border-color:#f6d3d0;color:#a91e13;}
 .pill.brand{background:var(--brand-soft);border-color:#d5ddfe;color:#2a49c8;}
 .pill .dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
-.tag{display:inline-flex;align-items:center;font-size:11px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:2px 8px;border-radius:999px;}
+.tag{display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:2px 8px;border-radius:999px;}
 
 /* ============ 指标卡 ============ */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
@@ -214,11 +216,11 @@ main{flex:1 0 auto;}
   box-shadow:var(--sh-1);transition:box-shadow .18s ease, transform .18s ease, border-color .18s ease;
 }
 .kpi:hover{box-shadow:var(--sh-2);transform:translateY(-1px);border-color:#dfe5f3;}
-.kpi .k{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;}
+.kpi .k{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;}
 .kpi .k .ic{color:var(--faint);}
 .kpi .v{font-size:25px;font-weight:700;color:var(--ink);letter-spacing:-.03em;margin-top:6px;font-variant-numeric:tabular-nums;line-height:1.15;}
 .kpi .v small{font-size:13px;font-weight:600;color:var(--muted);margin-left:1px;letter-spacing:0;}
-.kpi .sub{font-size:11px;color:var(--faint);margin-top:3px;}
+.kpi .sub{font-size:12px;color:var(--faint);margin-top:3px;}
 .kpi.accent{background:linear-gradient(160deg,#f7f9ff,#fff 60%);border-color:#dee4fb;}
 .kpi.accent .v{color:var(--brand-600);}
 @media (max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);}}
@@ -228,7 +230,7 @@ main{flex:1 0 auto;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
 thead th{
   text-align:left;padding:10px 14px;background:#fafbfe;border-bottom:1px solid var(--line);
-  font-size:11px;font-weight:600;letter-spacing:.04em;color:#7b879c;text-transform:uppercase;white-space:nowrap;
+  font-size:12px;font-weight:600;letter-spacing:.04em;color:#7b879c;text-transform:uppercase;white-space:nowrap;
 }
 tbody td{text-align:left;padding:11px 14px;border-bottom:1px solid #f1f3f8;color:var(--text);vertical-align:middle;}
 tbody tr:last-child td{border-bottom:none;}
@@ -293,7 +295,7 @@ tbody tr:hover td{background:#fafbff;}
   font-family:inherit;color:var(--text);background:#fff;outline:none;transition:border .15s, box-shadow .15s;
 }
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,92,246,.12);}
-.field .hint{font-size:11.5px;color:var(--faint);margin-top:5px;}
+.field .hint{font-size:12px;color:var(--faint);margin-top:5px;}
 
 /* ============ 代码块 ============ */
 pre.cmd{

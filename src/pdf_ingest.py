@@ -94,10 +94,14 @@ def assess(text: str, pages: int, min_chars: int = DEFAULT_MIN_CHARS) -> str | N
     """
     if len(text) < min_chars:
         return (f"提取到 {len(text)} 字，低于阈值 {min_chars} 字。"
-                "多半是扫描件（图片页，没有文本层），需要先做 OCR 再上传。")
+                "这几乎一定是扫描件：整页是图片，没有可复制的文本层。"
+                "请先用 OCR 转出文字（手机扫描类 App、Acrobat 的「识别文本」，"
+                "或任意 OCR 工具），另存为 .docx / .txt 后重新上传；"
+                "直接上传扫描 PDF 无法入库。")
     if pages and len(text) / pages < 20:
-        return (f"共 {pages} 页但只有 {len(text)} 字（每页约 {len(text) // pages} 字），"
-                "可能是扫描件或排版异常，建议先确认解析结果。")
+        return (f"共 {pages} 页但只有 {len(text)} 字（每页约 {len(text) // pages} 字）。"
+                "先在阅读器里试着选中文字：选不中就是扫描件，需要 OCR；"
+                "选得中则可能是排版异常，建议换成文字版 PDF 或 .docx。")
     return None
 
 
@@ -134,7 +138,10 @@ def pdf_bytes_to_markdown(data: bytes, filename: str, out_dir: str | Path,
     pages = int(meta.get("pages") or 0)
     warn = assess(text, pages, min_chars=min_chars)
     if warn:
-        return {"ok": False, "error": warn, **meta, "chars": len(text)}
+        # need_ocr 只标「文字量少到几乎可以断定是扫描件」的情况，
+        # 前端据此显示具体的补救步骤，而不是一句笼统的失败
+        need_ocr = len(text) < min_chars or bool(pages and len(text) / pages < 20)
+        return {"ok": False, "error": warn, "need_ocr": need_ocr, **meta, "chars": len(text)}
 
     stem = Path(filename).stem or "document"
     target = unique_path(out, f"{prefix}{safe_stem(stem)}.md")

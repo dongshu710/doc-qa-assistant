@@ -66,6 +66,18 @@ jobs:
       - name: 生成层流式解析与截断降级
         run: python tests/test_generator_stream.py
 
+      - name: 表格入库（xlsx / csv / tsv）
+        run: python tests/test_table_ingest.py
+
+      - name: 日志轮转与尾读
+        run: python tests/test_jsonl_log.py
+
+      - name: HTTP 传输（保活 / gzip / 304 / HEAD）
+        run: python tests/test_http_transport.py
+
+      - name: 判域前置、扩展后置
+        run: python tests/test_retrieval_order.py
+
       - name: 生产防护单测
         run: python tests/test_guards.py
 

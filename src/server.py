@@ -44,6 +44,8 @@
 import argparse
 import base64
 import binascii
+import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -55,7 +57,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import casegen, evaluator, ingest, kbstore, suggest
+from . import casegen, evaluator, ingest, jsonl, kbstore, suggest
 from .config import load_settings
 from .guards import Guards
 from .metrics import summarize
@@ -102,7 +104,7 @@ def _raw_dir() -> str:
 
 
 def _safe_doc_name(name) -> str | None:
-    """上传文档名：只接受纯文件名，且必须是 .pdf / .docx。"""
+    """上传文档名：只接受纯文件名，且扩展名必须在 `ingest.SUPPORTED_EXT` 内。"""
     raw = str(name or "").strip()
     if not raw or "/" in raw or "\\" in raw or ".." in raw:
         return None
@@ -114,17 +116,8 @@ def _safe_doc_name(name) -> str | None:
 
 
 def _read_jsonl(path: str, limit: int) -> list[dict]:
-    if not os.path.exists(path):
-        return []
-    with open(path, encoding="utf-8") as f:
-        lines = [line for line in f.read().splitlines() if line.strip()][-limit:]
-    rows = []
-    for line in lines:
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return rows
+    """尾部 N 条（旧 → 新）；调用方按需 reverse。"""
+    return jsonl.tail_json(path, max(1, int(limit)))
 
 
 def create_server(host: str, port: int, knowledge_dir: str | None = None):
@@ -161,19 +154,63 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         return pipe.reload()
 
     class Handler(BaseHTTPRequestHandler):
+        # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
+        # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
+        protocol_version = "HTTP/1.1"
+        timeout = 20
+
+        # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
+        COMPRESSIBLE = frozenset({
+            "text/html", "text/plain", "text/markdown", "text/css",
+            "application/json", "application/javascript", "text/javascript",
+            "image/svg+xml",
+        })
+
         def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8",
-                  extra_headers: dict | None = None) -> None:
+                  extra_headers: dict | None = None, cache: str = "no-cache") -> None:
+            """统一出口：gzip + ETag 协商 + 定长。
+
+            页面用 `cache="no-cache"`：可以存，但每次要带 ETag 回源校验，
+            内容没变就回 304（约 150 字节），部署后也不会拿到旧页面。
+            JSON 接口用 `no-store`，避免中间层缓存掉一次问答结果。
+            """
             data = body.encode("utf-8")
+            extra = {key: str(value) for key, value in (extra_headers or {}).items()}
+            # 弱校验：gzip 后字节不同但内容相同，仍应命中同一个 ETag
+            etag = 'W/"' + hashlib.sha256(data).hexdigest()[:20] + '"'
+            headers = {"ETag": etag, "Cache-Control": cache, "Vary": "Accept-Encoding"}
+
+            inm = (self.headers.get("If-None-Match") or "").strip()
+            if inm and inm.replace("W/", "") == etag.replace("W/", ""):
+                self.send_response(304)
+                for key, value in headers.items():
+                    self.send_header(key, value)
+                self.end_headers()
+                return
+
+            mime = content_type.split(";")[0].strip().lower()
+            accepts = (self.headers.get("Accept-Encoding") or "").lower()
+            if "gzip" in accepts and mime in self.COMPRESSIBLE and len(data) >= 512:
+                data = gzip.compress(data, 6)
+                headers["Content-Encoding"] = "gzip"
+
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            for key, value in (extra_headers or {}).items():
-                self.send_header(key, str(value))
+            for key, value in headers.items():
+                self.send_header(key, value)
+            for key, value in extra.items():
+                self.send_header(key, value)
             self.end_headers()
-            self.wfile.write(data)
+            if self.command != "HEAD":
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
 
         def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
-            self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers)
+            self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers,
+                       cache="no-store")
 
         def _client(self) -> str:
             return self.client_address[0] if self.client_address else "unknown"
@@ -629,7 +666,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
                 name = _safe_doc_name(payload.get("name"))
                 if not name:
-                    self._json({"ok": False, "error": "只接受纯文件名的 .pdf / .docx 文件"}, 400)
+                    self._json({"ok": False,
+                                "error": "只接受纯文件名的 " + " / ".join(
+                                    e.lstrip(".").upper() for e in ingest.SUPPORTED_EXT) + " 文件"}, 400)
                     return
                 blob = payload.get("data_b64") or payload.get("file") or ""
                 if not isinstance(blob, str) or not blob.strip():
@@ -647,7 +686,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 # 文件头先校验：改后缀的假文件属于「请求有问题」（400），
                 # 真文件解析失败（加密/扫描件）才是「内容不可用」（422）。
                 ext = os.path.splitext(name)[1].lower()
-                magic = {".pdf": b"%PDF", ".docx": b"PK"}.get(ext, b"")
+                # csv/tsv 是纯文本，没有魔数可校验；xlsx/docx 都是 ZIP
+                magic = {".pdf": b"%PDF", ".docx": b"PK", ".xlsx": b"PK"}.get(ext, b"")
                 if magic and not data.startswith(magic):
                     self._json({"ok": False,
                                 "error": f"不是有效的 {ext.lstrip('.').upper()} 文件（文件头不匹配）"}, 400)
@@ -666,7 +706,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     return
                 if not res.get("ok"):
                     shutil.rmtree(stage_dir, ignore_errors=True)
-                    self._json({"ok": False, "error": res.get("error")}, 422)
+                    self._json({"ok": False, "error": res.get("error"),
+                                "need_ocr": res.get("need_ocr")}, 422)
                     return
 
                 # 原始 PDF 只在校验通过后落盘，避免失败的上传在 data/raw 里堆垃圾
@@ -700,6 +741,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         "engine": res["engine"], "format": res.get("format"),
                         "pages": res.get("pages"), "paragraphs": res.get("paragraphs"),
                         "tables": res.get("tables"), "note": res.get("note"),
+                        "sheets": res.get("sheets"), "rows": res.get("rows"),
+                        "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
                         "pending": approved is None, "change_id": change_id,
                         "version": store.active_version(), "chunks": len(pipe.chunks),
                         "added_chunks": len(pipe.chunks) - before,
@@ -905,17 +948,28 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 return
 
             if path == "/api/feedback":
+                # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
+                # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
                 record = {
                     "ts": datetime.now(timezone.utc).isoformat(),
-                    "trace_id": str(payload.get("trace_id", "")),
+                    "trace_id": str(payload.get("trace_id", ""))[:64],
                     "useful": bool(payload.get("useful")),
                     "comment": str(payload.get("comment", ""))[:500],
+                    "behavior": str(payload.get("behavior") or "")[:32],
+                    "query": str(payload.get("query") or "")[:300],
+                    "expected": str(payload.get("expected") or "")[:500],
+                    "document": str(payload.get("document") or "")[:200],
+                    "session_id": str(payload.get("session_id") or "")[:64],
+                    "kb_version": str(payload.get("kb_version") or "")[:32],
                 }
-                with open(feedback_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                jsonl.append_line(feedback_path, json.dumps(record, ensure_ascii=False),
+                                  int(pipe.settings.log_max_bytes),
+                                  int(pipe.settings.log_keep))
                 guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
-                                   useful=record["useful"])
-                self._json({"ok": True})
+                                   useful=record["useful"], behavior=record["behavior"],
+                                   has_expected=bool(record["expected"]),
+                                   document=record["document"])
+                self._json({"ok": True, "need": not record["useful"]})
                 return
 
             if path == "/api/keywords/rebuild":
@@ -1056,6 +1110,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 "X-Request-Id": pre["request_id"],
                 "X-Answer-Path": str(result.get("path") or "rag"),
             })
+
+        # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
+        # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。
+        do_HEAD = do_GET
 
         def log_message(self, fmt: str, *args) -> None:
             pass

@@ -518,14 +518,16 @@ def render(data: dict, standalone: bool = False) -> str:
     <div class="axis"><span class="ic is">✓</span><div><b>多轮追问。</b>保留最近 3 轮上下文，「那 R2 呢」会补全成可检索的问题；独立问题不拼上一轮。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>引用原文。</b>每条 <code>[n]</code> 带文档与知识块定位，点击打开原文抽屉并高亮命中行。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>引用校验。</b>答案必须包含有效 <code>[n]</code>；模型未给出处时先补引用，补不上则降级为抽取式答案。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>未命中处理。</b>置信度低于阈值时返回「无法找到答案」，并列出相似问题。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>未命中处理。</b>置信度低于阈值时返回「无法找到答案」与「最高分 / 阈值」，列出相似问题，并收「应该怎么答 / 缺哪份文档」。</div></div>
   </div>
   <div class="card">
     <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">02</span><h2>工程能力</h2></div>
     <div class="axis"><span class="ic is">✓</span><div><b>三层评测。</b>L1 确定性断言、L3 语义评分、Recall@1/@4 与 MRR 召回评测。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>知识库治理界面。</b>待审批变更、文本 diff、通过/驳回、文档级回滚都在知识库页完成，不需要调 API。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>生产控制。</b>幂等键、按 IP 限流、审计日志、每日 token 上限、按比例灰度、配置回滚；多实例把限流/幂等/成本状态放 Redis 共享。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>可观测。</b>每次问答写入 <code>logs/trace.jsonl</code>，<code>/metrics</code> 输出 Prometheus 指标，审计日志可输出 stdout 供 Fluent Bit 采集，<code>/api/health</code> 返回检索与防护状态。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>可观测。</b>每次问答写入 <code>logs/trace.jsonl</code>（超 16 MB 自动轮转、接口只读文件尾），<code>/metrics</code> 输出 Prometheus 指标，审计日志可输出 stdout 供 Fluent Bit 采集，<code>/api/health</code> 返回检索与防护状态。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>传输。</b>HTTP/1.1 保活 + gzip（<code>/ask</code> 51 KB → 15.5 KB）+ 弱 ETag 协商，重复访问回 304 不再重新下发整页。</div></div>
+    <div class="axis"><span class="ic is">✓</span><div><b>答案可核。</b>脚注给出知识库版本、引用条数与覆盖率、检索分；未命中给出「最高分 / 阈值」，并收「应该怎么答 / 缺哪份文档」的反馈。</div></div>
     <div class="axis"><span class="ic is">✓</span><div><b>核心零第三方依赖。</b>切分、BM25、PDF/DOCX 解析、HTTP 服务均用标准库；真向量检索时可选 NumPy / FAISS 加速。</div></div>
   </div>
 </section>
@@ -574,6 +576,7 @@ def render(data: dict, standalone: bool = False) -> str:
       <tr><td>幂等</td><td><code>Idempotency-Key</code> 复用首次结果，TTL <code>IDEMPOTENCY_TTL_S</code>（300s）</td></tr>
       <tr><td>限流</td><td>按客户端 IP 令牌桶，<code>RATE_LIMIT_RPS</code> / <code>RATE_LIMIT_BURST</code>（5 / 10）</td></tr>
       <tr><td>审计</td><td>写入 <code>logs/audit.jsonl</code>，<code>GET /api/audit</code> 读取</td></tr>
+      <tr><td>传输</td><td>gzip + 弱 ETag + 304；JSON 一律 no-store</td></tr>
       <tr><td>成本上限</td><td>每日 token 预算 <code>DAILY_TOKEN_BUDGET</code>，超限跳过模型调用</td></tr>
       <tr><td>灰度</td><td><code>CANARY_PERCENT</code> / <code>CANARY_MODEL</code>，<code>POST /api/admin/config</code> 调整</td></tr>
       <tr><td>回滚</td><td><code>POST /api/admin/rollback</code> 恢复上一版配置</td></tr>

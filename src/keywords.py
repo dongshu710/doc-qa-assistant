@@ -286,6 +286,60 @@ def _sentence_for(chunks, term: str):
     return None, None
 
 
+_TABLE_SKIP = {"序号", "编号", "备注", "说明", "单位", "小计", "合计"}
+_BS = chr(92)
+
+
+def _table_cells(line: str) -> list[str]:
+    """拆一行 Markdown 表格；反斜杠转义的竖线属于单元格内容，不是分隔符。"""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|"):
+        body = body[:-1]
+    parts = body.replace(_BS + "|", "\x00").split("|")
+    return [_clean_term(part.replace("\x00", "|")) for part in parts]
+
+
+def _is_separator(line: str) -> bool:
+    cells = _table_cells(line)
+    return bool(cells) and all(re.fullmatch(":?-{2,}:?", cell or "") for cell in cells)
+
+
+def _table_rows(lines: list[str]) -> dict[int, tuple[list[str], list[str]]]:
+    """识别 Markdown 表格：行号 → (表头, 该行单元格)。
+
+    表格按「整行」入库，而不是按管道符切成清单：`| 产品 | 1000 元 |` 若被当成清单，
+    每个单元格都会变成条目，答案里就会原样吐出管道符，用户看到的是 Markdown 源码。
+    """
+    rows: dict[int, tuple[list[str], list[str]]] = {}
+    index = 0
+    while index < len(lines) - 1:
+        head = lines[index].strip()
+        if not head.startswith("|") or not _is_separator(lines[index + 1]):
+            index += 1
+            continue
+        headers = _table_cells(head)
+        cursor = index + 2
+        while cursor < len(lines) and lines[cursor].strip().startswith("|"):
+            rows[cursor] = (headers, _table_cells(lines[cursor]))
+            cursor += 1
+        rows[index] = (headers, [])
+        index = cursor
+    return rows
+
+
+def _pair_text(headers: list[str], cells: list[str]) -> str:
+    """`表头：值 · 表头：值`，比原始管道行更适合直接给用户看。"""
+    pairs = []
+    for position, cell in enumerate(cells):
+        if not cell:
+            continue
+        label = headers[position] if position < len(headers) else f"列{position + 1}"
+        pairs.append(f"{label}：{cell}" if label else cell)
+    return " · ".join(pairs)
+
+
 def _label_aliases(label: str) -> tuple[list[str], bool]:
     """给「爱吃的食物」这类标签补短说法，返回（别名, 是否为核心词别名）。
 
@@ -430,7 +484,48 @@ class KeywordIndex:
             seen_terms: set[str] = set()
             for idx, chunk in rows:
                 explicit_section = "关键词" in chunk.section or "标签" in chunk.section
-                for raw in chunk.text.splitlines():
+                lines = chunk.text.splitlines()
+                table = _table_rows(lines)
+                # 表头单元格指向第一行数据：问「起购金额」时给一条真实记录，
+                # 而不是把表头原文（一串管道符）当成答案
+                first_cells = next((cells for _, (_, cells) in sorted(table.items()) if cells), [])
+                table_cells_left = 400      # 大表只取前若干单元格，避免索引被表格撑爆
+                for line_no, raw in enumerate(lines):
+                    if line_no in table:
+                        headers, cells = table[line_no]
+                        if not cells:
+                            for header in headers:
+                                if table_cells_left <= 0:
+                                    break
+                                if not (2 <= len(header) <= 14) or header in _TABLE_SKIP \
+                                        or _looks_like_noise(header):
+                                    continue
+                                if _norm(header) in seen_terms:
+                                    continue
+                                entries.append(Entry(
+                                    term=header, doc_id=doc_id, title=chunk.title,
+                                    section=chunk.section, snippet=_pair_text(headers, first_cells),
+                                    kind="explicit" if explicit_section else "colon",
+                                    weight=1.0 if explicit_section else 0.88,
+                                    chunk_index=idx,
+                                ))
+                                seen_terms.add(_norm(header))
+                                table_cells_left -= 1
+                            continue
+                        snippet = _pair_text(headers, cells)
+                        for cell in cells:
+                            if table_cells_left <= 0:
+                                break
+                            if not cell or len(cell) > 40 or _looks_like_noise(cell):
+                                continue
+                            entries.append(Entry(
+                                term=cell, doc_id=doc_id, title=chunk.title,
+                                section=chunk.section, snippet=snippet,
+                                kind="explicit" if explicit_section else "item",
+                                weight=1.1 if explicit_section else 0.95, chunk_index=idx,
+                            ))
+                            table_cells_left -= 1
+                        continue
                     parsed = _parse_line(raw)
                     if not parsed:
                         continue

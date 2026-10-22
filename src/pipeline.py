@@ -26,6 +26,7 @@ from .keywords import KeywordIndex
 from .profiles import get_profile
 from .profiles import refuse_patterns as _refuse_patterns
 from .query import expand
+from . import jsonl
 from .retriever import build_retriever
 from .sessions import SessionStore
 from .suggest import similar as similar_questions
@@ -135,6 +136,36 @@ class RAGPipeline:
         """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
         return bool(api_key())
 
+    def _search(self, query: str, result: dict):
+        """检索一次；异常降级为空结果并显式标注，不把异常抛给调用方。"""
+        try:
+            hits = self.retriever.search(query, self.settings.top_k, focus_query=query)
+        except Exception as exc:  # noqa: BLE001 —— 检索失败降级为不检索
+            hits = []
+            result["degraded"] = True
+            result["degrade_reason"] = "retrieval_error"
+            result["retrieval_error"] = str(exc)
+            return hits
+        self._absorb_retrieval(result)
+        return hits
+
+    def _absorb_retrieval(self, result: dict) -> None:
+        """把检索器的 embedding 用量与降级原因并入结果。
+
+        一次问答可能检索两次（判域 + 扩展），`last_usage` 只保留最后一次，
+        所以要在这里累加，否则成本统计会少一半。
+        """
+        err = getattr(self.retriever, "last_error", None)
+        if err:
+            result["degraded"] = True
+            result["degrade_reason"] = "embedding_error"
+            result["retrieval_error"] = str(err)[:300]
+        usage = getattr(self.retriever, "last_usage", {}) or {}
+        tokens = int(usage.get("total_tokens") or 0)
+        if tokens:
+            result["embedding_tokens"] = int(result.get("embedding_tokens") or 0) + tokens
+            result["api_called"] = True
+
     def _prepare(self, query: str, model: str | None, force_extractive: bool,
                  session_id: str | None):
         """校验 → 关键词 → 检索 → 置信度闸门。
@@ -237,50 +268,16 @@ class RAGPipeline:
                     return self._finish(result, t0), None
 
         # ---------- 检索 ----------
-        # 查询扩展只作用于检索；给模型的仍然是用户原问题（避免改写引入偏差）
-        search_query = context_query
-        expanded = False
-        if len(context_query) >= 6:
-            expansion_on = self.settings.query_expansion == "llm" or (
-                self.settings.query_expansion == "auto" and bool(api_key())
-            )
-            if expansion_on:
-                search_query, expanded = expand(context_query, self.vocabulary)
-        result["search_query"] = search_query if expanded else None
-        result["api_called"] = bool(expanded)  # 查询扩展会调用模型
-
-        try:
-            hits = self.retriever.search(search_query, self.settings.top_k, focus_query=context_query)
-        except Exception as exc:  # noqa: BLE001 —— 检索异常降级为不检索，且显式标注
-            hits = []
-            result["degraded"] = True
-            result["degrade_reason"] = "retrieval_error"
-            result["retrieval_error"] = str(exc)
-
-        if hits:
-            result["retrieval_score"] = hits[0][1]
-
-        # 检索层降级必须可见：embedding 超时/限流/维度错时当次已回退 BM25
-        embed_error = getattr(self.retriever, "last_error", None)
-        if embed_error:
-            result["degraded"] = True
-            result["degrade_reason"] = "embedding_error"
-            result["retrieval_error"] = str(embed_error)[:300]
-        embed_usage = getattr(self.retriever, "last_usage", {}) or {}
-        if embed_usage.get("total_tokens"):
-            result["embedding_tokens"] = int(embed_usage["total_tokens"])
-            result["api_called"] = True
-
-        # 置信度闸门：**用原问题的检索分**判断是否域外。
-        # 若用扩展后的分数，域外问题会被扩展词“拉近”而误答（实测「今天天气」被打成 answer）。
-        gate_score = hits[0][1] if hits else 0.0
-        if expanded:
-            try:
-                orig = self.retriever.search(context_query, 1)
-                gate_score = orig[0][1] if orig else 0.0
-            except Exception:  # noqa: BLE001 —— 复核失败就退回扩展后的分数
-                pass
+        # 顺序：**先判域，再扩展**。
+        # 扩展要付一次 LLM + 一次 embedding；若先扩展再判域，域外问题也要付这笔钱，
+        # 而且扩展词会把域外问题「拉近」，闸门更容易误放行。所以用原问题先检索并判域，
+        # 通过之后才扩展、再召回一次；扩展只做加法（分数不升就不替换）。
+        base_hits = self._search(context_query, result)
+        gate_score = base_hits[0][1] if base_hits else 0.0
+        hits = base_hits
         result["gate_score"] = gate_score
+        result["min_score"] = self.settings.min_score
+        result["retrieval_score"] = gate_score
 
         # 低置信不硬答：直接说明无法找到答案，避免“看起来像答案”的幻觉
         if not hits or gate_score < self.settings.min_score:
@@ -290,6 +287,34 @@ class RAGPipeline:
                 similar_questions=similar_questions(self.chunks, context_query, hits, 3),
             )
             return self._finish(result, t0), None
+
+        # 判域通过才值得花一次模型调用做扩展
+        if len(context_query) >= 6:
+            expansion_on = self.settings.query_expansion == "llm" or (
+                self.settings.query_expansion == "auto" and bool(api_key())
+            )
+            if expansion_on:
+                # 扩展是「锦上添花」：它失败就退回原问题检索，不能让整个问答 500
+                try:
+                    search_query, expanded = expand(context_query, self.vocabulary)
+                except Exception as exc:  # noqa: BLE001
+                    search_query, expanded = context_query, False
+                    result["expansion_error"] = f"{type(exc).__name__}: {exc}"[:200]
+                if expanded:
+                    result["search_query"] = search_query
+                    result["api_called"] = True
+                    try:
+                        exp_hits = self.retriever.search(search_query, self.settings.top_k,
+                                                         focus_query=context_query)
+                        self._absorb_retrieval(result)
+                    except Exception as exc:  # noqa: BLE001 —— 扩展检索失败就保留原结果
+                        exp_hits = []
+                        result["degraded"] = True
+                        result["degrade_reason"] = "retrieval_error"
+                        result["retrieval_error"] = str(exc)
+                    if exp_hits and exp_hits[0][1] >= gate_score:
+                        hits = exp_hits
+                        result["retrieval_score"] = exp_hits[0][1]
 
         return result, {"query": context_query, "hits": hits, "t0": t0,
                         "model": model, "force_extractive": force_extractive}
@@ -453,9 +478,8 @@ class RAGPipeline:
             self.sessions.append(session_id, result.get("query") or "", result["answer"])
         result["latency_ms"] = round((time.time() - t0) * 1000, 1)
         result["ts"] = datetime.now(timezone.utc).isoformat()
-        try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(result, ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # 日志失败不影响主流程；生产环境此处应告警
+        # 日志失败不影响主流程；超限轮转，避免单文件无限增长拖慢 /api/metrics
+        jsonl.append_line(self.log_path, json.dumps(result, ensure_ascii=False),
+                          int(getattr(self.settings, "log_max_bytes", 0) or 0),
+                          int(getattr(self.settings, "log_keep", 3) or 3))
         return result

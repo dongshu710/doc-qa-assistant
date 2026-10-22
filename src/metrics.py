@@ -8,6 +8,8 @@ import argparse
 import json
 from pathlib import Path
 
+from . import jsonl
+
 
 def _percentile(values: list[float], p: float):
     if not values:
@@ -21,13 +23,8 @@ def summarize(trace_path: str, limit: int = 1000) -> dict:
     path = Path(trace_path)
     if not path.exists():
         return {"requests": 0, "note": "trace 文件不存在"}
-    lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()][-limit:]
-    rows = []
-    for line in lines:
-        try:
-            rows.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    # 只读文件尾：13 MB 全量读 56 ms，200 MB 会变成秒级且吃内存
+    rows = jsonl.tail_json(str(path), max(1, int(limit)))
 
     n = len(rows)
     behaviors = ("answer", "ask_clarify", "no_answer", "refuse")

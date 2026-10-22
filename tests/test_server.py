@@ -97,7 +97,27 @@ try:
     assert miss["behavior"] == "no_answer"
     assert miss["answer"] == "无法找到答案。"
     assert miss.get("similar_questions")
-    print("no-answer:", miss["answer"], "| similar:", len(miss["similar_questions"]))
+    # 未命中也要给出可解释的元信息：最高分与阈值，让人知道差多远
+    assert miss["min_score"] > 0 and miss["gate_score"] < miss["min_score"], miss
+    print("no-answer:", miss["answer"], "| gate=", round(miss["gate_score"], 3),
+          "< min=", miss["min_score"], "| similar:", len(miss["similar_questions"]))
+
+    # 未命中的反馈要能收「期望答案 + 缺失文档」
+    miss_fb = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/feedback",
+        data=json.dumps({"trace_id": miss["trace_id"], "useful": False,
+                         "behavior": miss["behavior"], "query": "今天天气怎么样",
+                         "expected": "应说明这是域外问题", "document": "产品说明.md",
+                         "kb_version": miss.get("kb_version")}).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(miss_fb, timeout=10) as resp:
+        miss_fb_res = json.loads(resp.read().decode("utf-8"))
+    assert miss_fb_res.get("ok") is True and miss_fb_res.get("need") is True, miss_fb_res
+    print("no-answer feedback OK:", miss_fb_res)
+
+    page = urllib.request.urlopen(f"http://127.0.0.1:{port}/ask", timeout=10).read().decode("utf-8")
+    for token in ("导出 Markdown", "没找到需要的答案", "知识库 '"):
+        assert token in page, token
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/admin/config", timeout=10) as resp:
         admin = json.loads(resp.read().decode("utf-8"))

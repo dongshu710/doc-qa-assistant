@@ -2,6 +2,7 @@
 
 PDF → `pdf_ingest`（pypdf / 内置解析）
 DOCX → `docx_text`（纯标准库 zip + XML）
+XLSX / CSV / TSV → `table_text`（纯标准库 zip + XML + csv）
 
 对外只有 `ingest_bytes()` 一个入口，服务端与命令行共用，避免「上传」和「批量导入」
 两套逻辑各写一遍、行为漂移。
@@ -10,9 +11,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import docx_text, pdf_ingest
+from . import docx_text, pdf_ingest, table_text
 
-SUPPORTED_EXT = (".pdf", ".docx")
+SUPPORTED_EXT = (".pdf", ".docx") + table_text.TABLE_EXT
 DEFAULT_MIN_CHARS = pdf_ingest.DEFAULT_MIN_CHARS
 
 
@@ -59,5 +60,34 @@ def ingest_bytes(data: bytes, filename: str, out_dir: str | Path,
             "format": "docx",
         }
 
-    return {"ok": False, "error": f"不支持的文件类型 {ext or '（无扩展名）'}，只接受 PDF / DOCX",
+    if ext in table_text.TABLE_EXT:
+        try:
+            md_text, meta = table_text.extract_table(data, filename)
+        except table_text.TableError as exc:
+            return {"ok": False, "error": str(exc), "format": ext.lstrip(".")}
+
+        chars = len(md_text)
+        if chars < 20:
+            return {"ok": False, "format": ext.lstrip("."), "chars": chars,
+                    "error": "表格内容为空或只有表头，没有可入库的数据行。"}
+
+        out.mkdir(parents=True, exist_ok=True)
+        target = pdf_ingest.unique_path(out, f"table_{pdf_ingest.safe_stem(Path(filename).stem)}.md")
+        target.write_text(md_text, encoding="utf-8")
+        return {
+            "ok": True,
+            "md": target.name,
+            "chars": chars,
+            "engine": meta.get("engine"),
+            "format": meta.get("format"),
+            "sheets": meta.get("sheets"),
+            "rows": meta.get("rows"),
+            "tables": len(meta.get("sheets") or []),
+            "note": meta.get("note"),
+            "truncated": meta.get("truncated"),
+        }
+
+    return {"ok": False,
+            "error": f"不支持的文件类型 {ext or '（无扩展名）'}，"
+                     "只接受 PDF / DOCX / XLSX / CSV / TSV",
             "format": ext.lstrip(".")}

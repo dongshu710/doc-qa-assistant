@@ -2,6 +2,30 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.7.0] - 2026-10-22
+
+P1 七项：传输优化、日志轮转尾读、判域前置、对比度与字号、未命中反馈与答案元信息、会话历史与导出、表格入库。
+
+### 新增
+
+- **HTTP 传输层**：`Handler.protocol_version = "HTTP/1.1"` + 定长响应，连接可复用；`_send` 统一做 gzip（`/ask` 51 KB → 15.5 KB）、弱 ETag 协商与 `304`；JSON 接口 `Cache-Control: no-store`；补 `do_HEAD`（原为 501）。
+- **日志轮转与尾读**：新增 `src/jsonl.py`，`append_line` 按 `LOG_MAX_BYTES`（默认 16 MB）/ `LOG_KEEP` 轮转；`tail_lines` 从文件尾按 64 KB 反向读取。`audit.tail`、`metrics.summarize`、`/api/trace`、`/api/audit` 全部改用。37 MB trace 实测 11 ms（全量读 86 ms）。
+- **未命中反馈**：`no_answer` 卡片收「应该怎么答 + 哪份文档有答案」，`/api/feedback` 新增 `behavior` / `query` / `expected` / `document` / `session_id` / `kb_version` 字段并返回 `need`。
+- **答案元信息**：脚注显示知识库版本、引用条数、引用覆盖率、检索分；未命中显示「最高分 / 阈值」（`min_score` 随响应返回）。
+- **会话历史与导出**：`localStorage` 保留最近 40 轮，刷新恢复最近 12 轮；新增「导出 Markdown」（问题 / 答案 / 引用 / 元信息）；清空对话同步清理本地记录。
+- **表格入库**：新增 `src/table_text.py`，标准库解析 `.xlsx`（zip + sharedStrings + worksheet）与 `.csv` / `.tsv`（UTF-8 → GB18030 兜底，分隔符自动嗅探），每个工作表转 Markdown 表格；上传、版本库、关键词抽取全链路打通。
+- **测试**：`test_http_transport`（保活 / gzip / 304 / HEAD / SSE）、`test_jsonl_log`（跨块尾读 / 截断行 / 轮转 / 大文件延迟）、`test_table_ingest`（xlsx 夹具 / 编码 / 竖线转义 / 切分 / 关键词）、`test_retrieval_order`（域外 0 次扩展 / 扩展更差不替换 / 扩展异常降级）；CI 增加四步。
+
+### 变更
+
+- **判域前置、扩展后置**：先用原问题检索并过置信度闸门，通过后才做查询扩展；扩展结果只在分数更高时替换原结果。域外问题少 1 次 LLM + 1 次 embedding；扩展失败降级为原问题检索（`expansion_error` 写 trace），不再 500。
+- **对比度与字号**：`--muted` 改为 `#4a5468`（7.61:1）、`--faint` 改为 `#667085`（白底 4.97:1 / 浅底 4.65:1，原为 2.58:1 / 2.41:1）；`theme.py` 与 `web_pages.py` 中 69 处小于 12px 的字号统一抬到 12px；移动端输入框 16px，避免 iOS 聚焦缩放。
+- **表格行按整行入库**：Markdown 表格不再按管道符切成清单，条目片段改为 `表头：值 · 表头：值`，
+  直出答案不会再把 `| 产品 | 1000 元 |` 原样吐给用户；表头单元格指向第一行数据（问「起购金额」给一条真实记录）。
+- **扫描件提示**：`pdf_ingest.assess` 的告警改为可操作步骤（先 OCR、另存为 docx/txt 再上传），失败响应带 `need_ocr`。
+- 上传支持 `.xlsx` / `.csv` / `.tsv`；知识库页与上传提示同步。
+- 版本升到 1.7.0。
+
 ## [1.6.0] - 2026-10-21
 
 P0 五项落地：流式输出、多轮会话、引用原文、审批界面、知识库接口预计算；未命中不再转人工。

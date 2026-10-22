@@ -30,7 +30,7 @@
 
 同一个引擎可以挂任意文档，金融只是当前这套知识库的**第一个实例**：
 
-- **换知识库**：把文档放进 `data/knowledge/`，或直接在**知识库页上传**（支持 `.md` / `.txt` / `.pdf` / `.docx`，可一次多选，上传后立即重建索引）；
+- **换知识库**：把文档放进 `data/knowledge/`，或直接在**知识库页上传**（支持 `.md` / `.txt` / `.pdf` / `.docx` / `.xlsx` / `.csv` / `.tsv`，可一次多选，上传后立即重建索引）；
 - **换领域**：设 `APP_PROFILE=generic` 即可去掉金融专属护栏（荐股/收益承诺拒绝），只保留注入、越权、隐私这些通用安全规则；
 - **换检索策略**：`RETRIEVAL=vector|bm25|hybrid`（默认向量召回 + 重排），`QUERY_EXPANSION=off|auto|llm`。
 
@@ -117,7 +117,9 @@ doc-qa-assistant/
 │  ├─ pdf_ingest.py            # PDF→Markdown（pypdf 优先，内置解析兜底）
 │  ├─ pdf_text.py              # 纯标准库 PDF 取文本（对象流 / Flate / ToUnicode）
 │  ├─ docx_text.py             # 纯标准库 DOCX 取文本（标题 / 段落 / 表格）
-│  ├─ ingest.py                # 按扩展名分派：PDF / DOCX → Markdown
+│  ├─ ingest.py                # 按扩展名分派：PDF / DOCX / XLSX / CSV → Markdown
+│  ├─ table_text.py            # xlsx/csv/tsv 解析（标准库 zip+XML+csv）
+│  ├─ jsonl.py                 # JSONL 轮转与尾读
 │  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
 │  ├─ server.py                # Web 服务（五页原型 + API）
@@ -259,6 +261,8 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `KB_STORE` | `on` | 启用版本库（`off` 退回单目录模式，仅测试/批处理用） |
 | `KB_APPROVAL` | `auto` | `auto` 本机管理员直通 / `on` 全部审批 / `off` 全部直通 |
 | `LOG_SINK` | `file` | `file` / `stdout` / `both`；stdout 供 Fluent Bit 采集 |
+| `LOG_MAX_BYTES` | `16777216` | 单个 JSONL 超过即轮转；`0` 关闭轮转 |
+| `LOG_KEEP` | `3` | 保留的历史文件份数（1-9） |
 | `TOKEN_PRICE_PER_1K` | `0` | 每千 token 单价；为 0 时只统计 token，不算金额 |
 
 embedding 与索引相关变量见 [4.6](#46-真-embedding-与向量索引可选接口已隔离)，多实例变量见 [4.7](#47-多实例redis-共享状态--集中日志与指标)，版本库变量见 [4.8](#48-知识库版本审批与文档级回滚)。
@@ -348,7 +352,7 @@ API：
 
 | 方式 | 怎么做 | 适用 |
 |---|---|---|
-| 页面上传 | `/kb` → 拖拽或选择 `.md` / `.txt` / `.pdf` / `.docx`（可多选）→ 上传（审批通过后重建索引） | 几份到几十份，含 PDF/Word |
+| 页面上传 | `/kb` → 拖拽或选择 `.md` / `.txt` / `.pdf` / `.docx` / `.xlsx` / `.csv` / `.tsv`（可多选）→ 上传（审批通过后重建索引） | 几份到几十份，含 PDF/Word/Excel |
 | 直接放文件 | 首次启动前放 `data/knowledge/`（作为 v0001 种子）；已启用版本库后放 `data/kb/versions/<活动版本>/files/`，再点「重建索引」 | 批量导入、离线准备 |
 | 命令行批量 | `python -m src.pdf_ingest --raw data/raw`（见 4.3） | 一次性导入大量 PDF |
 
@@ -416,6 +420,10 @@ PDF_ENGINE=builtin python -m src.server                    # 服务端也强制�
 python tests/test_pdf_text.py     # 解析器单测：对象流 / 非 PDF / 加密
 python tests/test_pdf_upload.py   # PDF 端到端：扫描件被拒 → 上传 → 能答 → 删除
 python tests/test_docx_upload.py  # DOCX 端到端：上传 → 自动出题 → 运行 → 删文档后跳过
+python tests/test_table_ingest.py   # XLSX/CSV/TSV → Markdown → 切分 → 关键词
+python tests/test_jsonl_log.py      # 日志轮转 / 尾读正确性与大文件延迟
+python tests/test_http_transport.py # HTTP/1.1 保活、gzip、ETag/304、HEAD、SSE
+python tests/test_retrieval_order.py # 先判域后扩展：域外 0 次扩展
 ```
 
 ## 4.4 文档用例：上传完自动出题，和基础集一起跑
@@ -745,6 +753,65 @@ python tests/bench_keyword.py                 # 倒排索引 vs 线性扫描
 
 不再提交工单：统一返回「无法找到答案。」，同时保留相似问题。`/api/handoff` 与工单表单已删除。
 
+## 4.11 传输、日志与表格入库（v1.7.0）
+
+### HTTP 传输层
+
+| 项 | 之前 | 现在 |
+|---|---|---|
+| 协议 | HTTP/1.0，每请求新建连接 | HTTP/1.1 + 定长响应，连接可复用 |
+| 压缩 | 无，`/ask` 整页 51 KB | gzip，51 KB → 15.5 KB（省 70%） |
+| 缓存 | 无校验，每次都重新下发 | 弱 ETag + `304`，内容没变回 0 字节正文 |
+| JSON | 无缓存头 | `Cache-Control: no-store` |
+| HEAD | 501 | 200（复用 GET 路由，不返回正文） |
+
+实现在 `Handler._send` 一个出口里完成：任何路由都不会漏压缩、漏 `Content-Length`。
+gzip 只压 `text/*` 与 `application/json`，小于 512 字节不压（省下的还不够压缩头）。
+ETag 取内容 sha256 前 20 位并标 `W/`，这样同一内容在压缩/未压缩两种表示下命中同一个校验值。
+
+**没做**：把内联 CSS/JS 抽成带 hash 的独立静态资源。当前方案已拿到主要收益（首屏 -70%、重复访问 0 字节），
+拆资源要改页面骨架与构建流程，收益递减，留到后面按需再做。
+
+### 日志轮转与尾读
+
+`logs/*.jsonl` 改成「写时轮转 + 读时尾读」：
+
+- 单文件超过 `LOG_MAX_BYTES`（默认 16 MB）转成 `.1`，最老的 `.3` 删除，`LOG_KEEP` 控制份数；
+- `/api/metrics`、`/api/audit`、`/api/trace` 从文件尾部按 64 KB 反向读取，凑够行数即停。
+
+实测 37 MB trace：`summarize(1000)` **11 ms**，全量读取 86 ms；文件越大差距越大，且内存占用不再随运行时长增长。
+
+### 判域前置、扩展后置
+
+查询扩展要付一次 LLM + 一次 embedding。旧顺序是「先扩展、再判域」，域外问题也要付这笔钱。
+现在先用原问题检索并过闸门，通过之后才扩展；扩展结果只在分数更高时替换原结果。
+域外问题因此少 1 次 LLM + 1 次 embedding。扩展调用本身失败会降级为原问题检索
+（`expansion_error` 写入 trace），不再让整个问答 500。
+
+### 答案元信息与未命中反馈
+
+答案脚注显示：知识库版本、引用条数、引用覆盖率、检索分，以及原有的通道/模型、模式、耗时、降级原因。
+未命中显示「最高分 / 阈值」，让人知道差多远，而不是只给一句「无法找到答案」。
+
+未命中的反馈从「有用 / 没用」改成「应该怎么答 + 哪份文档有答案」，字段写入 `logs/feedback.jsonl`
+（`expected` / `document` / `behavior` / `query` / `kb_version`），可直接转评测用例或补文档。
+
+### 会话历史与导出
+
+对话存 `localStorage`（最近 40 轮，单条答案截断 6000 字），刷新后恢复最近 12 轮；
+「导出 Markdown」把问题、答案、引用与元信息写成可归档的 `.md`。清空对话会同时清掉本地记录。
+这是「回看 / 导出」的历史，与服务端 3 轮上下文（用于追问改写）是两件事，互不替代。
+
+### 表格入库（xlsx / csv / tsv）
+
+- xlsx 用标准库解 zip + XML（`sharedStrings` + `worksheet`），不引第三方库；
+- 每个工作表转成一个 Markdown 表格，按**整行**入库：直出答案是 `产品名称：稳盈 Plus 30 天 · 起购金额：1000 元 · 风险等级：R2`，不会把管道符原样吐出来；表头也能命中（问「起购金额」给第一行数据）；
+- csv/tsv 先试 UTF-8，再退 GB18030（Excel 导出的中文 CSV 多是 GBK）；
+- 单元格里的 `|` 会转义，不会撑坏表结构；只有表头没有数据行的工作表跳过并提示。
+
+**边界**：不解析样式，日期显示为序列号、合并单元格只在左上角有值。需要保留格式就另存为 CSV。
+扫描件 PDF 的提示改为可操作步骤（先 OCR、另存为 docx/txt 再上传），响应带 `need_ocr`。
+
 ## 5. 评测
 
 ```bash
@@ -903,7 +970,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - **知识库审批锁是本机文件锁**：`state.lock` 保证同机多进程串行；多实例部署时审批应由单实例处理，或把锁换成 Redis 分布式锁。上传本身不写活动目录，不会出现半写。
 - **索引是全量重建**：语料指纹变化会重算所有缺失向量（有内容缓存，未变块不重复计费），10⁵ 块以上建议改增量索引与后台构建。
 - **查询扩展有延迟成本**：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。
-- **上传支持 `.md` / `.txt` / `.pdf` / `.docx`**：PDF 与 DOCX 都由服务端解析，上传即入库。`.doc` 老格式需先另存为 `.docx`。
+- **上传支持 `.md` / `.txt` / `.pdf` / `.docx` / `.xlsx` / `.csv` / `.tsv`**：全部由服务端解析为 Markdown，上传即入库。`.doc` / `.xls` 老格式需先另存为新格式；扫描 PDF 无文本层，需先 OCR。
 - **DOCX 解析边界**：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。
 - **自动出题的能力边界**：`heuristic` 只能覆盖「有唯一数值」的事实，法规类无数字条款出不了题；`llm` 模式需要 Key，且模型可能出宽泛问题——关键词已强制校验必须原文出现，但仍建议出题后人工扫一眼。
 - **内置 PDF 解析器的覆盖面有限**：覆盖经典 xref / xref 流 / 对象流 / Flate / ASCIIHex / ASCII85 / Type0+ToUnicode / 简单字体；遇到无 ToUnicode 的 CID 字体会退化为「赌 CID=Unicode」，此时靠 `unmapped_ratio` 提示乱码风险，不保证正确。极端文件建议改用 `pypdf`（`.venv`）。

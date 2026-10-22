@@ -102,6 +102,8 @@ class Settings:
     kb_seed_dir: str = "data/knowledge"   # 首次初始化版本库时的种子目录
     # 日志与成本
     log_sink: str = "file"            # file | stdout | both（stdout 供 Fluent Bit/Vector 采集）
+    log_max_bytes: int = 16 * 1024 * 1024   # 单个 JSONL 超过即轮转（0=关闭）
+    log_keep: int = 3                  # 保留的历史文件数
     token_price_per_1k: float = 0.0   # 单价需按供应商当期价格页填写；0=不计算金额
 
 
@@ -158,6 +160,8 @@ def load_settings() -> Settings:
         kb_dir=_first_env("KB_DIR", default="data/kb"),
         kb_seed_dir=_first_env("KB_SEED_DIR", default="data/knowledge"),
         log_sink=(_first_env("LOG_SINK", default="file") or "file").strip().lower(),
+        log_max_bytes=max(0, int(_first_env("LOG_MAX_BYTES", default=str(16 * 1024 * 1024)))),
+        log_keep=max(1, min(9, int(_first_env("LOG_KEEP", default="3")))),
         token_price_per_1k=float(_first_env("TOKEN_PRICE_PER_1K", default="0")),
         embedding_provider=(_first_env("EMBEDDING_PROVIDER", default="none") or "none").strip().lower(),
         embedding_base_url=_first_env("EMBEDDING_BASE_URL", default=""),

@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from . import jsonl
 from .redis_client import RedisClient, RedisError
 
 
@@ -402,9 +403,11 @@ class AuditLog:
     """
 
     def __init__(self, path: str, sink: str = "file", service: str = "doc-qa",
-                 instance: str = ""):
+                 instance: str = "", max_bytes: int = 0, keep: int = 3):
         self.path = path
         self.sink = (sink or "file").strip().lower()
+        self.max_bytes = max(0, int(max_bytes))
+        self.keep = max(1, int(keep))
         self.service = service
         self.instance = instance or f"{socket.gethostname()}:{os.getpid()}"
         self.last_error: str | None = None
@@ -429,27 +432,13 @@ class AuditLog:
                 self.last_error = str(exc)
         if self.sink in ("stdout",):
             return
-        try:
-            with self._lock, open(self.path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        except OSError as exc:
-            self.last_error = str(exc)
+        # 追加写 + 超限轮转：单文件大小有上界，尾读才有稳定的上界
+        if not jsonl.append_line(self.path, line, self.max_bytes, self.keep):
+            self.last_error = f"write failed: {self.path}"
 
     def tail(self, limit: int = 20) -> list[dict]:
-        rows: list[dict] = []
-        if not os.path.exists(self.path):
-            return rows
-        try:
-            with open(self.path, encoding="utf-8") as f:
-                lines = [line for line in f.read().splitlines() if line.strip()][-max(1, limit):]
-        except OSError:
-            return rows
-        for line in lines:
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return list(reversed(rows))
+        """尾部 N 条（新 → 旧）。只读文件尾，不随日志总量变慢。"""
+        return list(reversed(jsonl.tail_json(self.path, max(1, limit))))
 
 
 class RuntimeConfig:
@@ -584,7 +573,9 @@ class Guards:
             local_cost,
         )
         self.audit = AuditLog(os.path.join(log_dir, "audit.jsonl"),
-                              sink=getattr(settings, "log_sink", "file"))
+                              sink=getattr(settings, "log_sink", "file"),
+                              max_bytes=getattr(settings, "log_max_bytes", 0),
+                              keep=getattr(settings, "log_keep", 3))
         self.runtime = RuntimeConfig(os.path.join(log_dir, "runtime.json"),
                                      settings.canary_percent, settings.canary_model)
 
