@@ -874,7 +874,7 @@ API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥
 - 限流、灰度、成本统计的身份从 IP 换成 `key:<name>`，多调用方互不挤占；Prometheus 增加
   `rag_api_tokens_total{key}` 与 `rag_api_cost_usd_total{key}`。
 - 问答页检测到 `auth.mode=key` 时显示 Key 输入条（存 `sessionStorage`，关标签页即清），401 会自动展开。
-- `GET /openapi.json` 输出 OpenAPI 3.0.3：18 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
+- `GET /openapi.json` 输出 OpenAPI 3.0.3：21 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
   `x-retrieval` / `x-model`，可直接导入 Postman / Apifox / Swagger UI。
 
 ### 四页 Playwright E2E
@@ -994,6 +994,38 @@ python -m src.notes rebuild                  # 索引丢了/外部文件多时�
 `digest: rule` 是默认引擎：分句、按数字/结论词/位置打分、归类到摘要/要点/决策/待办/引用，
 **不联网、不花钱、永不抛异常**。没有 Key 也能完整跑通保存 → 读取 → 再被其他智能体读取。
 大模型摘要（`DIGEST=llm`）是下一里程碑，接入后失败会回落到规则引擎并标 `llm-fallback`。
+
+### HTTP 接口（智能体直接调）
+
+六个端点，写操作都带并发保护或确认步骤：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/notes` | 保存一段对话；`commit=false` 只预览，`duplicate_of` 表示内容已存在 |
+| GET | `/api/notes` | 列表：`?tag=&kind=&status=&since=&limit=` |
+| GET | `/api/notes/{id}` | 全文；`?section=摘要` 只取一节；返回 `rev` 供修改时用 |
+| PATCH | `/api/notes/{id}` | 改标题/标签/状态/小节；必须带 `base_rev`，否则 409 |
+| DELETE | `/api/notes/{id}?confirm=1` | 移入 `.trash`，可找回 |
+| GET | `/api/notes/stats` | 数量与标签分布 |
+
+```bash
+# 保存（不带 commit=false 就直接落盘）
+curl -s http://127.0.0.1:8000/api/notes -H 'Content-Type: application/json' -d '{
+  "messages": [{"role":"assistant","text":"决定按 13% 执行，财务部每月 5 日前复核。"}],
+  "hint": {"title": "退税率口径", "kind": "decision", "tags": ["税务"]}
+}'
+
+# 改标题：先拿 rev，再带着它改
+curl -s http://127.0.0.1:8000/api/notes/<id> | python -c "import json,sys;print(json.load(sys.stdin)['rev'])"
+curl -s -X PATCH http://127.0.0.1:8000/api/notes/<id> -H 'Content-Type: application/json'   -d '{"base_rev":"<rev>","changes":{"title":"新标题"}}'
+```
+
+配了 `API_KEYS` 时，笔记接口同样要求 `Authorization: Bearer <key>` 或 `X-API-Key`；
+`NOTES_CORS=*`（或逗号分隔的来源白名单）才会放行浏览器跨域，默认关闭。
+
+`GET /tools.json` 直接给出 5 个 OpenAI function calling 工具声明
+（`save_conversation` / `search_notes` / `get_note` / `update_note` / `delete_note`），
+任何支持 function calling 的智能体塞进 `tools` 数组即可用，不需要读文档。
 
 ### 实测（本机，1000 篇笔记）
 

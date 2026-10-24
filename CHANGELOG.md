@@ -2,6 +2,27 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.11.0] - 2026-10-24
+
+笔记接上 HTTP：从「只有命令行能用」变成「任何智能体都能调」。
+
+### 新增
+
+- **六个端点**：`POST /api/notes`（保存/预览）、`GET /api/notes`（筛选）、`GET /api/notes/{id}`（含 `rev`）、`PATCH /api/notes/{id}`（乐观锁）、`DELETE /api/notes/{id}?confirm=1`（软删除）、`GET /api/notes/stats`。
+- **乐观锁**：`PATCH` 必须带 `rev`（文件内容指纹），不一致返回 409 + 当前 `rev`；避免「人刚改完、智能体又按旧内容覆盖」。`force=true` 可显式跳过。
+- **删除确认**：`DELETE` 不带 `confirm=true` 返回 400 `confirm_required`，文件不动；确认后只移入 `.trash`。
+- **`GET /tools.json`**：5 个 OpenAI function calling 工具声明（保存/搜索/读取/修改/删除），带 `base_url` 与端点映射。
+- **OpenAPI 扩展**：`/openapi.json` 从 18 个路径增到 21 个，新增「笔记」标签与三个 path 条目。
+- **鉴权**：配了 `API_KEYS` 时，`/api/notes*` 与问答接口同口径（Bearer / X-API-Key），401 带 `WWW-Authenticate`。
+- **CORS（默认关）**：`NOTES_CORS=*` 或来源白名单才放行，支持 `OPTIONS` 预检；个人笔记不默认对浏览器开放。
+- **测试**：`test_notes_api`（11 组：CRUD / 去重 / 预览 / 筛选 / 乐观锁 / 小节编辑 / 非法输入 / 删除确认 / 统计 / 预检 / 契约 / 鉴权）。
+
+### 变更
+
+- 请求体上限：问答接口仍是 8 KB，笔记接口单独放宽到 2 MB（一段对话可能很长）。
+- `src/notes/api.py` 作为协议层，`src/notes/contract.py` 放 OpenAPI 片段；MCP 接入时复用同一份参数与错误码。
+- 版本升到 1.11.0。
+
 ## [1.10.0] - 2026-10-24
 
 页面收口到两页，并落地「智能体笔记」第一步：不接大模型也能把对话整理成可读、可改、可流通的 Markdown。

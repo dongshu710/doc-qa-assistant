@@ -334,4 +334,12 @@ resources：`note://{id}`（单篇全文）、`notes://recent`（最近 20 条�
 - 页面收口为两页，旧入口 302。
 
 实测：保存 P95 19 ms、列出 1000 篇 21 ms、索引重建 2.0 s（并行读）。
-未做（下一里程碑）：HTTP `/api/notes`、MCP server、LLM 摘要、`/kb` 笔记分区、离线导出。
+
+### 第二步（v1.11.0，已完成）
+
+- 六个 HTTP 端点：POST / GET / GET{id} / PATCH / DELETE / stats；`PATCH` 用 `rev` 乐观锁，`DELETE` 需 `confirm`。
+- `GET /tools.json` 给出 5 个 function calling 工具声明；`/openapi.json` 增加到 21 个路径。
+- 鉴权与问答同口径；`NOTES_CORS` 默认关闭，显式配置才放行浏览器跨域。
+- `tests/test_notes_api.py` 覆盖 11 组场景（含 401、409、confirm_required）。
+
+未做（下一里程碑）：MCP server、LLM 摘要、`/kb` 笔记分区、离线导出。

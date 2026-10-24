@@ -87,6 +87,9 @@ jobs:
       - name: 规则摘要（20 条样本 + 非法输入）
         run: python tests/test_notes_digest_rule.py
 
+      - name: 笔记 HTTP（CRUD / 乐观锁 / 删除确认 / 鉴权）
+        run: python tests/test_notes_api.py
+
       - name: 版本硬链接与保留策略
         run: python tests/test_kb_hardlink.py
 

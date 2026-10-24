@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import secrets
@@ -186,6 +187,10 @@ class NoteStore:
 
     def get(self, note_id: str) -> Note:
         return _read_note(self._resolve(note_id))
+
+    def rev(self, note_id: str) -> str:
+        """文件内容指纹，用于乐观锁：人改过、智能体改过都会让它变。"""
+        return hashlib.sha256(self._resolve(note_id).read_bytes()).hexdigest()[:16]
 
     def _resolve(self, note_id: str) -> Path:
         entry = self._entries().get(note_id)

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from .notes.contract import notes_paths
+
 
 def _err(desc: str) -> dict:
     return {"description": desc,
@@ -37,6 +39,7 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
         "tags": [
             {"name": "问答", "description": "检索、生成与反馈"},
             {"name": "知识库", "description": "文档、版本与审批"},
+            {"name": "笔记", "description": "对话整理成个人笔记：保存、查询、修改、删除"},
             {"name": "运维", "description": "健康检查与指标"},
         ],
         "paths": {
@@ -285,6 +288,8 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
             },
         },
     }
+    spec["paths"].update(notes_paths())
+
     # 让文档里能看到当前实例的检索配置，避免「按默认阈值写死」的误用
     spec["info"]["x-retrieval"] = retrieval
     spec["info"]["x-model"] = model

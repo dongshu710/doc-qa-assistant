@@ -54,6 +54,7 @@ import os
 import shutil
 import tempfile
 import time
+import traceback
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
@@ -66,12 +67,17 @@ from .config import load_settings
 from .guards import Guards
 from .metrics import summarize
 from .metrics_exporter import Metrics
+from .notes.api import ApiError
+from .notes.api import dispatch as notes_dispatch
+from .notes.service import NoteService
+from .notes.tools import tools_payload as notes_tools_payload
 from .openapi import build_spec
 from .pipeline import RAGPipeline
 from .version import __version__
 from .web_pages import ASK_HTML, KB_HTML
 
 MAX_BODY_BYTES = 8192
+NOTES_MAX_BYTES = 2 * 1024 * 1024        # 一段对话可能很长：笔记接口单独放宽
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
 DOC_MAX_BYTES = 6 * 1024 * 1024         # 单个 PDF/DOCX 上限（解码后）
 DOC_B64_MAX_BYTES = DOC_MAX_BYTES * 4 // 3 + 4096
@@ -143,6 +149,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
     log_dir = os.path.dirname(pipe.log_path)
     guards = Guards(pipe.settings, log_dir)
     api_keys = ApiKeyStore(pipe.settings.api_keys)
+    try:
+        note_service: NoteService | None = NoteService()
+        note_init_error = None
+    except OSError as exc:  # 目录不可写等情况：接口回 503，问答照常
+        note_service = None
+        note_init_error = f"{type(exc).__name__}: {exc}"
+
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
     raw_dir = _raw_dir()
@@ -280,6 +293,90 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 return None, None
             return api_keys.identify(self._presented_key())
 
+        def _cors_headers(self) -> dict:
+            """跨域默认关闭；NOTES_CORS=* 或来源白名单才放行，个人笔记不该随便被网页读。"""
+            raw = (os.environ.get("NOTES_CORS") or "").strip()
+            if not raw:
+                return {}
+            origin = (self.headers.get("Origin") or "").strip()
+            if raw == "*":
+                allow = "*"
+            elif origin and origin in [item.strip() for item in raw.split(",") if item.strip()]:
+                allow = origin
+            else:
+                return {}
+            return {
+                "Access-Control-Allow-Origin": allow,
+                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+                "Access-Control-Max-Age": "600",
+            }
+
+        def _notes_guard(self) -> dict | None:
+            """配了 API_KEYS 就必须带 Key：笔记是个人数据，不能只靠「本机」当保护。"""
+            _key_name, err = self._api_auth()
+            if not err:
+                return None
+            metrics.inc("rag_unauthorized_total")
+            guards.audit.write("notes.unauthorized", client=self._client(),
+                               path=self.path[:200], reason=err)
+            return {"ok": False, "error": "unauthorized",
+                    "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"}
+
+        def _read_note_body(self) -> tuple[dict | None, str | None]:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return None, "Content-Length 不合法"
+            if length <= 0:
+                return {}, None
+            if length > NOTES_MAX_BYTES:
+                return None, f"请求体超过 {NOTES_MAX_BYTES} 字节"
+            try:
+                data = json.loads(self.rfile.read(length).decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                return None, "请求体不是合法 JSON"
+            if not isinstance(data, dict):
+                return None, "请求体必须是 JSON 对象"
+            return data, None
+
+        def _notes(self, method: str, path: str, query: dict, body: dict | None) -> None:
+            cors = self._cors_headers()
+            if method == "OPTIONS":
+                self.send_response(204)
+                for key, value in {**cors, "Allow": "GET, POST, PATCH, DELETE, OPTIONS"}.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            denied = self._notes_guard()
+            if denied:
+                self._json(denied, 401, {**cors, "WWW-Authenticate": 'Bearer realm="notes"'})
+                return
+            if note_service is None:
+                self._json({"ok": False, "error": "notes_unavailable",
+                            "message": f"笔记存储不可用：{note_init_error}"}, 503, cors)
+                return
+            try:
+                status, payload, extra = notes_dispatch(note_service, method, path, query, body)
+            except ApiError as exc:
+                if method != "GET":
+                    guards.audit.write(f"notes.{method.lower()}.rejected", client=self._client(),
+                                       path=path[:120], error=exc.payload.get("error"))
+                self._json(exc.payload, exc.status, {**cors, **exc.headers})
+                return
+            except Exception as exc:  # noqa: BLE001 —— 未预期异常也要回结构化错误，不能掐断连接
+                traceback.print_exc()
+                guards.audit.write(f"notes.{method.lower()}.error", client=self._client(),
+                                   path=path[:120], error=f"{type(exc).__name__}: {exc}")
+                self._json({"ok": False, "error": "internal_error",
+                            "message": f"服务端异常：{type(exc).__name__}"}, 500, cors)
+                return
+            if method != "GET":
+                guards.audit.write(f"notes.{method.lower()}", client=self._client(),
+                                   id=payload.get("id"), duplicate_of=payload.get("duplicate_of"))
+            self._json(payload, status, {**cors, **extra})
+
         def _ask_preflight(self, payload: dict):
             """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
             query = str(payload.get("query", ""))
@@ -388,11 +485,53 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 api_key=pre.get("api_key"),
             )
 
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+                self._json({"error": "not found"}, 404)
+                return
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                return
+            self._notes("PATCH", parsed.path, parse_qs(parsed.query), body)
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+                self._json({"error": "not found"}, 404)
+                return
+            body = None
+            try:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+            except ValueError:
+                length = 0
+            if length > 0:
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+            self._notes("DELETE", parsed.path, parse_qs(parsed.query), body)
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+                self._json({"error": "not found"}, 404)
+                return
+            self._notes("OPTIONS", parsed.path, parse_qs(parsed.query), None)
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
 
+            if path == "/tools.json":
+                host = self.headers.get("Host") or "127.0.0.1"
+                self._json(notes_tools_payload(__version__, f"http://{host}"))
+                return
+            if path == "/api/notes" or path.startswith("/api/notes/"):
+                self._notes("GET", path, qs, None)
+                return
             if path in ("/", "/index.html", "/insights", "/dashboard", "/report"):
                 # 只留问答与知识库两页，旧入口统一回落到问答页，收藏夹不会 404
                 self._redirect("/ask")
@@ -617,6 +756,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
+            if path == "/api/notes" or path.startswith("/api/notes/"):
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+                self._notes("POST", path, parse_qs(urlparse(self.path).query), body)
+                return
             if path not in ("/api/ask", "/api/ask/stream", "/api/feedback", "/api/reload",
                             "/api/cases/from_feedback",
                             "/api/knowledge/upload", "/api/knowledge/upload_pdf",

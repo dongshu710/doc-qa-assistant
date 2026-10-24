@@ -4,11 +4,11 @@
 """
 
 from .model import KINDS, SECTION_ORDER, STATUSES, Note, NoteError, Section
-from .service import NoteService
+from .service import NoteConflict, NoteService
 from .store import NoteNotFound, NoteStore, SaveResult, StoreBusy
 
 __all__ = [
     "KINDS", "SECTION_ORDER", "STATUSES",
     "Note", "NoteError", "Section",
-    "NoteService", "NoteNotFound", "NoteStore", "SaveResult", "StoreBusy",
+    "NoteConflict", "NoteService", "NoteNotFound", "NoteStore", "SaveResult", "StoreBusy",
 ]
