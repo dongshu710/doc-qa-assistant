@@ -2,6 +2,37 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.10.0] - 2026-10-24
+
+页面收口到两页，并落地「智能体笔记」第一步：不接大模型也能把对话整理成可读、可改、可流通的 Markdown。
+
+### 新增
+
+- **`src/notes/`（零依赖）**：`model`（Note 与 Markdown 往返）、`store`（目录/原子写/目录锁/索引自愈）、`index`（notes.jsonl 派生缓存）、`select`（切片与指纹）、`digest_rule`（规则摘要）、`service`（统一用例层）、`cli`（命令行）。
+- **存储契约 Note v1**：`NOTE_HOME`（默认 `~/agent-notes`）下 `notes/YYYY/MM/<id>.md`，front matter 固定 `schema/id/title/created/updated/kind/status/tags/source/digest/hash`，正文六段（摘要/要点/决策/待办/原文/引用），未知小节与未知字段原样保留；文件名用 id，避免改名与跨平台编码问题。
+- **CLI**：`save / list / get / rebuild / stats`；`--draft` 只预览不落盘，`--select-indices | --select-range | --select-keyword` 决定存哪几段，`--keep-raw` 保留原文，`--json` 给机器读。
+- **容错**：front matter 缺失或写坏 → `external: true` 降级仍可读；索引被删 → 读路径自动扫盘重建；外部新增的 `.md` 直接纳入。
+- **去重**：按选中内容生成 `hash`，同内容再次保存返回 `duplicate_of`，不产生第二个文件；若这次显式要求保留原文而旧笔记没有，会补写进同一篇。
+- **测试**：`test_notes_store`（14 组：路径/读回/手改自愈/索引重建/去重/外部文件/坏格式/选择/原文/软删除/锁/错误/统计/CLI）、`test_notes_digest_rule`（28 项：正常 12 / 边界 5 / 对抗 3 / 非法输入 8）。
+
+### 变更
+
+- **页面从四页收成两页**：删除首页与数据中心（`src/insights.py` 与 `web_pages.py` 中首页/看板模板，约 600 行）；导航与页脚只剩「问答」「知识库」。
+- `/`、`/index.html`、`/insights`、`/dashboard`、`/report` 一律 302 到 `/ask`，旧链接不会 404。
+- 移除 `/api/report/export`（汇报页不再作为服务页面）；`python -m src.report --out x.html` 仍可导出独立文件。
+- 版本升到 1.10.0。
+
+### 决策记录
+
+- 存储默认 `~/agent-notes`（跨项目、跨智能体复用），`NOTE_HOME` 或 `--home` 覆盖。
+- 原文默认不保存，`--keep-raw` 或 `NOTE_KEEP_RAW=on` 才写「原文」段。
+- 笔记浏览入口下一步并入 `/kb` 的第二分区，不新增第三个页面。
+- 接入顺序：先 HTTP（便于自测与 CI），再做 MCP；MCP 只做 stdio。
+
+### 性能（本机 1000 篇）
+
+- 保存 P50 12.0 ms / P95 19.0 ms；列出 1000 篇 20.9 ms；索引全量重建 2.0 s（4 线程并行读；单线程 14.7 s）；单篇约 600 B。
+
 ## [1.9.0] - 2026-10-24
 
 页面结构重整：看板与汇报合并为「数据中心」，用可收起的侧栏切换模块；问答页与知识库页保持不变。

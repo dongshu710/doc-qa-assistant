@@ -33,13 +33,12 @@ try:
     assert len(examples) >= 1
     print("examples:", examples)
 
-    for page, needle in (("/", "有出处的答案"), ("/ask", "可以这样问"), ("/kb", "拖拽或点击上传"),
-                         ("/insights", "数据中心"), ("/insights", "insSide"),
-                         ("/insights", "下载 HTML")):
+    for page, needle in (("/ask", "可以这样问"), ("/kb", "拖拽或点击上传")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             html = resp.read().decode("utf-8")
         assert needle in html, page
-    print("pages OK")
+        assert 'href="/insights"' not in html, "导航里不该再出现已下线的页面"
+    print("pages OK（仅问答与知识库）")
 
     # 旧入口保留 302，收藏夹里的链接不能断
     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -47,7 +46,8 @@ try:
             return None
 
     opener = urllib.request.build_opener(NoRedirect)
-    for page, want in (("/dashboard", "/insights#p-overview"), ("/report", "/insights#p-report")):
+    for page, want in (("/", "/ask"), ("/index.html", "/ask"), ("/insights", "/ask"),
+                       ("/dashboard", "/ask"), ("/report", "/ask")):
         try:
             opener.open(f"http://127.0.0.1:{port}{page}", timeout=10)
             raise AssertionError(f"{page} 未重定向")
@@ -59,12 +59,6 @@ try:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/l3", timeout=10) as resp:
         l3 = json.loads(resp.read().decode("utf-8"))
     print("l3 available:", l3.get("available"), "| avg:", (l3.get("avg") or {}).get("faithfulness"))
-
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/report/export", timeout=20) as resp:
-        disp = resp.headers.get("Content-Disposition", "")
-        exported = resp.read().decode("utf-8")
-    assert "attachment" in disp and "<!doctype html>" in exported.lower()
-    print("export:", disp, "|", len(exported), "chars")
 
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/ask",

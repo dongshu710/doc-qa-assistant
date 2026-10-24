@@ -20,7 +20,7 @@
 
 ```mermaid
 flowchart LR
-  B[浏览器<br/>首页 / 问答 / 知识库 / 数据中心] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
+  B[浏览器<br/>问答 / 知识库] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
   S --> P[RAGPipeline]
   P --> G[输入校验<br/>归一化 / 注入 / 越权 / 合规]
   G --> KW{关键词命中<br/>清单 / 标签条目}
@@ -38,7 +38,7 @@ flowchart LR
   KO --> O
   O --> T[(logs/trace.jsonl)]
   O --> PM[/metrics<br/>Prometheus/]
-  T --> D[数据中心<br/>侧栏切换六模块]
+  T --> D[笔记（src/notes）<br/>Markdown + 派生索引]
   K[(data/kb/versions/<v>/files<br/>md / txt)] --> R
   K -.-> IX[(embedding 索引<br/>manifest: model/dim/fingerprint)]
   IX -.-> R
@@ -107,8 +107,9 @@ sequenceDiagram
 | 指标 | `src/metrics.py` | 从 trace 聚合 P50/P95、行为分布、降级率 | 无 trace → 返回空指标 |
 | 文档解析 | `src/pdf_text.py` / `src/docx_text.py` | 纯标准库解析 PDF / DOCX | 扫描件 / 加密 / 假后缀 → 4xx 明确报错 |
 | 评测 | `src/evaluator.py` | L1 断言内核，CLI 与服务端共用 | 用例引用文档已删 → skip，不算失败 |
-| Web | `src/server.py` | 四页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
-| 页面 | `src/theme.py` / `src/web_pages.py` / `src/insights.py` / `src/report.py` | 设计系统、四页、可收起侧栏的数据中心、独立汇报导出 | 无 API 时首页指标显示 `—`，页面仍可打开 |
+| Web | `src/server.py` | 两页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
+| 页面 | `src/theme.py` / `src/web_pages.py` | 设计系统、问答页、知识库页 | 无 API 时页面仍可打开 |
+| 笔记 | `src/notes/` | Note v1 存储、规则摘要、CLI（文件为真相） | 索引坏/缺 → 扫盘重建；front matter 坏 → `external` 降级 |
 
 ## 5. 失败处理矩阵
 

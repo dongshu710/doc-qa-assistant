@@ -105,11 +105,6 @@ async function overflow(page) {
 
 const PAGES = [
   {
-    path: '/', name: '首页',
-    ready: ['.hero h1', 'a[href="/ask"]'],
-    titleHint: '文档问答',
-  },
-  {
     path: '/ask', name: '问答页',
     ready: ['#q', '#send', '#exportMd', '.composer'],
     titleHint: '问答',
@@ -122,18 +117,6 @@ const PAGES = [
       await page.waitForFunction(() => {
         const el = document.getElementById('kbVersion');
         return el && el.textContent && el.textContent !== '—';
-      }, null, { timeout: 15000 });
-    },
-  },
-  {
-    path: '/insights', name: '数据中心',
-    ready: ['#insShell', '#insSide', '.ins-nav a', '#p-overview'],
-    titleHint: '数据中心',
-    after: async (page) => {
-      await page.waitForFunction(() => {
-        const stamp = document.getElementById('stamp');
-        return stamp && !stamp.textContent.includes('加载中')
-          && document.querySelectorAll('#p-overview .kpi').length >= 4;
       }, null, { timeout: 15000 });
     },
   },
@@ -184,7 +167,7 @@ try {
     check(`${spec.name} 标题非空`, title.length > 0 && title.includes(spec.titleHint), title);
 
     const navCount = await page.locator('header.nav nav a').count();
-    check(`${spec.name} 导航 4 项`, navCount === 4, `nav=${navCount}`);
+    check(`${spec.name} 导航 2 项`, navCount === 2, `nav=${navCount}`);
 
     const wide = await overflow(page);
     check(`${spec.name} 1280px 无横向溢出`, wide.scroll <= wide.inner + 1,
@@ -200,57 +183,6 @@ try {
     check(`${spec.name} 无控制台错误`, consoleErrors.length === 0,
       consoleErrors.slice(0, 2).join(' | ').slice(0, 220));
   }
-
-  // ---------- 数据中心侧栏：收起不占位 / 状态持久 ----------
-  await page.goto(base + '/insights', { waitUntil: 'domcontentloaded' });
-  await page.evaluate(() => localStorage.setItem('ins_side_collapsed', '0'));
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#insShell');
-
-  const box = () => page.evaluate(() => {
-    const side = document.getElementById('insSide').getBoundingClientRect();
-    const main = document.querySelector('.ins-main').getBoundingClientRect();
-    return {
-      sideW: Math.round(side.width), sideH: Math.round(side.height),
-      mainW: Math.round(main.width),
-      collapsed: document.getElementById('insShell').classList.contains('collapsed'),
-      expanded: document.getElementById('sideToggle').getAttribute('aria-expanded'),
-    };
-  });
-
-  const wideExpanded = await box();
-  check('侧栏展开时不收起', !wideExpanded.collapsed, JSON.stringify(wideExpanded));
-  check('侧栏展开时占用横向空间', wideExpanded.sideW > 150, `sideW=${wideExpanded.sideW}`);
-
-  await page.click('#sideToggle');
-  await page.waitForTimeout(400);
-  const wideCollapsed = await box();
-  check('侧栏收起后宽度归零', wideCollapsed.sideW === 0, `sideW=${wideCollapsed.sideW}`);
-  check('侧栏收起后主内容变宽', wideCollapsed.mainW > wideExpanded.mainW,
-    `${wideExpanded.mainW} → ${wideCollapsed.mainW}`);
-  check('收起时 aria-expanded 同步', wideCollapsed.expanded === 'false', wideCollapsed.expanded);
-  check('收起后无横向溢出', (await overflow(page)).scroll <= 1281);
-
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#insShell');
-  check('收起状态刷新后保持', (await box()).collapsed);
-
-  await page.click('#sideToggle');
-  await page.waitForTimeout(400);
-  check('再次点击可展开', !(await box()).collapsed);
-
-  // 窄屏：侧栏改成纵向折叠，收起后高度归零
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(200);
-  await page.click('#sideToggle');
-  await page.waitForTimeout(400);
-  const narrowCollapsed = await box();
-  check('窄屏收起后高度归零', narrowCollapsed.sideH === 0, `sideH=${narrowCollapsed.sideH}`);
-  check('窄屏收起后无横向溢出', (await overflow(page)).scroll <= 391);
-  await page.click('#sideToggle');
-  await page.waitForTimeout(400);
-  check('窄屏展开后侧栏恢复高度', (await box()).sideH > 60);
-  await page.setViewportSize({ width: 1280, height: 900 });
 
   // ---------- 深色模式 ----------
   await page.goto(base + '/ask', { waitUntil: 'domcontentloaded' });

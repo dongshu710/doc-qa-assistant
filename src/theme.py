@@ -432,8 +432,7 @@ pre.cmd .c{color:#7d8db3;}
 
 
 def nav(active: str = "", links: bool = True) -> str:
-    items = [("home", "/", "首页"), ("ask", "/ask", "问答"), ("kb", "/kb", "知识库"),
-             ("insights", "/insights", "数据中心")]
+    items = [("ask", "/ask", "问答"), ("kb", "/kb", "知识库")]
     nav_html = ""
     if links:
         nav_html = "<nav>%s</nav>" % "".join(
@@ -457,8 +456,7 @@ def nav(active: str = "", links: bool = True) -> str:
 
 def footer(links: bool = True) -> str:
     nav_links = (
-        '<div class="foot-links"><a href="/">首页</a><a href="/ask">问答</a>'
-        '<a href="/kb">知识库</a><a href="/insights">数据中心</a></div>'
+        '<div class="foot-links"><a href="/ask">问答</a><a href="/kb">知识库</a></div>'
         if links else '<div class="foot-links"><span>独立导出 · 离线可看</span></div>'
     )
     return (

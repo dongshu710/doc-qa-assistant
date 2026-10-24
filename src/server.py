@@ -1,14 +1,14 @@
-"""最小可用 Web 服务：四页（首页 / 问答 / 知识库 / 数据中心）+ HTTP API。
+"""最小可用 Web 服务：两页（问答 / 知识库）+ HTTP API。
 
   python -m src.server --port 8000
 
 路由：
-  GET  /                 首页
+  GET  /                 302 → /ask（只保留问答与知识库两页）
   GET  /ask              问答（流式输出/引用原文/多轮追问/反馈）
   GET  /kb               知识库（上传/检索/出题/删除）
-  GET  /insights         数据中心（概览/质量/用例/反馈/日志/汇报，可收起侧栏）
-  GET  /dashboard        302 → /insights#p-overview（旧入口）
-  GET  /report           302 → /insights#p-report（旧入口）
+  GET  /insights         302 → /ask（旧入口，已下线）
+  GET  /dashboard        302 → /ask（旧入口，已下线）
+  GET  /report           302 → /ask（旧入口，已下线）
   GET  /api/health       端点 / 模型 / 检索详情 / 知识库版本 / 防护状态 / 索引重建状态
   GET  /openapi.json     OpenAPI 3.0 契约（含鉴权方案与检索配置）
   GET  /metrics          Prometheus 文本指标
@@ -64,15 +64,12 @@ from . import casegen, evaluator, ingest, jsonl, kbstore, suggest
 from .auth import ApiKeyStore
 from .config import load_settings
 from .guards import Guards
-from .insights import render as render_insights
 from .metrics import summarize
 from .metrics_exporter import Metrics
 from .openapi import build_spec
 from .pipeline import RAGPipeline
-from .report import collect as collect_report
-from .report import render as render_report
 from .version import __version__
-from .web_pages import ASK_HTML, HOME_HTML, KB_HTML
+from .web_pages import ASK_HTML, KB_HTML
 
 MAX_BODY_BYTES = 8192
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
@@ -396,27 +393,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             path = parsed.path
             qs = parse_qs(parsed.query)
 
-            if path in ("/", "/index.html"):
-                self._send(200, HOME_HTML, "text/html; charset=utf-8")
+            if path in ("/", "/index.html", "/insights", "/dashboard", "/report"):
+                # 只留问答与知识库两页，旧入口统一回落到问答页，收藏夹不会 404
+                self._redirect("/ask")
             elif path == "/ask":
                 self._send(200, ASK_HTML, "text/html; charset=utf-8")
             elif path == "/kb":
                 self._send(200, KB_HTML, "text/html; charset=utf-8")
-            elif path == "/insights":
-                kb_status = store.status() if store is not None else None
-                self._send(200, render_insights(collect_report(pipe), kb_status),
-                           "text/html; charset=utf-8")
-            elif path in ("/dashboard", "/report"):
-                target = "/insights#p-report" if path == "/report" else "/insights#p-overview"
-                self._redirect(target)
-            elif path == "/api/report/export":
-                html = render_report(collect_report(pipe), standalone=True).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Disposition", 'attachment; filename="report.html"')
-                self.send_header("Content-Length", str(len(html)))
-                self.end_headers()
-                self.wfile.write(html)
             elif path == "/api/l3":
                 l3_path = os.path.join(project_root, "tests", "report_l3.json")
                 if not os.path.exists(l3_path):

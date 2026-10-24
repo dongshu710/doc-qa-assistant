@@ -16,15 +16,14 @@
 [评测方法](docs/EVALUATION.md) ·
 [安全边界](docs/SECURITY.md)
 
-| 首页 | 问答（带引用） |
+| 问答（带引用） | 知识库（文档上传） |
 |---|---|
-| ![](docs/screenshots/home.png) | ![](docs/screenshots/ask.png) |
-| **知识库** | **数据中心（侧栏展开）** |
-| ![](docs/screenshots/kb.png) | ![](docs/screenshots/insights.png) |
-| **数据中心（侧栏收起，主内容占满）** | **关键词命中（本地直出）** |
-| ![](docs/screenshots/insights-collapsed.png) | ![](docs/screenshots/keyword.png) |
+| ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
+| **关键词命中（本地直出，不调用模型）** | **笔记文件（Markdown，可直接编辑）** |
+| ![](docs/screenshots/keyword.png) | 见 [docs/examples/note-example.md](docs/examples/note-example.md) |
 
-> 截图使用演示知识库与离线抽取模式；最后一图是上传「小a的生活习惯」后命中「香菜」的本地直出，未调用模型。
+> v1.10.0 起只保留这两页；对话的整理与保存走 `src/notes`（CLI / 后续 HTTP、MCP），不再占用页面。
+> 截图使用演示知识库与离线抽取模式，最后一图是一篇真实生成的笔记文件。
 
 ## 0. 定位：这是「文档问答助手」，不是只服务金融
 
@@ -122,13 +121,13 @@ doc-qa-assistant/
 │  ├─ jsonl.py                 # JSONL 轮转与尾读
 │  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
-│  ├─ server.py                # Web 服务（四页原型 + API）
+│  ├─ server.py                # Web 服务（两页原型 + API）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
 │  ├─ openapi.py               # OpenAPI 3.0 契约（18 个路径）
 │  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），各页共用
-│  ├─ web_pages.py             # 页面模板（首页/问答/知识库）+ 数据中心面板片段
-│  ├─ insights.py              # 数据中心：可收起侧栏 + 六个模块 + 汇报面板
-│  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出
+│  ├─ web_pages.py             # 页面模板（问答 / 知识库）
+│  ├─ notes/                   # 智能体笔记：存储内核、规则摘要、CLI（零依赖）
+│  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出（CLI 用）
 │  ├─ version.py               # 版本号（读根目录 VERSION）
 │  └─ cli.py                   # 命令行入口
 ├─ docs/
@@ -275,24 +274,22 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 
 embedding 与索引相关变量见 [4.6](#46-真-embedding-与向量索引可选接口已隔离)，多实例变量见 [4.7](#47-多实例redis-共享状态--集中日志与指标)，版本库变量见 [4.8](#48-知识库版本审批与文档级回滚)。
 
-## 4.1 原型（四页 + HTTP API）
+## 4.1 原型（两页 + HTTP API）
 
 ```bash
 python -m src.server --port 8000
-# 浏览器打开 http://127.0.0.1:8000
+# 浏览器打开 http://127.0.0.1:8000 → 自动跳到 /ask
 ```
 
-页面与使用路径的对应：
+只保留两个页面：
 
 | 路由 | 页面 | 覆盖的使用环节 |
 |---|---|---|
-| `/` | 首页 / 入口 | ① |
 | `/ask` | 问答：按文档生成的示例问题 → 答案 + 引用 → 未命中提示 + 相似问题 → 反馈 | ②③④⑤⑥ |
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
-| `/insights` | 数据中心：可收起侧栏切换 概览 / 质量 / 用例 / 反馈 / 日志 / 汇报 六个模块 | ⑦ + 汇报材料 |
 
-`/dashboard` 与 `/report` 保留为 302 入口（分别指向 `/insights#p-overview`、`/insights#p-report`），旧链接不断。
-侧栏展开 210px、收起归零（`localStorage` 记忆，窄屏改为纵向折叠）；收起后主内容拿满整行，`prefers-reduced-motion` 时不做宽度过渡。
+`/`、`/index.html`、`/insights`、`/dashboard`、`/report` 一律 302 到 `/ask`——旧链接不会 404，
+但页面上只剩问答与知识库两项导航。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.12](#412-智能体笔记对话--个人笔记v1100)。
 
 页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。
@@ -897,6 +894,123 @@ node tests/e2e_pages.mjs       # 没装浏览器会明确 SKIP
 
 **取舍**：E2E 依赖本机 Edge/Chrome 或 CI 安装的 Chromium；没有浏览器时跳过而不是失败，
 避免「零依赖」项目因为测试工具装不上而红。CI 单独一个 job 安装 Chromium 后强制执行。
+
+## 4.12 智能体笔记：对话 → 个人笔记（v1.10.0）
+
+目标：让任意智能体把对话里**值得留下的那几段**整理成一篇结构化笔记，落到你自己的目录，
+人能离线看改，下一个智能体直接读同一份文件——内容在智能体之间流动，靠的是文件而不是某个平台。
+
+### 存储结构（文件是唯一真相）
+
+```
+NOTE_HOME（默认 ~/agent-notes，可用环境变量或 --home 覆盖）
+├─ notes/2026/10/20261024-205142-5fc510.md   # 一篇笔记 = 一个文件，路径即时间线
+├─ assets/<id>/                              # 附件（大代码块等）
+├─ index/notes.jsonl                         # 派生索引，删了会自动重建
+├─ exports/                                  # 离线导出（规划中）
+├─ .trash/                                   # 软删除，可找回
+└─ AGENTS.md                                 # 给智能体读的接入说明（下一步）
+```
+
+一篇笔记长这样（front matter 固定字段 + 六段正文，缺段省略，多出的小节原样保留）：
+
+```markdown
+---
+schema: note/v1
+id: 20261024-205142-5fc510
+title: 出口退税申报口径确认
+created: 2026-10-24T20:51:42+08:00
+updated: 2026-10-24T20:51:42+08:00
+kind: decision
+status: draft
+tags: [税务, 出口退税]
+source:
+  agent: claude-desktop
+  messages: 4
+digest: rule
+hash: sha256:ec4a19c1…
+---
+
+## 摘要
+根据办法第十二条，退税率按出口货物适用税率执行，2026-11-01 起统一按 13% 执行；决定由财务部在每月 5 日前复核。
+
+## 决策
+- 决定由财务部在每月 5 日前复核。
+
+## 待办
+- [ ] 财务部复核申报表；
+
+## 引用
+- https://example.com/policy
+```
+
+三个设计点：
+
+- **索引只是缓存**：`index/notes.jsonl` 删掉、改坏、被人清空都不丢数据；`notes list` 会扫盘重建，条数以磁盘 `.md` 为准。
+- **手改优先**：你用任意编辑器改标题、加小节、删段落，下次读就是新内容（按 `mtime+size` 自动刷新索引）；front matter 写坏也不会报错，会降级成 `external: true` 继续能读。
+- **重复内容不重复落盘**：`hash` 是选中内容的指纹，同一段对话再存一次返回 `duplicate_of`，不生成第二个文件。
+
+### 命令行（任何只能执行命令的智能体都能用）
+
+```bash
+export PYTHONPATH=$PWD
+
+# 预览（不写盘）：先看整理成什么样
+python -m src.notes save --from conv.json --draft
+
+# 保存，只存第 2-4 条消息
+python -m src.notes save --from conv.json --select-range 2-4 \
+  --kind decision --tags 税务,出口退税
+
+# 只存含某关键词的消息；保留原文
+python -m src.notes save --from conv.json --select-keyword 备案 --keep-raw
+
+# 查询
+python -m src.notes list --tag 税务 --since 2026-10-01 --limit 20
+python -m src.notes get <id> --json          # 给智能体读
+python -m src.notes stats                    # 数量与标签分布
+python -m src.notes rebuild                  # 索引丢了/外部文件多时重建
+```
+
+`conv.json` 就是一段对话：
+
+```json
+{
+  "messages": [
+    {"role": "user", "text": "出口退税的退税率按什么标准执行？"},
+    {"role": "assistant", "text": "根据办法第十二条…决定由财务部在每月 5 日前复核。"}
+  ],
+  "select": {"mode": "all"},
+  "hint": {"title": "出口退税申报口径确认", "kind": "decision", "tags": ["税务"]},
+  "source": {"agent": "claude-desktop", "session": "sess_1"}
+}
+```
+
+`select.mode` 支持 `all` / `indices`（下标数组，从 1 开始）/ `range`（`start`、`end`）/ `keyword`，
+另有 `max_chars` 限制单次入库长度（默认 20000 字，超出会截断并在响应里标 `truncated`）。
+
+### 不依赖大模型
+
+`digest: rule` 是默认引擎：分句、按数字/结论词/位置打分、归类到摘要/要点/决策/待办/引用，
+**不联网、不花钱、永不抛异常**。没有 Key 也能完整跑通保存 → 读取 → 再被其他智能体读取。
+大模型摘要（`DIGEST=llm`）是下一里程碑，接入后失败会回落到规则引擎并标 `llm-fallback`。
+
+### 实测（本机，1000 篇笔记）
+
+| 指标 | 数值 |
+|---|---|
+| 保存 P50 / P95 | 12.0 ms / 19.0 ms |
+| 列出 1000 篇 | 20.9 ms |
+| 索引全量重建 1000 篇 | 2.0 s（4 线程并行读取；单线程 14.7 s） |
+| 单篇体积 | 约 600 B |
+| 第三方依赖 | 0 |
+
+### 已验证的边界
+
+- 空输入、201 条消息、下标越界、非法 `select.mode`、`digest=llm` 都会返回可读错误（退出码 2），不会抛栈。
+- front matter 半截、缺字段、完全缺失都能读；`external: true` 标明这是外部文件。
+- 同一目录并发写有目录锁（默认等 5 秒），超时返回明确错误。
+- 提示注入、HTML/脚本标签、emoji 与零宽字符一律当纯文本处理，不执行、不解析。
 
 ## 5. 评测
 
