@@ -112,7 +112,7 @@ python tests/eval_retrieval.py --expand --sleep 1 --out tests/report_retrieval.j
 ### 单条 trace 怎么看
 
 每次请求写一行 `logs/trace.jsonl`，包含 query、behavior、mode、latency、retrieval_score、citations、degraded。
-看板 `/dashboard` 直接展示最近 20 条；`src/metrics.py` 负责聚合 P50/P95、行为分布、降级率与引用覆盖率。
+数据中心 `/insights#p-trace` 直接展示最近 20 条；`src/metrics.py` 负责聚合 P50/P95、行为分布、降级率与引用覆盖率。
 
 ## 4. 口径与局限
 

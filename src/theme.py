@@ -39,6 +39,7 @@ ICON = {
     "target": '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
     "moon": '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+    "side": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
 }
 
 
@@ -432,7 +433,7 @@ pre.cmd .c{color:#7d8db3;}
 
 def nav(active: str = "", links: bool = True) -> str:
     items = [("home", "/", "首页"), ("ask", "/ask", "问答"), ("kb", "/kb", "知识库"),
-             ("dash", "/dashboard", "看板"), ("report", "/report", "汇报")]
+             ("insights", "/insights", "数据中心")]
     nav_html = ""
     if links:
         nav_html = "<nav>%s</nav>" % "".join(
@@ -457,7 +458,7 @@ def nav(active: str = "", links: bool = True) -> str:
 def footer(links: bool = True) -> str:
     nav_links = (
         '<div class="foot-links"><a href="/">首页</a><a href="/ask">问答</a>'
-        '<a href="/kb">知识库</a><a href="/dashboard">看板</a><a href="/report">汇报</a></div>'
+        '<a href="/kb">知识库</a><a href="/insights">数据中心</a></div>'
         if links else '<div class="foot-links"><span>独立导出 · 离线可看</span></div>'
     )
     return (
@@ -499,6 +500,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"{THEME_HEAD}"
         f'<meta name="color-scheme" content="light dark">'
+        '<link rel="icon" href="data:,">'
         f"<title>{title}</title><style>{BASE_CSS}{css}</style></head><body>"
         f"{nav(active)}{body}{footer()}"
         f"<div id=\"toasts\"></div><script>{script}</script><script>{THEME_JS}</script></body></html>"

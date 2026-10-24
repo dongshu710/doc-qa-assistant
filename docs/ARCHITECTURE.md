@@ -20,7 +20,7 @@
 
 ```mermaid
 flowchart LR
-  B[浏览器<br/>首页 / 问答 / 知识库 / 看板 / 汇报] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
+  B[浏览器<br/>首页 / 问答 / 知识库 / 数据中心] -->|HTTP JSON| S[src.server<br/>127.0.0.1:8000]
   S --> P[RAGPipeline]
   P --> G[输入校验<br/>归一化 / 注入 / 越权 / 合规]
   G --> KW{关键词命中<br/>清单 / 标签条目}
@@ -38,7 +38,7 @@ flowchart LR
   KO --> O
   O --> T[(logs/trace.jsonl)]
   O --> PM[/metrics<br/>Prometheus/]
-  T --> D[评测看板 / 汇报页]
+  T --> D[数据中心<br/>侧栏切换六模块]
   K[(data/kb/versions/<v>/files<br/>md / txt)] --> R
   K -.-> IX[(embedding 索引<br/>manifest: model/dim/fingerprint)]
   IX -.-> R
@@ -107,8 +107,8 @@ sequenceDiagram
 | 指标 | `src/metrics.py` | 从 trace 聚合 P50/P95、行为分布、降级率 | 无 trace → 返回空指标 |
 | 文档解析 | `src/pdf_text.py` / `src/docx_text.py` | 纯标准库解析 PDF / DOCX | 扫描件 / 加密 / 假后缀 → 4xx 明确报错 |
 | 评测 | `src/evaluator.py` | L1 断言内核，CLI 与服务端共用 | 用例引用文档已删 → skip，不算失败 |
-| Web | `src/server.py` | 五页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
-| 页面 | `src/theme.py` / `src/web_pages.py` / `src/report.py` | 设计系统、五页、独立汇报导出 | 无 API 时首页指标显示 `—`，页面仍可打开 |
+| Web | `src/server.py` | 四页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
+| 页面 | `src/theme.py` / `src/web_pages.py` / `src/insights.py` / `src/report.py` | 设计系统、四页、可收起侧栏的数据中心、独立汇报导出 | 无 API 时首页指标显示 `—`，页面仍可打开 |
 
 ## 5. 失败处理矩阵
 
@@ -140,7 +140,7 @@ sequenceDiagram
 ## 6. 扩展点
 
 1. **换领域**：`APP_PROFILE=generic` 去掉金融合规护栏；或新增 profile（提示词 + 拒答规则）。
-2. **换语料**：把文档放进 `data/knowledge/`，或在看板拖拽上传；上传后自动重建索引。
+2. **换语料**：把文档放进 `data/knowledge/`，或在知识库页拖拽上传；上传后自动重建索引。
 3. **换检索**：`RETRIEVAL=embedding|vector|bm25|hybrid`；`build_retriever` 是唯一工厂。embedding 端点换模型只改环境变量，索引按 manifest 自动重建。
 4. **换通道**：任何 OpenAI 兼容网关，改 `base_url` / `model` / Key 环境变量即可。
 5. **多实例**：`REDIS_URL` 共享限流/幂等/成本；`/metrics` 交给 Prometheus；审计 `LOG_SINK=stdout` 交给 Fluent Bit。

@@ -1,4 +1,4 @@
-"""最小可用 Web 服务：五页原型（首页 / 问答 / 知识库 / 评测看板 / 汇报）+ HTTP API。
+"""最小可用 Web 服务：四页（首页 / 问答 / 知识库 / 数据中心）+ HTTP API。
 
   python -m src.server --port 8000
 
@@ -6,7 +6,9 @@
   GET  /                 首页
   GET  /ask              问答（流式输出/引用原文/多轮追问/反馈）
   GET  /kb               知识库（上传/检索/出题/删除）
-  GET  /dashboard        评测看板（指标/语义质量/用例/反馈/最近对话）
+  GET  /insights         数据中心（概览/质量/用例/反馈/日志/汇报，可收起侧栏）
+  GET  /dashboard        302 → /insights#p-overview（旧入口）
+  GET  /report           302 → /insights#p-report（旧入口）
   GET  /api/health       端点 / 模型 / 检索详情 / 知识库版本 / 防护状态 / 索引重建状态
   GET  /openapi.json     OpenAPI 3.0 契约（含鉴权方案与检索配置）
   GET  /metrics          Prometheus 文本指标
@@ -62,6 +64,7 @@ from . import casegen, evaluator, ingest, jsonl, kbstore, suggest
 from .auth import ApiKeyStore
 from .config import load_settings
 from .guards import Guards
+from .insights import render as render_insights
 from .metrics import summarize
 from .metrics_exporter import Metrics
 from .openapi import build_spec
@@ -69,7 +72,7 @@ from .pipeline import RAGPipeline
 from .report import collect as collect_report
 from .report import render as render_report
 from .version import __version__
-from .web_pages import ASK_HTML, DASHBOARD_HTML, HOME_HTML, KB_HTML
+from .web_pages import ASK_HTML, HOME_HTML, KB_HTML
 
 MAX_BODY_BYTES = 8192
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
@@ -241,6 +244,14 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers,
                        cache="no-store")
 
+        def _redirect(self, location: str, code: int = 302) -> None:
+            """旧页面入口保留 302：书签与外部链接不 404，但不重复渲染两份内容。"""
+            self.send_response(code)
+            self.send_header("Location", location)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
         def _client(self) -> str:
             return self.client_address[0] if self.client_address else "unknown"
 
@@ -391,10 +402,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._send(200, ASK_HTML, "text/html; charset=utf-8")
             elif path == "/kb":
                 self._send(200, KB_HTML, "text/html; charset=utf-8")
-            elif path == "/dashboard":
-                self._send(200, DASHBOARD_HTML, "text/html; charset=utf-8")
-            elif path == "/report":
-                self._send(200, render_report(collect_report(pipe)), "text/html; charset=utf-8")
+            elif path == "/insights":
+                kb_status = store.status() if store is not None else None
+                self._send(200, render_insights(collect_report(pipe), kb_status),
+                           "text/html; charset=utf-8")
+            elif path in ("/dashboard", "/report"):
+                target = "/insights#p-report" if path == "/report" else "/insights#p-overview"
+                self._redirect(target)
             elif path == "/api/report/export":
                 html = render_report(collect_report(pipe), standalone=True).encode("utf-8")
                 self.send_response(200)

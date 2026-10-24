@@ -19,10 +19,10 @@
 | 首页 | 问答（带引用） |
 |---|---|
 | ![](docs/screenshots/home.png) | ![](docs/screenshots/ask.png) |
-| **知识库** | **评测看板** |
-| ![](docs/screenshots/kb.png) | ![](docs/screenshots/dashboard.png) |
-| **汇报页（可独立导出）** | **关键词命中（本地直出）** |
-| ![](docs/screenshots/report.png) | ![](docs/screenshots/keyword.png) |
+| **知识库** | **数据中心（侧栏展开）** |
+| ![](docs/screenshots/kb.png) | ![](docs/screenshots/insights.png) |
+| **数据中心（侧栏收起，主内容占满）** | **关键词命中（本地直出）** |
+| ![](docs/screenshots/insights-collapsed.png) | ![](docs/screenshots/keyword.png) |
 
 > 截图使用演示知识库与离线抽取模式；最后一图是上传「小a的生活习惯」后命中「香菜」的本地直出，未调用模型。
 
@@ -122,12 +122,13 @@ doc-qa-assistant/
 │  ├─ jsonl.py                 # JSONL 轮转与尾读
 │  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
-│  ├─ server.py                # Web 服务（五页原型 + API）
+│  ├─ server.py                # Web 服务（四页原型 + API）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
 │  ├─ openapi.py               # OpenAPI 3.0 契约（18 个路径）
-│  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），五页共用
-│  ├─ web_pages.py             # 页面模板（首页/问答/知识库/看板）
-│  ├─ report.py                # 汇报页 + 独立 HTML 导出
+│  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），各页共用
+│  ├─ web_pages.py             # 页面模板（首页/问答/知识库）+ 数据中心面板片段
+│  ├─ insights.py              # 数据中心：可收起侧栏 + 六个模块 + 汇报面板
+│  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出
 │  ├─ version.py               # 版本号（读根目录 VERSION）
 │  └─ cli.py                   # 命令行入口
 ├─ docs/
@@ -135,7 +136,7 @@ doc-qa-assistant/
 │  ├─ EVALUATION.md            # 数据集、口径、结果与局限
 │  ├─ SECURITY.md              # 威胁模型与已知缺口
 │  ├─ RELEASE.md               # 打包、验证、发布流程
-│  └─ screenshots/             # README 用的五页截图
+│  └─ screenshots/             # README 用的页面截图
 ├─ tools/
 │  ├─ build_release.py         # 构建可下载的 zip + SHA256
 │  ├─ keyword_demo.py          # 小a场景演示：上传→关键词→命中→本地输出
@@ -170,7 +171,7 @@ doc-qa-assistant/
 │  ├─ test_report_cache.py      # 汇报缓存命中 / 失效 / TTL
 │  ├─ test_kb_hardlink.py       # 版本硬链接 / 保留 N 版 / 回退复制
 │  ├─ test_auth_openapi.py      # API Key 401 / 两种携带方式 / OpenAPI 契约
-│  ├─ e2e_pages.mjs             # Playwright 五页 E2E（开发期依赖）
+│  ├─ e2e_pages.mjs             # Playwright 四页 E2E + 侧栏收起（开发期依赖）
 │  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
 │  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
@@ -274,7 +275,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 
 embedding 与索引相关变量见 [4.6](#46-真-embedding-与向量索引可选接口已隔离)，多实例变量见 [4.7](#47-多实例redis-共享状态--集中日志与指标)，版本库变量见 [4.8](#48-知识库版本审批与文档级回滚)。
 
-## 4.1 原型（五页 + HTTP API）
+## 4.1 原型（四页 + HTTP API）
 
 ```bash
 python -m src.server --port 8000
@@ -288,8 +289,10 @@ python -m src.server --port 8000
 | `/` | 首页 / 入口 | ① |
 | `/ask` | 问答：按文档生成的示例问题 → 答案 + 引用 → 未命中提示 + 相似问题 → 反馈 | ②③④⑤⑥ |
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
-| `/dashboard` | 评测看板：概览 KPI / 行为与生成模式 / 语义质量 L3 / 用例运行 / 反馈 / 对话日志 | ⑦ |
-| `/report` | 项目汇报：关键指标 / 功能 / 链路闸门 / 评测结果 / 生产控制 / 怎么跑 | 汇报材料 |
+| `/insights` | 数据中心：可收起侧栏切换 概览 / 质量 / 用例 / 反馈 / 日志 / 汇报 六个模块 | ⑦ + 汇报材料 |
+
+`/dashboard` 与 `/report` 保留为 302 入口（分别指向 `/insights#p-overview`、`/insights#p-report`），旧链接不断。
+侧栏展开 210px、收起归零（`localStorage` 记忆，窄屏改为纵向折叠）；收起后主内容拿满整行，`prefers-reduced-motion` 时不做宽度过渡。
 
 页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。
@@ -877,11 +880,11 @@ API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥
 - `GET /openapi.json` 输出 OpenAPI 3.0.3：18 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
   `x-retrieval` / `x-model`，可直接导入 Postman / Apifox / Swagger UI。
 
-### 五页 Playwright E2E
+### 四页 Playwright E2E
 
 `tests/e2e_pages.mjs` 会自己起服务（随机端口、离线模式），逐页检查：
 
-- HTTP 200、标题、关键选择器、5 项导航、数据加载完成；
+- HTTP 200、标题、关键选择器、4 项导航、数据加载完成；
 - 1280px 与 390px 都没有横向溢出；
 - 控制台无报错（过滤 favicon 等噪声）；
 - 深色模式切换生效、刷新后保持，卡片不再是白底；
@@ -1015,7 +1018,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 6. **生产控制**：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚；多实例状态可切 Redis。
 7. **真向量检索**：OpenAI 兼容 embedding（bge 同协议）+ FAISS / NumPy / 纯 Python 三档索引，manifest 记录模型/维度/指纹。
 8. **知识库版本化**：版本目录、审批流、按文档粒度回滚，版本只增不改；未变更文件硬链接，保留最近 N 版。
-9. **界面与可达性**：五页统一设计系统、深色模式、减动效、12px 字号下限与 AA 对比度；Playwright 五页 E2E 守住加载、溢出与控制台错误。
+9. **界面与可达性**：四页统一设计系统、深色模式、减动效、12px 字号下限与 AA 对比度；Playwright 四页 E2E 守住加载、溢出与控制台错误与侧栏收起不占位。
 10. **开放接口**：可选 API Key（按 Key 限流与计成本）+ `/openapi.json`，可直接生成客户端或导入调试工具。
 
 可继续扩展：

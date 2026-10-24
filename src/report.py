@@ -528,7 +528,7 @@ def render(data: dict, standalone: bool = False) -> str:
         f'<div class="actions"><a class="btn" href="/ask">去试真实问答</a>{download}'
         '<a class="btn ghost2" href="/dashboard">返回看板</a></div>'
     )
-    header = nav("report", links=not standalone)
+    header = nav("insights", links=not standalone)
     if standalone:
         header = header.replace('href="/"', 'href="#"')
 
@@ -536,6 +536,7 @@ def render(data: dict, standalone: bool = False) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {THEME_HEAD}
 <meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:,">
 <title>项目汇报 · {BRAND}</title><style>{BASE_CSS}{REPORT_CSS}</style></head>
 <body>
 {header}

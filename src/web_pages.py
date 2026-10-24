@@ -1563,39 +1563,14 @@ DASH_CSS = """
 }
 """
 
-DASHBOARD_BODY = """
-<main class="wrap">
-  <div class="page-head">
-    <div>
-      <div class="eyebrow">Operations</div>
-      <h1>评测看板</h1>
-      <p class="sub">运行指标与评测结果，实时聚合。</p>
-    </div>
-    <div class="head-actions">
-      <span class="pill" id="stamp">加载中…</span>
-      <a class="btn ghost sm" href="/report">汇报页</a>
-      <button class="btn sm" id="refresh" type="button">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
-        刷新
-      </button>
-    </div>
-  </div>
-
-  <nav class="tabs" id="tabs">
-    <a href="#p-overview" class="active">概览</a>
-    <a href="#p-quality">语义质量</a>
-    <a href="#p-cases">评测用例</a>
-    <a href="#p-feedback">反馈</a>
-    <a href="#p-trace">对话日志</a>
-  </nav>
-
-  <section class="panel" id="p-overview">
+DASHBOARD_PANELS = """
+<section class="panel" id="p-overview">
     <div class="kpis" id="kpis"></div>
     <div class="grid2">
       <div class="card">
         <div class="card-head">
           <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>
-          <h3>行为分布</h3><span class="hint">按请求计的最终动作</span>
+          <h3>行为分布</h3><span class="hint">按请求计</span>
         </div>
         <div id="behavior"></div>
       </div>
@@ -1610,7 +1585,7 @@ DASHBOARD_BODY = """
     <div class="card" style="margin-top:14px">
       <div class="card-head">
         <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-2.9 7.4-7 9-4.1-1.6-7-4.6-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
-        <h3>生产防护</h3><span class="hint">/api/health 实时状态</span>
+        <h3>生产防护</h3><span class="hint">实时状态</span>
       </div>
       <div class="guard-row" id="guard"></div>
     </div>
@@ -1619,7 +1594,7 @@ DASHBOARD_BODY = """
   <section class="panel card" id="p-quality">
     <div class="card-head">
       <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-2.9 7.4-7 9-4.1-1.6-7-4.6-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
-      <h3>语义质量 L3</h3><span class="hint">裁判模型评分，非确定性</span>
+      <h3>语义质量 L3</h3><span class="hint">裁判评分</span>
       <span class="spacer"></span><span class="pill brand" id="l3Judge">—</span>
     </div>
     <div id="l3"></div>
@@ -1628,7 +1603,7 @@ DASHBOARD_BODY = """
   <section class="panel card" id="p-cases">
     <div class="card-head">
       <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>
-      <h3>评测用例</h3><span class="hint">L1 确定性断言 · 基础 + 反馈 + 文档</span>
+      <h3>评测用例</h3><span class="hint">L1 断言</span>
       <span class="spacer"></span>
       <button class="btn sm" id="runDocs" type="button">运行文档用例</button>
       <button class="btn ghost sm" id="runAll" type="button">运行全部</button>
@@ -1640,13 +1615,13 @@ DASHBOARD_BODY = """
         <tbody id="caseBody"></tbody>
       </table>
     </div>
-    <div class="run-state" id="runMsg">文档用例可由知识库里的「出题」自动生成，也可由差评一键转换。</div>
+    <div class="run-state" id="runMsg">上传文档可自动出题；差评可转用例。</div>
   </section>
 
   <section class="panel card" id="p-feedback">
     <div class="card-head">
       <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M10 21h4"/></svg>
-      <h3>反馈 / badcase</h3><span class="hint">差评可一键转成回归用例</span>
+      <h3>反馈 / badcase</h3><span class="hint">差评转用例</span>
       <span class="spacer"></span><span class="pill" id="fbCount">—</span>
     </div>
     <div class="table-wrap">
@@ -1660,7 +1635,7 @@ DASHBOARD_BODY = """
   <section class="panel card" id="p-trace">
     <div class="card-head">
       <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></svg>
-      <h3>最近对话</h3><span class="hint">最近 20 条 trace</span>
+      <h3>最近对话</h3><span class="hint">最近 20 条</span>
       <span class="spacer"></span><a class="pill brand" href="/ask">去问答页</a>
     </div>
     <div class="table-wrap">
@@ -1670,12 +1645,13 @@ DASHBOARD_BODY = """
       </table>
     </div>
   </section>
-</main>
+"""
 
+DASHBOARD_MODAL = """
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
   <div class="modal-card">
     <h3 id="modalTitle">从反馈生成评测用例</h3>
-    <p class="modal-sub" id="modalSub">把这条差评固化成回归用例，后续改动都会跑到它。</p>
+    <p class="modal-sub" id="modalSub">固化后进入回归集，后续改动都会跑到它。</p>
     <div class="field">
       <label for="mKeywords">期望答案包含的关键词</label>
       <input id="mKeywords" placeholder="逗号分隔，可留空">
@@ -1797,7 +1773,7 @@ function renderL3(l3){
     +'<div>样本 <b>'+(l3.answer_cases||0)+'</b> 条答案类 + <b>'+(l3.safety_cases||0)+'</b> 条拒答类；'
     +'编造告警 <b>'+((l3.hallucinations||[]).length)+'</b> 条。</div>'
     +'<div style="margin-top:8px">裁判消耗 '+(l3.total_tokens==null?'—':l3.total_tokens)+' tokens ｜ '
-    +'<a href="/report#s-eval">完整汇报与校准 →</a></div>'
+    +'<a href="/insights#p-quality">完整汇报与校准 →</a></div>'
     +'<div class="hint" style="margin-top:6px;font-size:12px">L1 是对抗零容忍的发布门禁；L3 用来发现「关键词对了但答案是编的」。</div>'
     +'</div></div>';
 }
@@ -1967,4 +1943,3 @@ window.addEventListener('hashchange',function(){ showPanel(location.hash); });
 loadAll().then(function(){ showPanel(location.hash||'#p-overview',false); });
 """
 
-DASHBOARD_HTML = shell("dash", "评测看板 · " + BRAND, DASHBOARD_BODY, DASHBOARD_SCRIPT, DASH_CSS)

@@ -34,12 +34,27 @@ try:
     print("examples:", examples)
 
     for page, needle in (("/", "有出处的答案"), ("/ask", "可以这样问"), ("/kb", "拖拽或点击上传"),
-                         ("/dashboard", "评测看板"),
-                         ("/report", "工程能力"), ("/report", "链路与闸门")):
+                         ("/insights", "数据中心"), ("/insights", "insSide"),
+                         ("/insights", "下载 HTML")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             html = resp.read().decode("utf-8")
         assert needle in html, page
     print("pages OK")
+
+    # 旧入口保留 302，收藏夹里的链接不能断
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+    for page, want in (("/dashboard", "/insights#p-overview"), ("/report", "/insights#p-report")):
+        try:
+            opener.open(f"http://127.0.0.1:{port}{page}", timeout=10)
+            raise AssertionError(f"{page} 未重定向")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 302, (page, exc.code)
+            assert exc.headers.get("Location") == want, (page, exc.headers.get("Location"))
+    print("legacy redirect OK")
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/l3", timeout=10) as resp:
         l3 = json.loads(resp.read().decode("utf-8"))

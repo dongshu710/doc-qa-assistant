@@ -42,7 +42,7 @@ curl -X POST http://127.0.0.1:8021/api/ask \
 ```
 
 期望：健康检查返回 `status=ok`、31 个知识块；问答返回 `behavior=answer` 且带引用。
-再打开 `/`、`/dashboard`、`/report` 确认页面可渲染。
+再打开 `/`、`/kb`、`/insights` 确认页面可渲染；`/dashboard`、`/report` 应 302 到 `/insights`。
 
 ## 4. 发布到 GitHub
 
