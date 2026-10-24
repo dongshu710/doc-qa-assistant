@@ -139,6 +139,7 @@ doc-qa-assistant/
 │  └─ screenshots/             # README 用的页面截图
 ├─ tools/
 │  ├─ build_release.py         # 构建可下载的 zip + SHA256
+│  ├─ publish_release.py       # 把 zip 发到 GitHub Release（复用已存凭据）
 │  ├─ keyword_demo.py          # 小a场景演示：上传→关键词→命中→本地输出
 │  └─ make_policy_pdfs.py      # 生成演示制度 PDF（fpdf2）
 ├─ tests/

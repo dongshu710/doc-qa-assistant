@@ -81,19 +81,29 @@ Topics：`rag` `llm` `document-qa` `python` `bm25` `evaluation` `llm-as-judge` `
 
 ### 创建 Release
 
-GitHub CLI：
+一条命令（推荐）：
 
 ```bash
-gh release create v1.4.0 \
-  dist/doc-qa-assistant-1.4.0.zip \
-  dist/SHA256SUMS.txt \
-  dist/report.html \
-  --title "v1.4.0 · 文档问答系统" \
-  --notes-file CHANGELOG.md
+python tools/build_release.py                    # 先出包
+python tools/publish_release.py --tag v1.12.0    # 建 Release + 传 zip，正文自动摘 CHANGELOG
 ```
 
-或通过 API：先 `POST /repos/{owner}/{repo}/releases` 创建 release，再向
-`https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=<file>` 上传资产。
+常用变体：
+
+```bash
+python tools/publish_release.py --all            # 补发所有已出包但还没建 Release 的版本
+python tools/publish_release.py --tag v1.12.0 --dry-run   # 只看要做什么，不改远端
+python tools/publish_release.py --tag v1.12.0 --no-asset  # 只同步正文
+```
+
+脚本行为：Release 正文取自 `CHANGELOG.md` 对应版本段落，附件是该版本 zip，正文末尾附
+sha256 与下载直链；重复执行只同步正文、跳过已存在的附件，幂等；发布后自动把版本号最高的
+Release 标为 latest（GitHub 默认把 latest 给最后创建的那个，批量补历史版本时会把新版挤下去，
+导致 `/releases/latest/download/` 404）。
+
+凭据：优先读 `GITHUB_TOKEN` / `GH_TOKEN`，没有就复用 git 凭据管理器里推代码的那份，不必另配。
+只有两个接口：`POST /repos/{owner}/{repo}/releases` 建 release，
+`POST https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=<file>` 传资产。
 
 ## 5. 发布后检查
 

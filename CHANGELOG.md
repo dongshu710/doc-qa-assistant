@@ -24,6 +24,8 @@
 - **`AGENTS.md`**：仓库根目录的接入说明；`NOTE_HOME` 首次初始化还会写一份同名说明，用户改过就不再覆盖。
 - **测试**：`test_notes_mcp`（31 项）、`test_notes_digest_llm`（25 项）、`test_notes_export`（26 项）、
   `tests/e2e_notes.mjs`（23 项，自启服务）；`test_server` 增加面板结构断言（用 HTMLParser 检查父子关系）。
+- **发布脚本**（`tools/publish_release.py`）：一条命令建 GitHub Release 并上传 zip，正文直接摘 CHANGELOG；
+  重复执行只同步正文、跳过已存在附件，发布后把最高版本标回 latest。凭据复用 git 已存的那份，不额外配令牌。
 
 ### 变更
 
