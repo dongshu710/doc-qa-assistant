@@ -10,7 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from . import digest_rule
+from . import digest_llm, digest_rule
 from .model import KINDS, STATUSES, Note, NoteError
 from .select import (MAX_CHARS_DEFAULT, Msg, SelectError, clip, fingerprint,
                      normalize, pick, render_transcript)
@@ -33,6 +33,7 @@ class ComposeResult:
     selected: list[Msg]
     truncated: bool
     markdown: str
+    meta: dict
 
 
 class NoteService:
@@ -40,6 +41,8 @@ class NoteService:
                  digest_mode: str | None = None):
         self.store = NoteStore(home, keep_raw=keep_raw)
         self.digest_mode = (digest_mode or os.environ.get("NOTE_DIGEST") or "rule").strip().lower()
+        # 注入点：测试与自定义部署可以换成自己的模型调用，不必改这里的分支
+        self.chat_call = None
 
     # ---- 组装 ----
 
@@ -65,14 +68,12 @@ class NoteService:
         mode = (digest_mode or payload.get("digest") or self.digest_mode or "rule").lower()
         if mode not in DIGEST_MODES:
             raise NoteError(f"未知的摘要模式：{mode}（可选 rule / auto / llm）")
-        if mode in ("llm", "auto"):
-            # 该分支属于下一里程碑：现在明确拒绝，不假装做过
-            raise NoteError("当前版本只内置规则摘要（DIGEST=rule），大模型摘要尚未接入")
 
         hint = payload.get("hint") or {}
         if not isinstance(hint, dict):
             raise NoteError("hint 必须是对象，例如 {\"title\":\"…\",\"tags\":[\"…\"]}")
-        data = digest_rule.digest(_clip_messages(selected), hint)
+        clipped = _clip_messages(selected)
+        data, meta = digest_llm.digest(clipped, hint, mode=mode, call=self.chat_call)
 
         raw_flag = self.store.keep_raw if keep_raw is None else keep_raw
         note = Note(
@@ -83,8 +84,11 @@ class NoteService:
             status=str(hint.get("status") or "draft"),
             tags=data["tags"],
             source=_source(payload.get("source"), len(selected)),
-            digest="rule",
+            digest=meta["engine"],
         )
+        if meta.get("fallback"):
+            # 回落必须留痕：以后看文件能知道这篇是规则引擎兜的，不是模型写的
+            note.extra["digest_fallback"] = meta["fallback"]
         for name, text in data["sections"].items():
             note.set_section(name, text)
         if truncated:
@@ -96,7 +100,7 @@ class NoteService:
         note.id = new_id()
         note.created = _now_text()
         note.updated = note.created
-        return ComposeResult(note, selected, truncated, note.to_markdown())
+        return ComposeResult(note, selected, truncated, note.to_markdown(), meta)
 
     def save(self, payload: dict, commit: bool = True, keep_raw: bool | None = None,
              digest_mode: str | None = None) -> dict:
@@ -137,6 +141,8 @@ class NoteService:
             "path": str(path) if path else None,
             "duplicate_of": duplicate_of,
             "raw_added": raw_added,
+            "digest_fallback": composed.meta.get("fallback"),
+            "digest_ms": composed.meta.get("ms"),
             "markdown": note.to_markdown() if duplicate_of else composed.markdown,
         }
 

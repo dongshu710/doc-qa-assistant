@@ -90,6 +90,15 @@ jobs:
       - name: 笔记 HTTP（CRUD / 乐观锁 / 删除确认 / 鉴权）
         run: python tests/test_notes_api.py
 
+      - name: 笔记 MCP（握手 / 7 工具 / 资源 / 协议错误）
+        run: python tests/test_notes_mcp.py
+
+      - name: 模型摘要（校验 / 回落 / 严格模式）
+        run: python tests/test_notes_digest_llm.py
+
+      - name: 离线导出（自包含 / 转义 / 原子写）
+        run: python tests/test_notes_export.py
+
       - name: 版本硬链接与保留策略
         run: python tests/test_kb_hardlink.py
 
@@ -175,5 +184,8 @@ jobs:
           npm install --no-save playwright
           npx playwright install --with-deps chromium
 
-      - name: 五页 E2E（加载 / 溢出 / 控制台 / 深色 / 减动效）
+      - name: 两页 E2E（加载 / 溢出 / 控制台 / 深色 / 减动效）
         run: node tests/e2e_pages.mjs
+
+      - name: 笔记 E2E（分区切换 / 编辑 / 409 / 导出 / 存为笔记）
+        run: node tests/e2e_notes.mjs

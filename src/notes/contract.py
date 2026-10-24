@@ -55,6 +55,8 @@ SAVE_SCHEMA = {
         },
         "keep_raw": {"type": "boolean", "default": False,
                      "description": "是否把对话原文写进「原文」段"},
+        "digest": {"type": "string", "enum": ["rule", "auto", "llm"], "default": "rule",
+                   "description": "摘要引擎；auto/llm 失败会回落 rule 并记 digest_fallback"},
         "commit": {"type": "boolean", "default": True,
                    "description": "false = 只预览不落盘"},
     },

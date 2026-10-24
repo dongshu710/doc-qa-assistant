@@ -166,6 +166,34 @@ _ASK_ART = (
     "</svg>"
 )
 
+ASK_CSS += """
+/* ---------- 存为笔记 ---------- */
+.fb-save{display:inline-flex;align-items:center;gap:5px;}
+.note-mask{position:fixed;inset:0;background:rgba(10,16,32,.42);z-index:60;backdrop-filter:blur(2px);}
+.note-dialog{position:fixed;z-index:61;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(560px,calc(100vw - 32px));max-height:min(660px,calc(100vh - 60px));display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-3);overflow:hidden;}
+.note-dlg-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+  border-bottom:1px solid var(--line);font-size:14px;}
+.note-dlg-head button{border:none;background:none;font-size:20px;line-height:1;color:var(--faint);cursor:pointer;padding:0 4px;}
+.note-dlg-head button:hover{color:var(--ink);}
+.note-dlg-body{padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:10px;}
+.nd-field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--faint);flex:1;}
+.nd-field input,.nd-field select{padding:8px 10px;border:1px solid var(--line-2);border-radius:8px;
+  font:13px/1.5 var(--font);color:var(--text);background:var(--surface);outline:none;}
+.nd-field input:focus,.nd-field select:focus{border-color:#b9c8f7;box-shadow:0 0 0 3px rgba(47,92,246,.07);}
+.nd-row{display:flex;gap:10px;flex-wrap:wrap;}
+.nd-preview{margin:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);
+  font:12px/1.75 var(--mono);color:var(--text);white-space:pre-wrap;word-break:break-word;
+  max-height:280px;overflow:auto;}
+.nd-hint{font-size:11.5px;color:var(--faint);line-height:1.6;}
+.note-dlg-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--line);}
+@media (max-width:520px){
+  .note-dialog{width:100vw;max-height:88vh;left:0;top:auto;bottom:0;transform:none;border-radius:16px 16px 0 0;}
+}
+"""
+
+
 ASK_BODY = """
 <main class="wrap ask-wrap">
   <section class="chat-shell">
@@ -200,6 +228,27 @@ ASK_BODY = """
     </div>
     <pre class="src-text" id="srcText"></pre>
   </aside>
+  <div class="note-mask" id="noteMask" hidden></div>
+  <div class="note-dialog" id="noteDialog" hidden role="dialog" aria-modal="true" aria-labelledby="noteDlgTitle">
+    <div class="note-dlg-head"><b id="noteDlgTitle">存为笔记</b>
+      <button id="noteDlgClose" type="button" aria-label="关闭">×</button></div>
+    <div class="note-dlg-body">
+      <label class="nd-field">标题<input id="ndTitle" maxlength="120" placeholder="一句话说清留下了什么"></label>
+      <div class="nd-row">
+        <label class="nd-field">标签<input id="ndTags" placeholder="逗号分隔，可留空"></label>
+        <label class="nd-field">类型<select id="ndKind">
+          <option value="qa">问答</option><option value="decision">决策</option>
+          <option value="howto">做法</option><option value="reference">资料</option>
+          <option value="log">记录</option></select></label>
+      </div>
+      <pre class="nd-preview" id="ndPreview">整理中…</pre>
+      <div class="nd-hint" id="ndHint">预览由本地规则整理，不联网；保存后可在知识库页修改。</div>
+    </div>
+    <div class="note-dlg-foot">
+      <button class="btn ghost sm" id="ndCancel" type="button">取消</button>
+      <button class="btn sm" id="ndSave" type="button">保存到笔记</button>
+    </div>
+  </div>
 </main>
 """
 
@@ -221,12 +270,7 @@ var SESSION_ID=loadSessionId(); saveSessionId(SESSION_ID);
    配置 API_KEYS 后，问答接口需要 Key；页面把 Key 放 sessionStorage，
    只在当前标签页有效，关闭即清。 */
 var KEY_STORE='rag_api_key';
-function apiKey(){ try{ return sessionStorage.getItem(KEY_STORE)||''; }catch(e){ return ''; } }
-function apiHeaders(base){
-  var h=base||{}, k=apiKey();
-  if(k) h['X-API-Key']=k;
-  return h;
-}
+function apiKey(){ return ragApiKey(); }
 function showKeyBar(msg){
   var bar=document.getElementById('keyBar'); if(!bar) return;
   bar.hidden=false;
@@ -481,7 +525,7 @@ function restoreHistory(){
     addUser(t.q);
     var body=addBot();
     body.innerHTML=answerHTML(t.d);
-    if(t.d.behavior==='answer'){ bindFeedback(body,t.d); }
+    if(t.d.behavior==='answer'){ bindFeedback(body,t.d,t.q); }
     else if(t.d.behavior==='no_answer'){ bindMissFeedback(body,t.d,t.q); }
   });
   scrollBottom();
@@ -549,7 +593,8 @@ function bindMissFeedback(body,d,query){
   };
 }
 
-function bindFeedback(body,d){
+var ICON_NOTE='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h7.5L18 8v12.5H6z"/><path d="M13.5 3.5V8H18"/><path d="M9 12.5h6M9 16h4"/></svg>';
+function bindFeedback(body,d,query){
   var fb=document.createElement('div'); fb.className='fb';
   var up='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></svg>';
   var down='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(180 12 12)"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></g></svg>';
@@ -557,8 +602,11 @@ function bindFeedback(body,d){
     +'<button type="button" class="fb-up">'+up+' 有用</button>'
     +'<button type="button" class="fb-down">'+down+' 有问题</button>'
     +'<button type="button" class="fb-copy">复制</button>'
+    +'<button type="button" class="fb-save">'+ICON_NOTE+' 存为笔记</button>'
     +'<div class="fb-note"><input placeholder="哪里不对？可留空，用于 badcase 复盘"><button type="button" class="btn sm fb-send">提交</button></div>';
   body.querySelector('.ans-card').appendChild(fb);
+  var saveBtn=fb.querySelector('.fb-save');
+  if(saveBtn){ saveBtn.onclick=function(){ openNoteDialog(query||d.query||'', d); }; }
 
   async function send(useful,comment){
     try{
@@ -637,7 +685,7 @@ async function ask(){
   function finish(data){
     if(data.session_id){ SESSION_ID=data.session_id; saveSessionId(SESSION_ID); }
     body.innerHTML=answerHTML(data);
-    if(data.behavior==='answer'){ bindFeedback(body,data); }
+    if(data.behavior==='answer'){ bindFeedback(body,data,query); }
     else if(data.behavior==='no_answer'){ bindMissFeedback(body,data,query); }
     rememberTurn(query,data);
   }
@@ -725,6 +773,71 @@ list.addEventListener('click',function(e){
   if(!b) return;
   qEl.value=b.textContent; autoGrow(); ask();
 });
+
+/* ---------- 存为笔记 ----------
+   人也要能「有选择地」把某几轮存下来：这里按「一轮问答」为单位，
+   先拿 commit=false 预览，人看着改标题/类型，再决定落盘。 */
+var ND={payload:null,ready:false};
+function closeNoteDialog(){
+  document.getElementById('noteMask').hidden=true;
+  document.getElementById('noteDialog').hidden=true;
+  ND.payload=null; ND.ready=false;
+}
+async function openNoteDialog(query,d){
+  ND.payload={
+    messages:[{role:'user',text:query||'（用户提问）'},{role:'assistant',text:d.answer||''}],
+    source:{agent:'web-ui',session:SESSION_ID},
+    hint:{title:(query||'').slice(0,60)}
+  };
+  ND.ready=false;
+  document.getElementById('noteMask').hidden=false;
+  document.getElementById('noteDialog').hidden=false;
+  document.getElementById('ndTitle').value=query||'';
+  document.getElementById('ndTags').value=(d.citations||[]).slice(0,2).map(function(c){return c.title;}).join(', ');
+  document.getElementById('ndKind').value='qa';
+  document.getElementById('ndPreview').textContent='整理中…';
+  document.getElementById('ndHint').textContent='预览由本地规则整理，不联网；保存后可在知识库页修改。';
+  document.getElementById('ndSave').disabled=true;
+  try{
+    var r=await fetch('/api/notes',{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),
+      body:JSON.stringify(Object.assign({commit:false},ND.payload))});
+    var draft=await r.json();
+    if(!r.ok) throw new Error(draft.message||draft.error||('HTTP '+r.status));
+    ND.ready=true; ND.payload.hint.title=draft.title||ND.payload.hint.title;
+    document.getElementById('ndTitle').value=draft.title||'';
+    document.getElementById('ndPreview').textContent=draft.markdown||'';
+    document.getElementById('ndSave').disabled=false;
+  }catch(e){
+    document.getElementById('ndPreview').textContent='整理失败：'+(e.message||e);
+    document.getElementById('ndHint').textContent='接口不可用时可以先去知识库页看已存的笔记。';
+  }
+}
+async function saveNoteDialog(){
+  if(!ND.ready) return;
+  var btn=document.getElementById('ndSave'); btn.disabled=true;
+  var body=Object.assign({},ND.payload,{commit:true});
+  body.hint=Object.assign({},ND.payload.hint,{
+    title:document.getElementById('ndTitle').value.trim(),
+    kind:document.getElementById('ndKind').value,
+    tags:(document.getElementById('ndTags').value||'').split(/[,，]/).map(function(x){return x.trim();}).filter(Boolean)
+  });
+  try{
+    var r=await fetch('/api/notes',{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),
+      body:JSON.stringify(body)});
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.message||d.error||('HTTP '+r.status));
+    closeNoteDialog();
+    if(d.duplicate_of){ toast('这段内容已经存过了'); }
+    else{ toast('已存为笔记：'+(d.title||'')); }
+    if(window.__noteSaved) window.__noteSaved(d);
+  }catch(e){ toast('保存失败：'+(e.message||e),true); btn.disabled=false; }
+}
+document.getElementById('noteDlgClose').onclick=closeNoteDialog;
+document.getElementById('ndCancel').onclick=closeNoteDialog;
+document.getElementById('noteMask').onclick=closeNoteDialog;
+document.getElementById('ndSave').onclick=saveNoteDialog;
+document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeNoteDialog(); });
+
 if(!restoreHistory()){ renderEmpty(); }
 bindKeyBar();
 var pre=new URLSearchParams(location.search).get('q');
@@ -861,6 +974,69 @@ KB_CSS = """
 }
 """
 
+KB_CSS += """
+/* ---------- 文档 / 笔记 切换 ---------- */
+.kb-tabs{display:inline-flex;gap:2px;padding:3px;background:#eef1f7;border-radius:10px;margin-bottom:16px;}
+.kb-tabs button{border:none;background:none;padding:7px 18px;border-radius:8px;font-size:13px;
+  font-family:inherit;color:var(--muted);cursor:pointer;transition:background .15s,color .15s;}
+.kb-tabs button:hover{color:var(--ink);}
+.kb-tabs button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(20,30,50,.08);}
+[data-theme="dark"] .kb-tabs{background:#0f172a;}
+[data-theme="dark"] .kb-tabs button.on{background:#1b2537;box-shadow:none;}
+
+/* ---------- 笔记分区 ---------- */
+.notes-layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;align-items:start;}
+.notes-side{padding:14px;display:flex;flex-direction:column;gap:9px;
+  position:sticky;top:calc(var(--nav-h) + 16px);}
+.notes-tools{display:flex;gap:6px;flex-wrap:wrap;}
+.notes-tools .search{flex:1 1 130px;}
+.notes-tools .kb-sort{flex:1 1 96px;min-width:0;}
+.notes-count{font-size:11.5px;color:var(--faint);}
+.notes-list{display:flex;flex-direction:column;gap:6px;max-height:min(58vh,560px);overflow:auto;
+  padding-right:2px;margin:-2px 0;}
+.note-item{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:10px;
+  padding:9px 10px;cursor:pointer;font-family:inherit;transition:border-color .15s,background .15s;}
+.note-item:hover{border-color:#c9d6f5;background:var(--brand-tint);}
+.note-item.on{border-color:#b9c8f7;background:var(--brand-tint);}
+.note-item b{display:block;font-size:12.5px;font-weight:600;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.note-item span{display:block;font-size:11.5px;color:var(--faint);margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.note-item .ntag{color:var(--brand-600);}
+.notes-actions{display:flex;gap:6px;padding-top:2px;}
+.notes-actions .btn{flex:1;justify-content:center;}
+.notes-main{padding:18px;min-height:340px;}
+.note-empty{color:var(--faint);font-size:12.5px;line-height:1.9;padding:26px 4px;text-align:center;}
+.note-empty b{color:var(--ink);font-weight:600;display:block;margin-bottom:4px;font-size:13px;}
+.ne-head{display:flex;align-items:center;gap:10px;}
+.ne-title{flex:1;min-width:0;border:none;border-bottom:1px solid transparent;background:transparent;
+  font:600 18px/1.4 var(--font);color:var(--ink);padding:4px 2px;outline:none;}
+.ne-title:hover{border-color:var(--line);}
+.ne-title:focus{border-color:#b9c8f7;}
+.ne-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;}
+.ne-row label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--faint);flex:1 1 120px;}
+.ne-row input,.ne-row select{padding:7px 9px;border:1px solid var(--line-2);border-radius:8px;
+  font:12.5px/1.5 var(--font);color:var(--text);background:var(--surface);outline:none;min-width:0;}
+.ne-row input:focus,.ne-row select:focus{border-color:#b9c8f7;box-shadow:0 0 0 3px rgba(47,92,246,.07);}
+.ne-row input[readonly]{color:var(--faint);background:var(--surface-2);}
+.ne-sections{margin-top:14px;display:flex;flex-direction:column;gap:9px;}
+.ne-sec{border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--surface-2);}
+.ne-sec-head{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;
+  letter-spacing:.06em;color:var(--faint);font-weight:600;}
+.ne-sec-head button{border:none;background:none;color:#b6bfd0;font-size:15px;line-height:1;cursor:pointer;padding:0 2px;}
+.ne-sec-head button:hover{color:var(--bad);}
+.ne-sec textarea{width:100%;margin-top:5px;border:none;background:transparent;resize:vertical;
+  font:13px/1.75 var(--font);color:var(--text);outline:none;min-height:56px;}
+.ne-foot{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap;}
+.ne-hint{font-size:11.5px;color:var(--faint);margin-right:auto;font-family:var(--mono);}
+@media (max-width:860px){
+  .kb-layout,.notes-layout{grid-template-columns:1fr;}
+  .kb-side,.notes-side{position:static;}
+  .notes-list{max-height:240px;}
+}
+"""
+
+
 KB_BODY = """
 <main class="wrap kb-wrap">
   <div class="kb-head">
@@ -877,6 +1053,12 @@ KB_BODY = """
     </div>
   </div>
 
+  <div class="kb-tabs" role="tablist" aria-label="知识库分区">
+    <button type="button" class="on" data-tab="docs" role="tab" aria-selected="true">文档</button>
+    <button type="button" data-tab="notes" role="tab" aria-selected="false">笔记</button>
+  </div>
+
+  <div id="panelDocs">
   <div class="kb-layout">
     <div class="kb-side">
       <section class="card">
@@ -941,6 +1123,65 @@ KB_BODY = """
         </table>
       </div>
       <div class="kb-foot"><span id="kbFoot"></span><span id="kbHint"></span></div>
+    </section>
+  </div>
+  </div>
+
+  <div class="notes-layout" id="panelNotes" hidden>
+    <aside class="card notes-side">
+      <div class="notes-tools">
+        <div class="search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="noteSearch" placeholder="搜索标题 / 标签" autocomplete="off">
+        </div>
+      </div>
+      <div class="notes-tools">
+        <select class="kb-sort" id="noteKind" aria-label="按类型筛选">
+          <option value="">全部类型</option>
+          <option value="decision">决策</option><option value="howto">做法</option>
+          <option value="reference">资料</option><option value="qa">问答</option>
+          <option value="log">记录</option>
+        </select>
+        <select class="kb-sort" id="noteStatus" aria-label="按状态筛选">
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option><option value="final">定稿</option>
+          <option value="archived">归档</option>
+        </select>
+      </div>
+      <div class="notes-count" id="noteCount">加载中…</div>
+      <div class="notes-list" id="noteList"></div>
+      <div class="notes-actions">
+        <button class="btn ghost sm" id="noteExportHtml" type="button">导出 HTML</button>
+        <button class="btn ghost sm" id="noteExportJson" type="button">JSON</button>
+      </div>
+    </aside>
+
+    <section class="card notes-main">
+      <div class="note-empty" id="noteEmpty"><b>还没有选中笔记</b>左侧选一篇；或在问答页点「存为笔记」，让智能体直接存进来。</div>
+      <div id="noteEditor" hidden>
+        <div class="ne-head">
+          <input id="neTitle" class="ne-title" maxlength="120" aria-label="笔记标题">
+          <span class="pill" id="neMeta">—</span>
+        </div>
+        <div class="ne-row">
+          <label>标签<input id="neTags" placeholder="逗号分隔"></label>
+          <label>类型<select id="neKind">
+            <option value="qa">问答</option><option value="decision">决策</option>
+            <option value="howto">做法</option><option value="reference">资料</option>
+            <option value="log">记录</option></select></label>
+          <label>状态<select id="neStatus">
+            <option value="draft">草稿</option><option value="final">定稿</option>
+            <option value="archived">归档</option></select></label>
+          <label>创建<input id="neCreated" readonly></label>
+        </div>
+        <div class="ne-sections" id="neSections"></div>
+        <div class="ne-foot">
+          <span class="ne-hint" id="neHint"></span>
+          <button class="btn ghost sm" id="neAddSec" type="button">加小节</button>
+          <button class="btn ghost sm" id="neDelete" type="button">删除</button>
+          <button class="btn sm" id="neSave" type="button">保存</button>
+        </div>
+      </div>
     </section>
   </div>
   <div class="kb-mask" id="kbMask" hidden></div>
@@ -1337,6 +1578,189 @@ $('reload').onclick=async function(){
     else{ setMsg('重建失败：'+r.error,'err'); btn.disabled=false; }
   }catch(e){ setMsg('重建失败：'+(e.message||e),'err'); btn.disabled=false; }
 };
+
+/* ---------- 笔记分区 ----------
+   数据全部走 /api/notes：列表读索引，编辑走 PATCH + rev 乐观锁，
+   删除只进 .trash。页面不缓存笔记内容，避免和磁盘上的手改打架。 */
+var NOTE={items:[],cur:null,loaded:false};
+var KIND_LABEL={decision:'决策',howto:'做法',reference:'资料',qa:'问答',log:'记录'};
+var STATUS_LABEL={draft:'草稿',final:'定稿',archived:'归档'};
+
+function noteFetch(path,opt){
+  var o=opt||{}; o.headers=apiHeaders(o.headers||{});
+  return fetch(path,o).then(function(r){
+    return r.json().catch(function(){return {};}).then(function(d){
+      if(!r.ok) throw new Error(d.message||d.error||('HTTP '+r.status));
+      return d;
+    });
+  });
+}
+
+function loadNotes(){
+  $('noteCount').textContent='加载中…';
+  return noteFetch('/api/notes?limit=200').then(function(d){
+    NOTE.items=d.items||[]; NOTE.loaded=true; renderNoteList();
+  }).catch(function(e){
+    $('noteCount').textContent='加载失败';
+    $('noteList').innerHTML='<div class="note-empty">'+esc(e.message||e)+'</div>';
+  });
+}
+
+function visibleNotes(){
+  var q=($('noteSearch').value||'').trim().toLowerCase();
+  var kind=$('noteKind').value, status=$('noteStatus').value;
+  return NOTE.items.filter(function(n){
+    if(kind && n.kind!==kind) return false;
+    if(status && n.status!==status) return false;
+    if(!q) return true;
+    var hay=[n.title||'', (n.tags||[]).join(' '), n.summary||''].join(' ').toLowerCase();
+    return hay.indexOf(q)>=0;
+  });
+}
+
+function renderNoteList(){
+  var rows=visibleNotes();
+  $('noteCount').textContent=NOTE.items.length
+    ? ('共 '+NOTE.items.length+' 篇'+(rows.length!==NOTE.items.length?('，匹配 '+rows.length+' 篇'):''))
+    : '还没有笔记';
+  if(!rows.length){
+    $('noteList').innerHTML='<div class="note-empty">'
+      +(NOTE.items.length?'没有匹配的笔记':'还没有笔记。<br>在问答页点「存为笔记」，或让智能体保存一段对话。')+'</div>';
+    return;
+  }
+  $('noteList').innerHTML=rows.map(function(n){
+    var tags=(n.tags||[]).slice(0,3).map(function(t){return '#'+t;}).join(' ');
+    return '<button type="button" class="note-item'+(NOTE.cur&&NOTE.cur.id===n.id?' on':'')+'" data-id="'+esc(n.id)+'">'
+      +'<b>'+esc(n.title||'未命名')+'</b>'
+      +'<span>'+esc(String(n.created||'').slice(0,10))+' · '+esc(KIND_LABEL[n.kind]||n.kind||'')
+      +(tags?' · <span class="ntag">'+esc(tags)+'</span>':'')+'</span>'
+      +'</button>';
+  }).join('');
+}
+
+function openNote(id){
+  return noteFetch('/api/notes/'+encodeURIComponent(id)).then(function(d){
+    NOTE.cur=d; renderEditor(d); renderNoteList();
+  }).catch(function(e){ toast('读取失败：'+(e.message||e),true); });
+}
+
+function renderEditor(d){
+  $('noteEmpty').hidden=true; $('noteEditor').hidden=false;
+  $('neTitle').value=d.title||'';
+  $('neTags').value=(d.tags||[]).join(', ');
+  $('neKind').value=d.kind||'qa';
+  $('neStatus').value=d.status||'draft';
+  $('neCreated').value=String(d.created||'').slice(0,16).replace('T',' ');
+  $('neMeta').textContent=(d.digest==='llm'?'模型摘要':'规则摘要')+(d.external?' · 外部文件':'');
+  $('neSections').innerHTML=(d.sections||[]).map(function(s){
+    return '<div class="ne-sec"><div class="ne-sec-head"><span>'+esc(s.title)+'</span>'
+      +'<button type="button" class="ne-del" aria-label="删除这一节" title="删除这一节">×</button></div>'
+      +'<textarea data-name="'+esc(s.title)+'" rows="'+(s.title==='摘要'?3:4)+'">'+esc(s.body)+'</textarea></div>';
+  }).join('');
+  $('neHint').textContent='rev '+d.rev+' · 改完点保存';
+}
+
+function collectChanges(){
+  var sections={};
+  Array.prototype.forEach.call($('neSections').querySelectorAll('.ne-sec'),function(box){
+    var t=box.querySelector('textarea'); if(!t) return;
+    sections[t.dataset.name]=t.value;
+  });
+  return {
+    title:$('neTitle').value.trim(),
+    tags:($('neTags').value||'').split(/[,，]/).map(function(x){return x.trim();}).filter(Boolean),
+    kind:$('neKind').value, status:$('neStatus').value, sections:sections
+  };
+}
+
+function saveNote(){
+  if(!NOTE.cur) return;
+  var btn=$('neSave'); btn.disabled=true;
+  return noteFetch('/api/notes/'+encodeURIComponent(NOTE.cur.id),{method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({base_rev:NOTE.cur.rev,changes:collectChanges()})
+  }).then(function(d){
+    NOTE.cur=d; renderEditor(d);
+    var row=NOTE.items.filter(function(n){return n.id===d.id;})[0];
+    if(row){ row.title=d.title; row.tags=d.tags; row.kind=d.kind; row.status=d.status; row.summary=''; }
+    renderNoteList(); toast('已保存');
+  }).catch(function(e){
+    if(String(e.message||'').indexOf('冲突')>=0){ toast('这篇已被别处改过，正在加载最新版本',true); openNote(NOTE.cur.id); }
+    else{ toast('保存失败：'+(e.message||e),true); }
+  }).finally(function(){ btn.disabled=false; });
+}
+
+function deleteNote(){
+  if(!NOTE.cur) return;
+  if(!confirm('删除「'+NOTE.cur.title+'」？文件会移到 .trash，可以找回。')) return;
+  noteFetch('/api/notes/'+encodeURIComponent(NOTE.cur.id)+'?confirm=1',{method:'DELETE'}).then(function(){
+    NOTE.items=NOTE.items.filter(function(n){return n.id!==NOTE.cur.id;});
+    NOTE.cur=null; $('noteEditor').hidden=true; $('noteEmpty').hidden=false;
+    renderNoteList(); toast('已移入回收站');
+  }).catch(function(e){ toast('删除失败：'+(e.message||e),true); });
+}
+
+function downloadBlob(name,text,mime){
+  try{
+    var blob=new Blob([text],{type:(mime||'text/plain')+';charset=utf-8'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
+  }catch(e){ toast('导出失败：'+(e.message||e),true); }
+}
+
+function exportNotes(fmt){
+  noteFetch('/api/notes/export?format='+fmt).then(function(d){
+    downloadBlob(d.filename,d.content,d.mime);
+    toast('已导出 '+d.count+' 篇');
+  }).catch(function(e){ toast('导出失败：'+(e.message||e),true); });
+}
+
+$('noteSearch').oninput=renderNoteList;
+$('noteKind').onchange=renderNoteList;
+$('noteStatus').onchange=renderNoteList;
+$('noteList').onclick=function(ev){
+  var item=ev.target.closest('.note-item');
+  if(item) openNote(item.dataset.id);
+};
+$('neSave').onclick=saveNote;
+$('neDelete').onclick=deleteNote;
+$('noteExportHtml').onclick=function(){ exportNotes('html'); };
+$('noteExportJson').onclick=function(){ exportNotes('json'); };
+$('neRuleNote') && ($('neRuleNote').onclick=null);
+$('neSections').onclick=function(ev){
+  var del=ev.target.closest('.ne-del'); if(!del) return;
+  del.closest('.ne-sec').remove();
+};
+$('neAddSec').onclick=function(){
+  var name=(window.prompt('新小节名称，例如「风险」「后续」')||'').trim();
+  if(!name) return;
+  var div=document.createElement('div');
+  div.className='ne-sec';
+  div.innerHTML='<div class="ne-sec-head"><span>'+esc(name)+'</span>'
+    +'<button type="button" class="ne-del" aria-label="删除这一节">×</button></div>'
+    +'<textarea data-name="'+esc(name)+'" rows="3"></textarea>';
+  $('neSections').appendChild(div);
+  div.querySelector('textarea').focus();
+};
+$('neTitle').onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); saveNote(); } };
+
+/* 文档 / 笔记 切换：笔记按需加载，切回文档不重新请求知识库 */
+function setTab(tab){
+  Array.prototype.forEach.call(document.querySelectorAll('.kb-tabs button'),function(b){
+    var on=b.dataset.tab===tab;
+    b.classList.toggle('on',on);
+    b.setAttribute('aria-selected',on?'true':'false');
+  });
+  $('panelDocs').hidden = tab!=='docs';
+  $('panelNotes').hidden = tab!=='notes';
+  if(tab==='notes' && !NOTE.loaded){ loadNotes(); }
+}
+Array.prototype.forEach.call(document.querySelectorAll('.kb-tabs button'),function(b){
+  b.onclick=function(){ setTab(b.dataset.tab); };
+});
+if(location.hash==='#notes'){ setTab('notes'); }
 
 loadKb();
 """

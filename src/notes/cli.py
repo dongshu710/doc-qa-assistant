@@ -32,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     save.add_argument("--select-keyword", help="只存包含该关键词的消息")
     save.add_argument("--keep-raw", action="store_true", help="保留对话原文")
     save.add_argument("--no-raw", action="store_true", help="不保留原文（默认）")
+    save.add_argument("--digest", choices=["rule", "auto", "llm"],
+                      help="摘要引擎：rule=纯规则（默认）；auto=有模型就用、失败回落；llm=必须成功")
     save.add_argument("--draft", action="store_true", help="只预览，不写盘")
     save.add_argument("--json", action="store_true", help="输出 JSON")
 
@@ -48,6 +50,15 @@ def build_parser() -> argparse.ArgumentParser:
     getter.add_argument("--section", help="只输出某一节，如 摘要")
     getter.add_argument("--json", action="store_true")
 
+    export = sub.add_parser("export", help="导出为单文件 HTML 或 JSON")
+    export.add_argument("--out", required=True, help="输出路径，例如 exports/all.html")
+    export.add_argument("--format", choices=["html", "json"], default="html")
+    export.add_argument("--id", action="append", default=[], help="只导出这几篇，可重复")
+    export.add_argument("--tag", action="append", default=[], help="按标签筛选，可重复")
+    export.add_argument("--since", help="起始日期，如 2026-10-01")
+    export.add_argument("--title", default="我的笔记", help="导出文件里的标题")
+    export.add_argument("--json", action="store_true", help="输出 JSON 结果")
+
     sub.add_parser("rebuild", help="从磁盘重建索引")
     sub.add_parser("stats", help="统计数量与标签")
     return parser
@@ -63,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_list(service, args)
         if args.command == "get":
             return _cmd_get(service, args)
+        if args.command == "export":
+            return _cmd_export(service, args)
         if args.command == "rebuild":
             total = service.store.rebuild()
             print(f"索引已重建：{total} 篇" if not getattr(args, "json", False) else json.dumps({"ok": True, "notes": total}))
@@ -106,7 +119,8 @@ def _cmd_save(service: NoteService, args) -> int:
     payload["hint"] = hint
 
     keep_raw = True if args.keep_raw else False if args.no_raw else None
-    result = service.save(payload, commit=not args.draft, keep_raw=keep_raw)
+    result = service.save(payload, commit=not args.draft, keep_raw=keep_raw,
+                          digest_mode=args.digest)
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -116,8 +130,11 @@ def _cmd_save(service: NoteService, args) -> int:
     state = "草稿（未写盘）" if args.draft else "已保存"
     print(f"{state} {result['id']}")
     print(f"标题：{result['title']}")
-    meta = f"类型：{result['kind']}  标签：{','.join(result['tags']) or '无'}  消息：{result['messages']} 条"
+    meta = (f"类型：{result['kind']}  标签：{','.join(result['tags']) or '无'}  "
+            f"消息：{result['messages']} 条  摘要：{result['digest']}")
     print(meta + ("  已截断" if result["truncated"] else ""))
+    if result.get("digest_fallback"):
+        print(f"注意：模型摘要不可用（{result['digest_fallback']}），本篇由规则引擎生成")
     if result["path"]:
         print(f"文件：{result['path']}")
     if args.draft or not result["path"]:
@@ -151,6 +168,20 @@ def _cmd_get(service: NoteService, args) -> int:
         print(body or f"（没有「{args.section}」这一节）")
         return 0
     print(data["markdown"])
+    return 0
+
+
+def _cmd_export(service: NoteService, args) -> int:
+    from . import export as export_mod
+    result = export_mod.export(
+        service, args.out, note_ids=args.id or None, fmt=args.format,
+        filters={"tags": args.tag or None, "since": args.since}, title=args.title)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    print(f"已导出 {result['count']} 篇 → {result['path']}（{result['bytes'] / 1024:.1f} KB）")
+    if result["format"] == "html":
+        print("单文件，可直接双击打开；断网也能读。")
     return 0
 
 

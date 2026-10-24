@@ -79,6 +79,11 @@ class NoteStore:
         for path in (self.notes_dir, self.home / "index", self.home / "assets",
                      self.home / "exports", self.trash_dir):
             path.mkdir(parents=True, exist_ok=True)
+        guide = self.home / "AGENTS.md"
+        if not guide.exists():
+            # 只写一次：用户改过就不再覆盖，这份说明本身也是可编辑的文件
+            from .schema_doc import HOME_README
+            guide.write_text(HOME_README, encoding="utf-8")
 
     def path_for(self, note: Note) -> Path:
         match = re.match(r"^(\d{4})-(\d{2})", note.created or "")

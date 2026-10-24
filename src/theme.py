@@ -508,6 +508,12 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
 # 供页面脚本复用的小工具：转义、toast
 JS_UTIL = """
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function ragApiKey(){ try{ return sessionStorage.getItem('rag_api_key')||''; }catch(e){ return ''; } }
+function apiHeaders(base){
+  var h=base||{}, k=ragApiKey();
+  if(k) h['X-API-Key']=k;
+  return h;
+}
 function toast(msg,isErr){
   var box=document.getElementById('toasts'); if(!box) return;
   var d=document.createElement('div'); d.className='toast'+(isErr?' err':'');

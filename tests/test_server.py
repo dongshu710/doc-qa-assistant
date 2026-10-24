@@ -9,6 +9,7 @@ import threading
 import urllib.parse
 import urllib.request
 import urllib.error
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +34,48 @@ try:
     assert len(examples) >= 1
     print("examples:", examples)
 
+    pages = {}
     for page, needle in (("/ask", "可以这样问"), ("/kb", "拖拽或点击上传")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
-            html = resp.read().decode("utf-8")
-        assert needle in html, page
-        assert 'href="/insights"' not in html, "导航里不该再出现已下线的页面"
+            pages[page] = resp.read().decode("utf-8")
+        assert needle in pages[page], page
+        assert 'href="/insights"' not in pages[page], "导航里不该再出现已下线的页面"
     print("pages OK（仅问答与知识库）")
+
+    # 笔记入口：问答页能发起保存，知识库页有两个分区且不是嵌套关系。
+    # 结构错位（面板套进另一个面板）在浏览器里表现为「点了没反应」，字符串断言抓不到，
+    # 所以这里用 HTMLParser 真的看一次父子关系。
+    assert 'id="noteDialog"' in pages["/ask"] and "存为笔记" in pages["/ask"]
+    assert 'id="panelNotes"' in pages["/kb"] and 'data-tab="notes"' in pages["/kb"]
+
+    class PanelFinder(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack: list[str] = []
+            self.parents: dict[str, list[str]] = {}
+            self.ids: set[str] = set()
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            node_id = attrs.get("id")
+            if node_id:
+                self.parents[node_id] = list(self.stack)
+                self.ids.add(node_id)
+            if tag not in ("br", "img", "input", "meta", "link", "hr", "source", "path",
+                           "circle", "rect", "use", "stop"):
+                self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            if tag in self.stack:
+                while self.stack and self.stack.pop() != tag:
+                    pass
+
+    finder = PanelFinder()
+    finder.feed(pages["/kb"])
+    assert "panelDocs" in finder.ids and "panelNotes" in finder.ids, finder.ids
+    assert "panelNotes" not in " ".join(finder.parents.get("panelNotes", [])), "笔记面板被套进了文档面板"
+    assert finder.parents.get("panelDocs")[-1:] == ["main"], finder.parents.get("panelDocs")
+    print("notes panels OK（两个分区同级，未嵌套）")
 
     # 旧入口保留 302，收藏夹里的链接不能断
     class NoRedirect(urllib.request.HTTPRedirectHandler):

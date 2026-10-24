@@ -96,7 +96,7 @@ ERRORS = [
     (conv(("user", "内容")), {"select": {"mode": "indices", "indices": [9]}}, "超出范围"),
     (conv(("user", "内容")), {"select": {"mode": "range", "start": 2, "end": 1}}, "不合法"),
     (conv(("user", "内容")), {"select": {"mode": "nope"}}, "未知"),
-    (conv(("user", "内容")), {"digest": "llm"}, "规则摘要"),
+    (conv(("user", "内容")), {"digest": "nope"}, "未知的摘要模式"),
 ]
 
 

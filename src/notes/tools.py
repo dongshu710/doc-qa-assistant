@@ -66,6 +66,9 @@ TOOLS: list[dict] = [
                         "additionalProperties": False,
                     },
                     "keep_raw": {"type": "boolean", "description": "是否把对话原文一并存进「原文」段，默认否"},
+                    "digest": {"type": "string", "enum": ["rule", "auto", "llm"],
+                               "description": "摘要引擎：rule=不联网的规则摘要（默认）；auto=有模型就用、失败回落；llm=必须成功"},
+
                     "commit": {"type": "boolean",
                                "description": "false 表示只预览不落盘；用户还在犹豫时先用 false 给他看"},
                 },
@@ -133,6 +136,38 @@ TOOLS: list[dict] = [
                     },
                 },
                 "required": ["id", "base_rev"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "note_stats",
+            "description": ("看一眼用户存了多少笔记、都有什么标签。"
+                            "在不确定「有没有存过相关内容」时，先用它了解规模，再决定要不要搜索。"),
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "export_notes",
+            "description": ("把笔记导成一个自包含文件，便于离线查看或转交给别的工具："
+                            "html = 单文件网页（断网可读），json = 结构化数据（可再导入）。"
+                            "用户说「导出 / 打包 / 发我一份」时使用。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "out": {"type": "string", "description": "输出文件路径，例如 ~/Desktop/notes.html"},
+                    "format": {"type": "string", "enum": ["html", "json"], "default": "html"},
+                    "ids": {"type": "array", "items": {"type": "string"},
+                            "description": "只导出这几篇；不传则导出全部（或按下面条件筛选）"},
+                    "tag": {"type": "array", "items": {"type": "string"}},
+                    "since": {"type": "string", "description": "起始日期 YYYY-MM-DD"},
+                    "title": {"type": "string", "description": "导出文件里的标题，默认「我的笔记」"},
+                },
+                "required": ["out"],
                 "additionalProperties": False,
             },
         },

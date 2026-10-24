@@ -19,11 +19,11 @@
 | 问答（带引用） | 知识库（文档上传） |
 |---|---|
 | ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
-| **关键词命中（本地直出，不调用模型）** | **笔记文件（Markdown，可直接编辑）** |
-| ![](docs/screenshots/keyword.png) | 见 [docs/examples/note-example.md](docs/examples/note-example.md) |
+| **知识库 · 笔记分区（可改可导出）** | **从回答存为笔记（先预览再落盘）** |
+| ![](docs/screenshots/kb-notes.png) | ![](docs/screenshots/ask-note.png) |
 
-> v1.10.0 起只保留这两页；对话的整理与保存走 `src/notes`（CLI / 后续 HTTP、MCP），不再占用页面。
-> 截图使用演示知识库与离线抽取模式，最后一图是一篇真实生成的笔记文件。
+> v1.10.0 起只保留这两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不再占用页面。
+> 截图使用演示知识库与离线抽取模式，示例笔记文件见 [docs/examples/note-example.md](docs/examples/note-example.md)。
 
 ## 0. 定位：这是「文档问答助手」，不是只服务金融
 
@@ -123,13 +123,14 @@ doc-qa-assistant/
 │  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
 │  ├─ server.py                # Web 服务（两页原型 + API）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
-│  ├─ openapi.py               # OpenAPI 3.0 契约（18 个路径）
+│  ├─ openapi.py               # OpenAPI 3.0 契约（21 个路径，含笔记接口）
 │  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），各页共用
 │  ├─ web_pages.py             # 页面模板（问答 / 知识库）
-│  ├─ notes/                   # 智能体笔记：存储内核、规则摘要、CLI（零依赖）
+│  ├─ notes/                   # 智能体笔记：存储 / 摘要 / CLI / HTTP / MCP / 导出（零依赖）
 │  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出（CLI 用）
 │  ├─ version.py               # 版本号（读根目录 VERSION）
 │  └─ cli.py                   # 命令行入口
+├─ AGENTS.md                  # 给智能体读的接入说明（MCP / HTTP / CLI / 文件四条路）
 ├─ docs/
 │  ├─ ARCHITECTURE.md          # 链路、组件职责、失败矩阵
 │  ├─ EVALUATION.md            # 数据集、口径、结果与局限
@@ -289,7 +290,7 @@ python -m src.server --port 8000
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
 
 `/`、`/index.html`、`/insights`、`/dashboard`、`/report` 一律 302 到 `/ask`——旧链接不会 404，
-但页面上只剩问答与知识库两项导航。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.12](#412-智能体笔记对话--个人笔记v1100)。
+但页面上只剩问答与知识库两项导航。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.13](#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道)。
 
 页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。
@@ -895,7 +896,7 @@ node tests/e2e_pages.mjs       # 没装浏览器会明确 SKIP
 **取舍**：E2E 依赖本机 Edge/Chrome 或 CI 安装的 Chromium；没有浏览器时跳过而不是失败，
 避免「零依赖」项目因为测试工具装不上而红。CI 单独一个 job 安装 Chromium 后强制执行。
 
-## 4.12 智能体笔记：对话 → 个人笔记（v1.10.0）
+## 4.13 智能体笔记：对话 → 个人笔记（v1.10 起，v1.12 补齐四条通道）
 
 目标：让任意智能体把对话里**值得留下的那几段**整理成一篇结构化笔记，落到你自己的目录，
 人能离线看改，下一个智能体直接读同一份文件——内容在智能体之间流动，靠的是文件而不是某个平台。
@@ -907,9 +908,9 @@ NOTE_HOME（默认 ~/agent-notes，可用环境变量或 --home 覆盖）
 ├─ notes/2026/10/20261024-205142-5fc510.md   # 一篇笔记 = 一个文件，路径即时间线
 ├─ assets/<id>/                              # 附件（大代码块等）
 ├─ index/notes.jsonl                         # 派生索引，删了会自动重建
-├─ exports/                                  # 离线导出（规划中）
+├─ exports/                                  # 导出的单文件（HTML / JSON）
 ├─ .trash/                                   # 软删除，可找回
-└─ AGENTS.md                                 # 给智能体读的接入说明（下一步）
+└─ AGENTS.md                                 # 给智能体读的接入说明（首次初始化自动写入）
 ```
 
 一篇笔记长这样（front matter 固定字段 + 六段正文，缺段省略，多出的小节原样保留）：
@@ -989,11 +990,21 @@ python -m src.notes rebuild                  # 索引丢了/外部文件多时�
 `select.mode` 支持 `all` / `indices`（下标数组，从 1 开始）/ `range`（`start`、`end`）/ `keyword`，
 另有 `max_chars` 限制单次入库长度（默认 20000 字，超出会截断并在响应里标 `truncated`）。
 
-### 不依赖大模型
+### 摘要：默认不联网，模型只是增强
 
 `digest: rule` 是默认引擎：分句、按数字/结论词/位置打分、归类到摘要/要点/决策/待办/引用，
 **不联网、不花钱、永不抛异常**。没有 Key 也能完整跑通保存 → 读取 → 再被其他智能体读取。
-大模型摘要（`DIGEST=llm`）是下一里程碑，接入后失败会回落到规则引擎并标 `llm-fallback`。
+
+要用模型就加 `--digest auto`（有 Key 就用，失败回落）或 `--digest llm`（必须成功）。三条约束：
+
+| 约束 | 实现 |
+|---|---|
+| 输出必须合法 | 只认固定 JSON，剥 ```json 围栏；`摘要` 为空、字段类型不对都算无效 |
+| 永不因模型失败而丢内容 | `auto` 模式下超时/限流/坏 JSON 一律回落规则摘要，保存照常成功 |
+| 回落必须留痕 | front matter 记 `digest: rule` + `digest_fallback: timeout \| invalid_output \| network \| no_key` |
+
+模型给的小节名不在标准集里会被丢弃（不把奇怪结构写进文件）；`kind` 非法回落 `qa`，
+缺标题用 `hint` 补。`--digest llm` 失败时抛可读错误并提示改用 `--digest rule`，不静默降级。
 
 ### HTTP 接口（智能体直接调）
 
@@ -1007,6 +1018,7 @@ python -m src.notes rebuild                  # 索引丢了/外部文件多时�
 | PATCH | `/api/notes/{id}` | 改标题/标签/状态/小节；必须带 `base_rev`，否则 409 |
 | DELETE | `/api/notes/{id}?confirm=1` | 移入 `.trash`，可找回 |
 | GET | `/api/notes/stats` | 数量与标签分布 |
+| GET | `/api/notes/export` | 导出：`?format=html\|json`，可带 `tag` / `since` / `id`，返回内容本身 |
 
 ```bash
 # 保存（不带 commit=false 就直接落盘）
@@ -1023,9 +1035,69 @@ curl -s -X PATCH http://127.0.0.1:8000/api/notes/<id> -H 'Content-Type: applicat
 配了 `API_KEYS` 时，笔记接口同样要求 `Authorization: Bearer <key>` 或 `X-API-Key`；
 `NOTES_CORS=*`（或逗号分隔的来源白名单）才会放行浏览器跨域，默认关闭。
 
-`GET /tools.json` 直接给出 5 个 OpenAI function calling 工具声明
-（`save_conversation` / `search_notes` / `get_note` / `update_note` / `delete_note`），
-任何支持 function calling 的智能体塞进 `tools` 数组即可用，不需要读文档。
+`GET /tools.json` 直接给出 7 个 OpenAI function calling 工具声明
+（`save_conversation` / `search_notes` / `get_note` / `update_note` / `delete_note` /
+`note_stats` / `export_notes`），任何支持 function calling 的智能体塞进 `tools` 数组即可用，
+不需要读文档。
+
+### MCP：支持 MCP 的客户端直接接（v1.12）
+
+stdio 传输，客户端拉起进程即可，不需要端口与证书：
+
+```json
+{
+  "mcpServers": {
+    "agent-notes": {
+      "command": "python",
+      "args": ["-m", "src.notes.mcp_server"],
+      "cwd": "/path/to/rag_assistant",
+      "env": { "PYTHONPATH": "/path/to/rag_assistant", "NOTE_HOME": "~/agent-notes" }
+    }
+  }
+}
+```
+
+- **7 个工具**：`save_conversation` / `search_notes` / `get_note` / `update_note` /
+  `delete_note` / `note_stats` / `export_notes`，参数与 HTTP 完全同源（都从 `tools.py` 生成）。
+- **2 个资源**：`notes://schema`（格式契约，改文件前先读）、`notes://index`（全部笔记清单）。
+- **协议细节**：JSON-RPC 2.0 逐行传输；`initialize` 会回显客户端协议版本（不认识则回落到
+  `2025-06-18 / 2025-03-26 / 2024-11-05` 中最新的一个）；未知方法返 `-32601`、坏 JSON 返 `-32700`
+  且**不中断会话**；工具执行失败返 `isError: true`（模型能读到原因并自行纠正），不掐连接。
+- **stdout 只跑协议**：诊断日志全部走 stderr，避免客户端因为多一行日志解析失败。
+
+### 四条通道，任何智能体都能接（v1.12）
+
+| 通道 | 适用 | 需要什么 |
+|---|---|---|
+| 文件直读 | 完全离线，或只想看 | 一个能读 `NOTE_HOME` 的智能体；格式见 `AGENTS.md` |
+| CLI | 只能执行命令 | `python -m src.notes ...` |
+| HTTP | 能发请求、支持 function calling | `/api/notes` 六个端点 + `/tools.json` |
+| MCP | 支持 MCP 的客户端 | 一段 `mcpServers` 配置 |
+
+四条路的写操作都经 `NoteService`，语义一致：保存去重、改前带 `rev`、删除要确认。
+`NOTE_HOME` 首次初始化会写一份 `AGENTS.md`（只写一次，你改过就不再覆盖），
+下一个智能体即使没有工具，也能照着文件里的说明直接读写。
+
+### 页面：选一段存下来，也能在页面里改（v1.12）
+
+- **问答页**：每条回答下方多一个「存为笔记」。点开先调 `commit=false` 拿到**预览**，
+  可以改标题、标签、类型，确认后才落盘——不让人莫名其妙多出一堆文件。重复内容会提示「已经存过了」。
+- **知识库页**：上面多一个「文档 / 笔记」切换，笔记分区可搜索、按类型/状态筛选、
+  改标题/标签/小节、加减小节、删除（进 `.trash`）、导出 HTML / JSON。
+- **并发保护**：页面保存带 `rev`，若文件在此期间被智能体或编辑器改过，返回 409 并自动reload最新版本，
+  不会把你的手改覆盖掉。
+
+### 离线导出（v1.12）
+
+```bash
+python -m src.notes export --out ~/Desktop/notes.html          # 单文件，断网可读
+python -m src.notes export --out notes.json --format json      # 结构化，可再导入
+python -m src.notes export --out tax.html --tag 税务           # 只导某一类
+```
+
+导出物是**一个自包含 HTML**：CSS 内联、脚本内联、不引任何字体或 CDN，双击就能看，
+带搜索与类型筛选、深色模式跟随系统、打印时自动隐藏工具栏。正文里的 `<script>` 会被转义，
+不会被当成标签执行；导出用临时文件 + 原子替换，中途失败不会毁掉上一份。
 
 ### 实测（本机，1000 篇笔记）
 
@@ -1039,7 +1111,8 @@ curl -s -X PATCH http://127.0.0.1:8000/api/notes/<id> -H 'Content-Type: applicat
 
 ### 已验证的边界
 
-- 空输入、201 条消息、下标越界、非法 `select.mode`、`digest=llm` 都会返回可读错误（退出码 2），不会抛栈。
+- 空输入、201 条消息、下标越界、非法 `select.mode` 都会返回可读错误（退出码 2），不会抛栈；
+  无 Key 时 `--digest llm` 明确报错并提示改用 `--digest rule`，不假装成功。
 - front matter 半截、缺字段、完全缺失都能读；`external: true` 标明这是外部文件。
 - 同一目录并发写有目录锁（默认等 5 秒），超时返回明确错误。
 - 提示注入、HTML/脚本标签、emoji 与零宽字符一律当纯文本处理，不执行、不解析。
@@ -1073,7 +1146,8 @@ python tests/eval_l3.py --report tests/report_llm.json --limit 8 --json   # 抽�
 - **答案类**用例按「忠实度 / 相关性 / 完整性」各 1–5 分；**拒答类**用例用合规 rubric（该不该拒、有没有泄露）。
 - 裁判只看【检索资料】+【回答】，**禁止用自身知识补依据**，避免“裁判比模型还懂”的假高分。
 - 门禁：忠实度均分 ≥ 4.0、无 faithfulness ≤ 2 的疑似编造、语义通过率 ≥ 85%、拒答类 100% 合规。
-- 报告 `tests/report_l3.json` 保留每条分数与理由，便于人工抽检；看板 `/dashboard` 与 `/report` 都会展示。
+- 报告 `tests/report_l3.json` 保留每条分数与理由，便于人工抽检；`python -m src.report --out report.html`
+  可导出成独立汇报页（评测看板已下线，结果以报告文件为准）。
 - **裁判校准（默认开启，很重要）**：植入 3 条错误答案（编造数字 / 答非所问 / 多问只答一半），若裁判不降分，则整轮 L3 判为**不可信**并门禁失败。实测裁判在三条植入错误上分别得 1 / 1 / 2 分，区分力有效；`--calibrate-only` 可只补跑校准、复用已有评分省 token。
 - **读数提醒**：基础集 26 条曾全部 5.0，说明的是**测试集偏简单**（问题与知识块近乎一一对应），不代表“质量完美”。所以要另跑难题集（见 5.2）。
 - **立场**：L3 结果用于趋势对比，不做逐条绝对判定——裁判本身不确定，把它当“探照灯”而不是“判决书”。

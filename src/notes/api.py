@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import re
+from datetime import datetime
 
+from . import export as export_mod
 from .model import NoteError
 from .service import NoteConflict, NoteService
 from .store import NoteNotFound, StoreBusy
@@ -39,6 +42,11 @@ def dispatch(service: NoteService | None, method: str, path: str,
                 return _create(service, body)
             raise ApiError(405, "method_not_allowed", "该地址只支持 GET / POST",
                            headers={"Allow": "GET, POST, OPTIONS"})
+        if rest == "export":
+            if method != "GET":
+                raise ApiError(405, "method_not_allowed", "export 只支持 GET",
+                               headers={"Allow": "GET, OPTIONS"})
+            return 200, _export(service, query), {}
         if rest == "stats":
             if method != "GET":
                 raise ApiError(405, "method_not_allowed", "stats 只支持 GET",
@@ -85,6 +93,31 @@ def _create(service: NoteService, body: dict | None) -> tuple[int, dict, dict]:
     result = service.save(body, commit=commit, keep_raw=keep_raw,
                           digest_mode=body.get("digest"))
     return (201 if result["committed"] else 200), result, {}
+
+
+def _export(service: NoteService, query: dict) -> dict:
+    """导出返回内容本身（而不是写服务器磁盘）：浏览器拿到就能下载，服务端不落文件。"""
+    fmt = (_one(query, "format") or "html").lower()
+    if fmt not in ("html", "json"):
+        raise ApiError(400, "invalid_argument", "format 只能是 html 或 json")
+    ids = [str(item) for item in (query.get("id") or []) if str(item).strip()]
+    if ids:
+        notes = [service.get(item) for item in ids]
+    else:
+        rows = service.list(tags=query.get("tag") or None, kind=_one(query, "kind"),
+                            status=_one(query, "status"), since=_one(query, "since"),
+                            limit=500)
+        notes = [service.get(row["id"]) for row in rows]
+    title = _one(query, "title") or "我的笔记"
+    if fmt == "html":
+        text = export_mod.render_html(notes, title=title)
+        mime, ext = "text/html", "html"
+    else:
+        text = json.dumps(export_mod.bundle(notes), ensure_ascii=False, indent=2)
+        mime, ext = "application/json", "json"
+    return {"ok": True, "format": fmt, "count": len(notes), "mime": mime,
+            "filename": f"notes-{datetime.now().strftime('%Y%m%d-%H%M')}.{ext}",
+            "bytes": len(text.encode("utf-8")), "content": text}
 
 
 def _list(service: NoteService, query: dict) -> dict:

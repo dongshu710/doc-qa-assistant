@@ -32,7 +32,8 @@ PAYLOAD = {
 
 
 def md_files(home: Path) -> list[Path]:
-    return sorted(home.rglob("*.md"))
+    # 只看 notes/：根目录的 AGENTS.md 是给智能体的说明，不是笔记
+    return sorted((home / "notes").rglob("*.md"))
 
 
 def main() -> None:
@@ -137,7 +138,7 @@ def main() -> None:
         ({**PAYLOAD, "select": {"mode": "indices", "indices": [99]}}, "超出范围"),
         ({**PAYLOAD, "select": {"mode": "range", "start": 3, "end": 1}}, "不合法"),
         ({**PAYLOAD, "select": {"mode": "wat"}}, "未知"),
-        ({**PAYLOAD, "digest": "llm"}, "规则摘要"),
+        ({**PAYLOAD, "digest": "auto_typo"}, "未知的摘要模式"),
     ):
         try:
             service.save(bad, commit=False)

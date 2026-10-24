@@ -109,7 +109,7 @@ sequenceDiagram
 | 评测 | `src/evaluator.py` | L1 断言内核，CLI 与服务端共用 | 用例引用文档已删 → skip，不算失败 |
 | Web | `src/server.py` | 两页 + JSON API + 上传 | 4xx/5xx JSON，不返回 HTML 错误页 |
 | 页面 | `src/theme.py` / `src/web_pages.py` | 设计系统、问答页、知识库页 | 无 API 时页面仍可打开 |
-| 笔记 | `src/notes/` | Note v1 存储、规则摘要、CLI 与 HTTP（`/api/notes`，文件为真相） | 索引坏/缺 → 扫盘重建；front matter 坏 → `external` 降级；改冲突 → 409 |
+| 笔记 | `src/notes/` | Note v1 存储、双摘要引擎、CLI / HTTP / MCP 三入口、离线导出（文件为真相） | 索引坏/缺 → 扫盘重建；front matter 坏 → `external` 降级；改冲突 → 409；模型坏 → 回落规则摘要 |
 
 ## 5. 失败处理矩阵
 

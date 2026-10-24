@@ -2,6 +2,43 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.12.0] - 2026-10-24
+
+笔记从「能用」补成「能交给任何智能体用」：MCP 通道、模型摘要、页面编辑、离线导出。
+
+### 新增
+
+- **MCP stdio 服务**（`src/notes/mcp_server.py`，`python -m src.notes.mcp_server`）：JSON-RPC 2.0 逐行传输，
+  7 个工具（保存 / 搜索 / 读取 / 修改 / 删除 / 统计 / 导出）+ 2 个资源（`notes://schema`、`notes://index`）；
+  协议版本回显与回落、未知方法 `-32601`、坏 JSON `-32700` 均不中断会话；stdout 只跑协议，日志走 stderr。
+- **大模型摘要**（`src/notes/digest_llm.py`）：`--digest auto|llm`；严格 JSON 校验（剥代码围栏、校验 `摘要` 非空、
+  丢弃非标准小节、`kind` 非法回落 `qa`）；超时 / 限流 / 坏 JSON / 无 Key 一律回落规则摘要，
+  并在 front matter 记 `digest_fallback`；`llm` 模式失败给可读错误而不是静默降级。
+- **知识库页「笔记」分区**：文档 / 笔记两个分区切换；笔记可搜索、按类型与状态筛选、查看全文、
+  改标题标签小节、加减小节、删除（进 `.trash`）、导出 HTML / JSON；保存带 `rev`，冲突自动重载。
+- **问答页「存为笔记」**：每条回答下方入口，先 `commit=false` 预览再落盘，可改标题/标签/类型；
+  重复内容提示「已经存过了」。
+- **离线导出**（`src/notes/export.py` + `GET /api/notes/export` + `python -m src.notes export`）：
+  自包含单文件 HTML（内联 CSS/JS、无外链、深色跟随系统、打印隐藏工具栏、正文转义防注入）与 JSON bundle；
+  临时文件 + 原子替换，失败不毁旧文件。
+- **`AGENTS.md`**：仓库根目录的接入说明；`NOTE_HOME` 首次初始化还会写一份同名说明，用户改过就不再覆盖。
+- **测试**：`test_notes_mcp`（31 项）、`test_notes_digest_llm`（25 项）、`test_notes_export`（26 项）、
+  `tests/e2e_notes.mjs`（23 项，自启服务）；`test_server` 增加面板结构断言（用 HTMLParser 检查父子关系）。
+
+### 变更
+
+- `GET /tools.json` 工具声明 5 → 7（新增 `note_stats`、`export_notes`），与 MCP 共用同一份 schema。
+- `/api/notes/export` 返回内容本身而不写服务器磁盘：浏览器拿到就能下载，服务端不留文件。
+- `apiHeaders` / `ragApiKey` 上移到公共脚本层，知识库页也能带 `X-API-Key`。
+- 版本升到 1.12.0。
+
+### 修复
+
+- 知识库页两个分区最初因为少一个闭合 `</div>`，笔记面板被浏览器自动嵌进文档面板，
+  表现为「切过去空白」。已修正，并用 HTMLParser 断言两个面板同级，避免同类问题再靠肉眼发现。
+- 「存为笔记」的点击绑定一度落在未命中反馈里（`bindFeedback` / `bindMissFeedback` 两处相似代码），
+  已移到正确分支并补 E2E。
+
 ## [1.11.0] - 2026-10-24
 
 笔记接上 HTTP：从「只有命令行能用」变成「任何智能体都能调」。

@@ -42,7 +42,24 @@ curl -X POST http://127.0.0.1:8021/api/ask \
 ```
 
 期望：健康检查返回 `status=ok`、31 个知识块；问答返回 `behavior=answer` 且带引用。
-再打开 `/`、`/kb`、`/insights` 确认页面可渲染；`/dashboard`、`/report` 应 302 到 `/insights`。
+再打开 `/`、`/kb` 确认页面可渲染；`/insights`、`/dashboard`、`/report` 应 302 到 `/ask`。
+
+笔记三通道也要各冒烟一条（都不需要模型）：
+
+```bash
+# 1) CLI
+python -m src.notes --home /tmp/notes save --from conv.json --draft
+
+# 2) HTTP
+curl -s -X POST http://127.0.0.1:8021/api/notes -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"assistant","text":"结论：按 13% 执行。"}],"hint":{"title":"冒烟"}}'
+
+# 3) MCP（逐行 JSON-RPC，用管道喂两条消息即可）
+printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | NOTE_HOME=/tmp/notes python -m src.notes.mcp_server
+```
+
+期望：`/api/notes` 返回 `201` 与 `path`；MCP 第二条返回 7 个工具名；`/kb#notes` 能看到这篇。
 
 ## 4. 发布到 GitHub
 

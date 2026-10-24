@@ -176,7 +176,7 @@ def main() -> None:
         assert status == 204 and "GET" in (headers.get("Allow") or ""), (status, headers)
         status, _, tools = call(port, "GET", "/tools.json")
         names = [item["function"]["name"] for item in tools["tools"]]
-        assert status == 200 and len(names) == 5 and "save_conversation" in names, names
+        assert status == 200 and len(names) == 7 and "export_notes" in names, names
         status, _, spec = call(port, "GET", "/openapi.json")
         assert "/api/notes" in spec["paths"] and "/api/notes/{id}" in spec["paths"], spec["paths"].keys()
         assert any(tag["name"] == "笔记" for tag in spec["tags"])

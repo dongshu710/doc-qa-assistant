@@ -342,4 +342,14 @@ resources：`note://{id}`（单篇全文）、`notes://recent`（最近 20 条�
 - 鉴权与问答同口径；`NOTES_CORS` 默认关闭，显式配置才放行浏览器跨域。
 - `tests/test_notes_api.py` 覆盖 11 组场景（含 401、409、confirm_required）。
 
-未做（下一里程碑）：MCP server、LLM 摘要、`/kb` 笔记分区、离线导出。
+### 第三步（v1.12.0，已完成，M3/M4/M5/M6 收口）
+
+| 里程碑 | 落地 | 测试 |
+|---|---|---|
+| M3 摘要双引擎 | `digest_llm.py`：JSON 校验 + 四类失败回落 + `digest_fallback` 留痕；`auto` / `llm` 两种严格度 | `test_notes_digest_llm.py` 25 项 |
+| M4 工具面 | MCP stdio 7 工具 + 2 资源；`/tools.json` 与 MCP 共用 schema；`AGENTS.md` 两条（仓库 + 笔记库） | `test_notes_mcp.py` 31 项 |
+| M5 页面收敛 | `/kb` 第二分区（列表 / 编辑 / 删除 / 导出）；`/ask` 每条回答「存为笔记」+ 预览 | `tests/e2e_notes.mjs` 23 项 |
+| M6 离线导出 | 单文件 HTML（自包含、转义、原子写）+ JSON bundle；CLI / HTTP / MCP 三处入口 | `test_notes_export.py` 26 项 |
+
+四条通道现在是：文件直读 → CLI → HTTP → MCP，任一层坏了其余仍可用。
+未做（后续可选）：跨设备同步、附件上传、按语义检索笔记（当前是标签 + 关键词）。
