@@ -20,15 +20,21 @@ DEFAULT_MODEL = "deepseek-chat"
 
 _OVERRIDES: dict[str, str] = {}
 _OVERRIDES_AT = 0.0
+_OVERRIDES_KEY: tuple[int, str] | None = None
 
 
 def _overrides() -> dict[str, str]:
-    """界面配置加 1 秒缓存：一次问答会调几十次 load_settings，不必每次都 stat 配置文件。"""
-    global _OVERRIDES, _OVERRIDES_AT
+    """界面配置加两层失效：写入版本号（精确）+ 1 秒 TTL（兜底）。
+
+    只靠 TTL 会让「点了保存」后的同一次响应仍回显旧模型（实测复现），
+    而设置面板恰好把「已保存的值」和「当前生效的值」并排显示——自相矛盾比慢一秒更糟。
+    """
+    global _OVERRIDES, _OVERRIDES_AT, _OVERRIDES_KEY
     now = time.monotonic()
-    if now - _OVERRIDES_AT > 1.0:
+    key = (appconfig.revision(), str(appconfig.path()))
+    if key != _OVERRIDES_KEY or now - _OVERRIDES_AT > 1.0:
         _OVERRIDES = appconfig.as_env()
-        _OVERRIDES_AT = now
+        _OVERRIDES_AT, _OVERRIDES_KEY = now, key
     return _OVERRIDES
 
 

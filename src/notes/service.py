@@ -75,13 +75,19 @@ class NoteService:
         clipped = _clip_messages(selected)
         data, meta = digest_llm.digest(clipped, hint, mode=mode, call=self.chat_call)
 
+        # 创建和修改必须用同一套枚举：否则 PATCH 拒绝的值能从 POST 溜进来，
+        # 列表按 status 过滤时就永远查不到这篇（文件里还是非法值）
+        status = str(hint.get("status") or "draft")
+        if status not in STATUSES:
+            raise NoteError(f"status 只能是 {' / '.join(STATUSES)}")
+
         raw_flag = self.store.keep_raw if keep_raw is None else keep_raw
         note = Note(
             id="",
             title=data["title"],
             created="",
             kind=data.get("kind") if data.get("kind") in KINDS else "qa",
-            status=str(hint.get("status") or "draft"),
+            status=status,
             tags=data["tags"],
             source=_source(payload.get("source"), len(selected)),
             digest=meta["engine"],

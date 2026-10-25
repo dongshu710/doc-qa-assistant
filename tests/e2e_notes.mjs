@@ -87,7 +87,11 @@ try {
     noteHome = fs.mkdtempSync(path.join(os.tmpdir(), 'notes-e2e-'));
     const py = process.env.PYTHON || 'python';
     const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector',
-                  NOTE_HOME: path.join(noteHome, 'notes') };
+                  NOTE_HOME: path.join(noteHome, 'notes'),
+                  // 配置也要隔离：否则「存为笔记」按钮取决于本机 data/app.json 的开关，
+                  // 干净环境（CI）默认关闭 → 按钮不渲染 → 整条用例超时
+                  APP_CONFIG: path.join(noteHome, 'app.json'),
+                  STORE_CHAT: 'on' };
     delete env.LLM_API_KEY;
     delete env.DEEPSEEK_API_KEY;
     const logPath = path.join(ROOT, 'tests', 'e2e-notes-server.log');

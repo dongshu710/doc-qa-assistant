@@ -155,16 +155,18 @@ class NoteStore:
     def save(self, note: Note, check_duplicate: bool = True) -> SaveResult:
         if not note.id:
             note.id = new_id()
-        if check_duplicate and note.hash:
-            existing = self.find_by_hash(note.hash)
-            if existing and (self.home / existing["path"]).exists():
-                path = self.home / existing["path"]
-                return SaveResult(_read_note(path), path, created=False,
-                                  duplicate_of=str(existing["id"]))
         note.touch(_now_text())
         path = self.path_for(note)
         path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock():
+            # 查重和写入必须在同一把锁里：网页与 MCP 同时存同一段对话时，
+            # 锁外查重会各自查到「不存在」，然后各写一篇，去重形同虚设。
+            if check_duplicate and note.hash:
+                existing = self.find_by_hash(note.hash)
+                if existing and (self.home / existing["path"]).exists():
+                    existing_path = self.home / existing["path"]
+                    return SaveResult(_read_note(existing_path), existing_path, created=False,
+                                      duplicate_of=str(existing["id"]))
             tmp = path.with_suffix(".md.tmp")
             with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(note.to_markdown())

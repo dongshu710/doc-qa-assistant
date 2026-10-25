@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,11 +39,49 @@ DEFAULTS = {
 
 _cache: dict | None = None
 _cache_stat: tuple[float, int] | None = None
+# 手改配置写坏了不能装作没发生：界面上要能看见「现在显示的是默认值」，
+# 否则用户以为密钥丢了，其实是 JSON 少了一个逗号（反过来更糟：再点一次保存就把原文盖掉）。
+_parse_error = ""
+_last_backup = ""
+# 每次写盘 +1，给 config 的 1 秒缓存做精确失效；光靠 TTL 会让「保存后立刻生效」出现 1 秒空窗。
+_revision = 0
+# 配置是整文件读改写：导出（记时间）与保存设置同时发生时会互相覆盖，用进程内锁串起来。
+# 跨进程只有 CLI/MCP 读配置、不写，所以一把本地锁足够。
+_write_lock = threading.Lock()
+
+
+def revision() -> int:
+    return _revision
 
 
 def path() -> Path:
     override = os.environ.get("APP_CONFIG", "").strip()
     return Path(override).expanduser() if override else DEFAULT_PATH
+
+
+_TRUE = {"1", "true", "on", "yes", "y", "是", "开"}
+_FALSE = {"0", "false", "off", "no", "n", "否", "关"}
+
+
+def _as_bool(value, *, strict: bool = False) -> bool:
+    """把 JSON / 表单里的值折成布尔。
+
+    不能直接 bool("false")——那是 True，会让「储存对话内容」在用户明确写 false 时反而打开。
+    读路径遇到无法识别的值一律按 False（少存优于多存）；写路径直接报错，别猜。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+    if strict:
+        raise ValueError("开关只能填 true / false（也接受 on / off）")
+    return False
 
 
 def _dig(data: dict, dotted: str):
@@ -61,33 +101,86 @@ def _put(data: dict, dotted: str, value) -> None:
     node[parts[-1]] = value
 
 
+def _decode(raw: bytes) -> str:
+    """按 UTF-8 → GBK 依次试。
+
+    中文 Windows 的记事本默认「ANSI」就是 GBK：用户手改一次配置，服务就直接起不来
+    （`UnicodeDecodeError` 不在原来的 OSError 分支里）。写入统一用 UTF-8，读的时候宽容一点。
+    """
+    for encoding in ("utf-8-sig", "gbk"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise UnicodeDecodeError("utf-8", raw, 0, min(1, len(raw)), "既不是 UTF-8 也不是 GBK")
+
+
 def _read() -> dict:
-    global _cache, _cache_stat
+    global _cache, _cache_stat, _parse_error
     target = path()
     try:
         stat = target.stat()
     except OSError:
-        _cache, _cache_stat = {}, None
+        _cache, _cache_stat, _parse_error = {}, None, ""
         return {}
     # 按 mtime + size 失效：用户手改 app.json 也能立刻生效，不必重启服务
     stamp = (stat.st_mtime, stat.st_size)
     if _cache is not None and _cache_stat == stamp:
         return _cache
     try:
-        data = json.loads(target.read_text(encoding="utf-8"))
+        data = json.loads(_decode(target.read_bytes()))
         if not isinstance(data, dict):
-            data = {}
-    except (OSError, json.JSONDecodeError):
-        # 坏文件不能让整个服务起不来：当作没配过，界面上会显示默认值
+            data, _parse_error = {}, "顶层必须是一个 JSON 对象"
+        else:
+            _parse_error = ""
+    except json.JSONDecodeError as exc:
+        # 坏文件不能让整个服务起不来：当作没配过，但要把「哪里坏了」留给界面
         data = {}
+        _parse_error = f"第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}"
+    except UnicodeDecodeError:
+        data = {}
+        _parse_error = "文件编码无法识别（既不是 UTF-8 也不是 GBK）"
+    except OSError as exc:
+        data = {}
+        _parse_error = f"读取失败：{exc}"
     _cache, _cache_stat = data, stamp
     return data
 
 
+def _backup_broken(target: Path) -> str:
+    """写之前若原文件不是合法 JSON，先留一份原件。
+
+    这条路径防的是「手改少个逗号 → 界面显示成默认值 → 点一次保存 → 密钥被覆盖没了」。
+    备份失败不阻断保存，但要返回空串，界面就不会谎称已备份。
+    """
+    if not target.exists():
+        return ""
+    try:
+        text = _decode(target.read_bytes())
+    except OSError:
+        return ""
+    except UnicodeDecodeError:
+        text = None          # 编码都认不出，同样是「坏文件」，必须备份
+    if text is not None:
+        try:
+            json.loads(text)
+            return ""
+        except json.JSONDecodeError:
+            pass
+    backup = target.with_name(f"{target.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    try:
+        shutil.copy2(target, backup)
+    except OSError:
+        return ""
+    return str(backup)
+
+
 def _write(data: dict) -> None:
     """原子写：先落临时文件再替换，避免半个 JSON 把配置彻底读废。"""
+    global _parse_error, _last_backup, _revision
     target = path()
     target.parent.mkdir(parents=True, exist_ok=True)
+    _last_backup = _backup_broken(target)
     payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     handle, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".app-", suffix=".json")
     try:
@@ -100,6 +193,8 @@ def _write(data: dict) -> None:
         except OSError:
             pass
         raise
+    _parse_error = ""
+    _revision += 1
 
 
 def get(dotted: str, default=None):
@@ -118,7 +213,7 @@ def as_env() -> dict[str, str]:
             continue        # 没写过这一项：交给环境变量兜底
         # 写过就照实输出，哪怕空串。空串是「用户主动清空」，不能再被环境变量顶回来
         if meta["type"] == "bool":
-            out[meta["env"]] = "on" if value else "off"
+            out[meta["env"]] = "on" if _as_bool(value) else "off"
         else:
             out[meta["env"]] = str(value)
     return out
@@ -127,8 +222,10 @@ def as_env() -> dict[str, str]:
 def store_chat() -> bool:
     value = _dig(_read(), "notes.store_chat")
     if value is None:
-        return False
-    return bool(value)
+        # 配置里没写过就认环境变量：SCHEMA 与 .env.example 都声明了 STORE_CHAT，
+        # 只读配置文件会让这个开关「写了不生效」，比没有更误导。
+        return _as_bool(os.environ.get("STORE_CHAT", ""))
+    return _as_bool(value)
 
 
 BACKUP_STALE_DAYS = 30
@@ -140,12 +237,15 @@ def mark_exported() -> None:
     备份提醒只认这个时间，不去猜用户有没有手动拷走目录——
     「看起来备份过」和「真的导出过」是两件事，猜错会让人以为有保障。
     """
-    data = json.loads(json.dumps(_read()))
-    _put(data, "notes.last_export_at", datetime.now(timezone.utc).isoformat())
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _write(data)
     global _cache, _cache_stat
-    _cache, _cache_stat = None, None
+    with _write_lock:
+        # 整文件读改写：不加锁会和「保存设置」互相覆盖（导出记一次时间，把刚填的密钥盖回旧值）
+        data = json.loads(json.dumps(_read()))
+        stamp = datetime.now(timezone.utc).isoformat()
+        _put(data, "notes.last_export_at", stamp)
+        data["updated_at"] = stamp
+        _write(data)
+        _cache, _cache_stat = None, None
 
 
 def last_export_at() -> str:
@@ -163,6 +263,10 @@ def backup_state(notes_count: int) -> dict:
         when = datetime.fromisoformat(raw)
     except ValueError:
         return {"due": True, "last_export_at": raw, "days": None, "text": "备份时间无法识别"}
+    if when.tzinfo is None:
+        # 手改配置常写成「2026-10-01T10:00:00」这种不带时区的形式。
+        # 直接和 UTC 相减会抛 TypeError，把整个设置面板打成 500——按本机时区补齐即可。
+        when = when.astimezone()
     days = max(0, (datetime.now(timezone.utc) - when).days)
     if days == 0:
         text = "今天备份过"
@@ -208,9 +312,10 @@ def _check_home(value: str) -> str:
         raise ValueError("存储位置要填绝对路径，例如 D:\\我的笔记")
     try:
         target.mkdir(parents=True, exist_ok=True)
-        probe = target / ".write-test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
+        # 不能固定叫 .write-test：万一目录里真有同名文件，测一次写权限就把人家删了
+        handle, probe = tempfile.mkstemp(dir=str(target), prefix=".write-test-")
+        os.close(handle)
+        os.unlink(probe)
     except OSError as exc:
         raise ValueError(f"这个位置不可写：{exc}") from exc
     return str(target)
@@ -220,31 +325,33 @@ def update(patch: dict) -> dict:
     """合并写入。只接受 SCHEMA 里的键，其余静默丢弃，防止手滑写坏文件。"""
     if not isinstance(patch, dict):
         raise ValueError("请求体必须是 JSON 对象")
-    data = json.loads(json.dumps(_read()))  # 深拷贝，失败时不污染缓存
     llm = patch.get("llm") or {}
     notes = patch.get("notes") or {}
 
-    incoming: dict[str, object] = {}
-    if "base_url" in llm:
-        incoming["llm.base_url"] = _check_base_url(str(llm["base_url"]))
-    if "model" in llm:
-        model = str(llm["model"]).strip()
-        if not model:
-            raise ValueError("模型名不能为空")
-        incoming["llm.model"] = model
-    if "api_key" in llm:
-        incoming["llm.api_key"] = str(llm["api_key"]).strip()
-    if "home" in notes:
-        incoming["notes.home"] = _check_home(str(notes["home"]))
-    if "store_chat" in notes:
-        incoming["notes.store_chat"] = bool(notes["store_chat"])
-
-    for dotted, value in incoming.items():
-        _put(data, dotted, value)
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _write(data)
     global _cache, _cache_stat
-    _cache, _cache_stat = None, None        # 下次读重新加载，保证本进程立刻看到新值
+    with _write_lock:
+        data = json.loads(json.dumps(_read()))  # 深拷贝，失败时不污染缓存
+
+        incoming: dict[str, object] = {}
+        if "base_url" in llm:
+            incoming["llm.base_url"] = _check_base_url(str(llm["base_url"]))
+        if "model" in llm:
+            model = str(llm["model"]).strip()
+            if not model:
+                raise ValueError("模型名不能为空")
+            incoming["llm.model"] = model
+        if "api_key" in llm:
+            incoming["llm.api_key"] = str(llm["api_key"]).strip()
+        if "home" in notes:
+            incoming["notes.home"] = _check_home(str(notes["home"]))
+        if "store_chat" in notes:
+            incoming["notes.store_chat"] = _as_bool(notes["store_chat"], strict=True)
+
+        for dotted, value in incoming.items():
+            _put(data, dotted, value)
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _write(data)
+        _cache, _cache_stat = None, None    # 下次读重新加载，保证本进程立刻看到新值
     return view()
 
 
@@ -277,8 +384,12 @@ def view() -> dict:
         },
         "notes": {
             "home": home,
-            "store_chat": bool(_dig(data, "notes.store_chat")),
+            # 走 store_chat() 而不是直接读文件：界面显示的必须是「实际生效值」，
+            # 否则 STORE_CHAT=on 时开关显示为关，而保存却被放行，自相矛盾
+            "store_chat": store_chat(),
         },
         "config_path": str(path()),
+        "config_error": _parse_error,
+        "config_backup": _last_backup,
         "updated_at": data.get("updated_at") or "",
     }

@@ -95,6 +95,14 @@ def main() -> None:
         assert len(list((tmp / "store").rglob("*.md"))) == files_before
         print("commit=false 预览 OK")
 
+        # 3.5 创建时的枚举校验：PATCH 拦得住的值，POST 也不能放进来
+        status, _, bad_status = call(port, "POST", "/api/notes", {
+            "messages": [{"role": "user", "content": "状态校验"}],
+            "hint": {"status": "bogus"},
+        })
+        assert status == 400 and "status" in bad_status["message"], (status, bad_status)
+        print("创建时状态枚举校验 OK")
+
         # 4. 列表与筛选
         status, _, listing = call(port, "GET", "/api/notes")
         assert status == 200 and listing["count"] == 1, listing

@@ -134,6 +134,53 @@ def main() -> int:
     appconfig._cache_stat = None
     view = appconfig.view()
     check("坏文件按未配置处理", view["llm"]["api_key_set"] is False)
+    check("坏文件说明坏在哪一行", "第 1 行" in view["config_error"], view["config_error"])
+    broken = app_file.read_text(encoding="utf-8")
+    appconfig.update({"llm": {"model": "after-broken"}})
+    view = appconfig.view()
+    check("覆盖前自动备份坏文件", bool(view["config_backup"]), view["config_backup"])
+    backup = Path(view["config_backup"]) if view["config_backup"] else None
+    check("备份内容与原文一致", bool(backup and backup.exists()
+                                and backup.read_text(encoding="utf-8") == broken))
+    check("覆盖后错误标记清掉", view["config_error"] == "", view["config_error"])
+
+    print("开关取值")
+    app_file.write_text('{"notes": {"store_chat": "false"}}', encoding="utf-8")
+    appconfig._cache = None
+    appconfig._cache_stat = None
+    check("手写字符串 false 就是关", appconfig.store_chat() is False)
+    check("映射成环境变量也是 off", appconfig.as_env().get("STORE_CHAT") == "off")
+    check("接口传字符串 false 存成布尔假",
+          appconfig.update({"notes": {"store_chat": "false"}})["notes"]["store_chat"] is False)
+    try:
+        appconfig.update({"notes": {"store_chat": "maybe"}})
+        check("无法识别的开关值被拒绝", False)
+    except ValueError:
+        check("无法识别的开关值被拒绝", True)
+
+    print("配置写权限探测")
+    probe_dir = tmp / "probe-dir"
+    probe_dir.mkdir()
+    keep = probe_dir / ".write-test"
+    keep.write_text("用户自己的文件", encoding="utf-8")
+    appconfig._check_home(str(probe_dir))
+    check("探测写权限不删同名文件", keep.exists()
+          and keep.read_text(encoding="utf-8") == "用户自己的文件")
+
+    print("手改时间戳")
+    reset(tmp / "hand.json")
+    app_file = tmp / "hand.json"
+    app_file.write_text('{"notes": {"last_export_at": "2026-10-01T10:00:00"}}',
+                        encoding="utf-8")
+    appconfig._cache = None
+    appconfig._cache_stat = None
+    try:
+        state = appconfig.backup_state(3)
+        check("无时区时间戳不抛异常", True)
+        check("无时区时间戳按本机时区算", state["days"] is not None and state["days"] > 20,
+              str(state))
+    except TypeError as exc:
+        check("无时区时间戳不抛异常", False, str(exc))
 
     print("配置优先级")
     reset(tmp / "priority.json")
@@ -144,6 +191,14 @@ def main() -> int:
     check("界面配置压过环境变量", cfg.load_settings().model == "from-ui",
           cfg.load_settings().model)
     del os.environ["LLM_MODEL"]
+
+    print("保存即生效")
+    reset(tmp / "instant.json")
+    cfg._OVERRIDES_AT = 0.0
+    cfg.load_settings()              # 先让 1 秒缓存装上一次旧值
+    appconfig.update({"llm": {"model": "just-saved"}})
+    check("同秒内保存立刻生效（不吃旧缓存）", cfg.load_settings().model == "just-saved",
+          cfg.load_settings().model)
 
     print("备份提醒")
     reset(tmp / "backup.json")
@@ -156,6 +211,37 @@ def main() -> int:
     check("导出后不再提醒", fresh["due"] is False, str(fresh))
     check("文案显示今天", fresh["text"] == "今天备份过", fresh["text"])
     check("上次导出时间已落盘", bool(appconfig.last_export_at()))
+
+    print("环境变量兜底")
+    reset(tmp / "envonly.json")
+    os.environ["STORE_CHAT"] = "on"
+    check("配置没写时认 STORE_CHAT", appconfig.store_chat() is True)
+    check("视图回显的也是生效值", appconfig.view()["notes"]["store_chat"] is True)
+    appconfig.update({"notes": {"store_chat": False}})
+    check("配置写过就以配置为准", appconfig.store_chat() is False)
+    os.environ.pop("STORE_CHAT", None)
+
+    print("编码容错")
+    gbk = tmp / "gbk.json"
+    gbk.write_bytes('{"llm": {"model": "深度求索"}}'.encode("gbk"))
+    reset(gbk)
+    check("GBK 配置能读出来", appconfig.view()["llm"]["model"] == "深度求索",
+          appconfig.view()["llm"]["model"])
+    appconfig.update({"llm": {"model": "deepseek-chat"}})
+    try:
+        gbk.read_bytes().decode("utf-8")
+        check("保存后统一写回 UTF-8", True)
+    except UnicodeDecodeError:
+        check("保存后统一写回 UTF-8", False)
+    binary = tmp / "binary.json"
+    binary.write_bytes(b"\xff\xfe\x00\x01")
+    reset(binary)
+    try:
+        view = appconfig.view()
+        check("编码无法识别不抛异常", True)
+        check("编码无法识别有提示", "编码" in view["config_error"], view["config_error"])
+    except UnicodeDecodeError as exc:
+        check("编码无法识别不抛异常", False, str(exc))
 
     print("页面挂载")
     from src.theme import SETTINGS_HTML, nav

@@ -246,6 +246,14 @@ try {
   check('导出后提醒点消失', !(await page.locator('#setDot').isVisible()));
   const afterBackup = (await page.locator('#setBackupNote').textContent()) || '';
   check('备份文案更新为今天', afterBackup.includes('今天'), afterBackup);
+
+  // HEAD 复用 GET 的处理分支，但不能被当成「下载过」——否则探测一下红点就没了
+  const beforeHead = await page.evaluate(
+    () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
+  await page.evaluate(() => fetch('/api/notes/export', { method: 'HEAD' }));
+  const afterHead = await page.evaluate(
+    () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
+  check('HEAD 探测不算备份', beforeHead === afterHead, `${beforeHead} -> ${afterHead}`);
   await page.locator('.set-note-item').first().click();
   // 展开是异步取全文：等到不是「加载中…」才算数，否则断言打在占位文案上
   await page.waitForFunction(
@@ -267,6 +275,27 @@ try {
   check('MCP 配置已生成', (mcp || '').includes('src.notes.mcp_server'), (mcp || '').slice(0, 80));
   const href = await page.getAttribute('#setDownload', 'href');
   check('下载链接指向 releases', (href || '').includes('/releases/latest'), href || '');
+
+  // ---- 配置写坏时的可见提示 ----
+  // 手改 app.json 少个逗号，界面必须说清楚「显示的是默认值」，不能装作密钥丢了
+  fs.writeFileSync(path.join(tmp, 'app.json'), '{ 这不是 JSON', 'utf-8');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.click('#setBtn');
+  await page.waitForFunction(
+    () => {
+      const el = document.getElementById('setCfgWarn');
+      return el && !el.hidden && (el.textContent || '').includes('无法解析');
+    }, null, { timeout: 8000 },
+  );
+  check('配置损坏时给出提示', true);
+
+  await page.click('[data-tab="api"]');
+  await page.click('#setSave');
+  await page.waitForFunction(
+    () => (document.getElementById('setCfgWarn')?.textContent || '').includes('已备份'),
+    null, { timeout: 8000 },
+  );
+  check('覆盖前已备份并告知路径', true);
 
   // ---- 关闭 ----
   await page.keyboard.press('Escape');

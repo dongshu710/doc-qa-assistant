@@ -259,6 +259,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             "mcp": _mcp_config(),
             "repo_url": _repo_url(),
             "config_path": view["config_path"],
+            "config_error": view.get("config_error") or "",
+            "config_backup": view.get("config_backup") or "",
             "updated_at": view["updated_at"],
         }
 
@@ -527,8 +529,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if method != "GET":
                 guards.audit.write(f"notes.{method.lower()}", client=self._client(),
                                    id=payload.get("id"), duplicate_of=payload.get("duplicate_of"))
-            elif path.rstrip("/") == "/api/notes/export":
-                # 只有真导出成功才记：导出失败也算「备份过」，等于骗自己
+            elif (path.rstrip("/") == "/api/notes/export" and status == 200
+                    and self.command == "GET"):
+                # 只有真的下载了才算备份：do_HEAD 复用 do_GET，HEAD 探测会把红点骗消失
                 appconfig.mark_exported()
             self._json(payload, status, {**cors, **extra})
 

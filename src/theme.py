@@ -559,6 +559,7 @@ SETTINGS_HTML = (
     '<button type="button" data-tab="install">安装</button>'
     "</div>"
     '<div class="set-body">'
+    '<p class="set-note err" id="setCfgWarn" hidden></p>'
 
     '<section class="set-pane on" data-pane="api">'
     '<label class="set-f">接口地址<input id="setBase" autocomplete="off" spellcheck="false"></label>'
@@ -702,8 +703,17 @@ SETTINGS_JS = """
 
   function applyView(d){
     state.view=d; state.loaded=true;
-    if($('setBase')){ $('setBase').value=d.llm.base_url||''; $('setBase').placeholder=d.llm.base_url_default||''; }
-    if($('setModel')){ $('setModel').value=d.llm.model||''; $('setModel').placeholder=d.llm.model_default||''; }
+    if($('setCfgWarn')){
+      // 配置写坏时界面显示的是默认值，必须说清楚，否则用户以为密钥自己没了
+      var cfgWarn=d.config_error
+        ? ('配置文件无法解析（'+d.config_error+'），下面显示的是默认值；修好后重新打开面板')
+        : (d.config_backup ? ('原配置无法解析，保存前已备份到 '+d.config_backup) : '');
+      $('setCfgWarn').hidden=!cfgWarn;
+      $('setCfgWarn').textContent=cfgWarn;
+    }
+    // 输入框填「配置值」，没配过就填当前生效值：否则空表单点保存会被校验拦下（配置写坏时直接死锁）
+    if($('setBase')){ $('setBase').value=d.llm.base_url||d.llm.effective_base_url||''; $('setBase').placeholder=d.llm.base_url_default||''; }
+    if($('setModel')){ $('setModel').value=d.llm.model||d.llm.effective_model||''; $('setModel').placeholder=d.llm.model_default||''; }
     if($('setKey')){
       $('setKey').value='';
       $('setKey').placeholder=d.llm.api_key_set
@@ -961,6 +971,16 @@ THEME_JS = """
     if(btn) btn.setAttribute('aria-label',t==='dark'?'切换到浅色模式':'切换到深色模式');
   }
   if(btn) btn.addEventListener('click',function(){ apply(current()==='dark'?'light':'dark'); });
+})();
+
+// 页面一加载就同步「储存对话内容」开关。
+// 之前只在打开设置抽屉时才知道开关状态：开关明明是开的，「存为笔记」也要先点一次设置才出现，
+// 用户会以为功能坏了（e2e 在干净环境里也正因此超时）。
+(function(){
+  if(!window.fetch) return;
+  fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d){
+    if(d&&d.ok){ window.__storeChat=!!d.notes.store_chat; }
+  }).catch(function(){});
 })();
 """
 
