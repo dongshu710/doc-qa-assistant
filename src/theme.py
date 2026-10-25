@@ -454,7 +454,7 @@ def nav(active: str = "", links: bool = True) -> str:
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
         'stroke-width="1.8" stroke-linecap="round"><path d="M4 6h8M18 6h2M4 12h4M12 12h8M4 18h10"/>'
         '<circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'
-        "</svg></button>"
+        '</svg><span class="gear-dot" id="setDot" hidden></span></button>'
         "</div></header>"
     )
 
@@ -477,8 +477,11 @@ SETTINGS_CSS = """
 /* ============ 设置抽屉 ============ */
 .nav-gear{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--surface);
   color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:color .15s,border-color .15s,background .15s;margin-left:4px;flex:none;}
+  transition:color .15s,border-color .15s,background .15s;margin-left:4px;flex:none;position:relative;}
 .nav-gear:hover{color:var(--brand);border-color:var(--brand);background:var(--brand-tint);}
+.gear-dot{position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%;
+  background:var(--bad);box-shadow:0 0 0 1.5px var(--surface);}
+.gear-dot[hidden]{display:none;}
 .set-mask{position:fixed;inset:0;background:rgba(10,16,32,.32);z-index:70;}
 .set-panel{position:fixed;inset:0 0 0 auto;width:min(430px,100vw);background:var(--surface);z-index:71;
   display:flex;flex-direction:column;box-shadow:var(--sh-3);animation:setIn .18s ease;}
@@ -599,6 +602,7 @@ SETTINGS_HTML = (
     '<span class="spacer"></span>'
     '<button class="btn ghost sm" id="setNotesExport" type="button">导出全部</button>'
     '<button class="btn ghost sm" id="setNotesRefresh" type="button">刷新</button></div>'
+    '<p class="set-note" id="setBackupNote"></p>'
     '<div class="set-notes" id="setNotesList"></div>'
     "</section>"
 
@@ -671,13 +675,29 @@ SETTINGS_JS = """
     [].forEach.call(panel.querySelectorAll('.set-pane'),function(p){
       p.classList.toggle('on',p.getAttribute('data-pane')===name);
     });
-    if(name==='save') loadNotes();
+    if(name==='save'){ loadNotes(); refreshBackup(); }
   });
 
   function segHome(which){
     var seg=$('setHomeSeg'); if(!seg) return;
     [].forEach.call(seg.children,function(b){ b.classList.toggle('on',b.getAttribute('data-home')===which); });
     var wrap=$('setHomeWrap'); if(wrap) wrap.hidden=(which!=='custom');
+  }
+
+  function renderBackup(bk){
+    bk=bk||{};
+    if($('setDot')) $('setDot').hidden=!bk.due;
+    if($('setBackupNote')){
+      $('setBackupNote').textContent=bk.text?(bk.text+(bk.due?' · 建议导出一次':'')):'';
+      $('setBackupNote').className='set-note'+(bk.due?' err':'');
+    }
+  }
+
+  function refreshBackup(){
+    // 只刷红点与文案，不碰用户正在填的输入框——存完笔记立刻看到提醒才有意义
+    api('GET','/api/settings').then(function(d){
+      if(d&&d.ok) renderBackup(d.notes&&d.notes.backup);
+    });
   }
 
   function applyView(d){
@@ -713,6 +733,9 @@ SETTINGS_JS = """
         mig.removeAttribute('data-from');
       }
     }
+
+    var bk=(d.notes&&d.notes.backup)||{};
+    renderBackup(bk);
 
     if($('setStoreChat')) $('setStoreChat').checked=!!d.notes.store_chat;
     window.__storeChat=!!d.notes.store_chat;
@@ -884,6 +907,8 @@ SETTINGS_JS = """
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(function(){ URL.revokeObjectURL(url); },1000);
         note('setNotesCount','已导出 '+(d.count||0)+' 篇：'+(d.filename||''),false);
+        // 导出成功后红点立刻消失，不用等下次打开面板
+        renderBackup({due:false, text:'今天备份过'});
       })
       .catch(function(e){ note('setNotesCount','导出失败：'+((e&&e.message)||e),true); })
       .finally(function(){ btn.disabled=false; btn.textContent=label; });

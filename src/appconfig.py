@@ -131,6 +131,49 @@ def store_chat() -> bool:
     return bool(value)
 
 
+BACKUP_STALE_DAYS = 30
+
+
+def mark_exported() -> None:
+    """记一次成功导出。
+
+    备份提醒只认这个时间，不去猜用户有没有手动拷走目录——
+    「看起来备份过」和「真的导出过」是两件事，猜错会让人以为有保障。
+    """
+    data = json.loads(json.dumps(_read()))
+    _put(data, "notes.last_export_at", datetime.now(timezone.utc).isoformat())
+    data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _write(data)
+    global _cache, _cache_stat
+    _cache, _cache_stat = None, None
+
+
+def last_export_at() -> str:
+    return str(_dig(_read(), "notes.last_export_at") or "")
+
+
+def backup_state(notes_count: int) -> dict:
+    """是否该提醒备份。没笔记就不提醒——空库提示备份只会制造噪音。"""
+    raw = last_export_at()
+    if notes_count <= 0:
+        return {"due": False, "last_export_at": raw, "days": None, "text": ""}
+    if not raw:
+        return {"due": True, "last_export_at": "", "days": None, "text": "还没备份过"}
+    try:
+        when = datetime.fromisoformat(raw)
+    except ValueError:
+        return {"due": True, "last_export_at": raw, "days": None, "text": "备份时间无法识别"}
+    days = max(0, (datetime.now(timezone.utc) - when).days)
+    if days == 0:
+        text = "今天备份过"
+    elif days == 1:
+        text = "昨天备份过"
+    else:
+        text = f"上次备份 {days} 天前"
+    return {"due": days >= BACKUP_STALE_DAYS, "last_export_at": raw,
+            "days": days, "text": text}
+
+
 def _check_base_url(value: str) -> str:
     value = value.strip().rstrip("/")
     if not re.match(r"^https?://[^\s/]+", value):

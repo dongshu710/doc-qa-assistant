@@ -231,6 +231,21 @@ try {
   await page.waitForSelector('.set-note-item', { timeout: 8000 }).catch(() => {});
   check('已存列表出现笔记', (await page.locator('.set-note-item').count()) >= 1);
   check('已存分区有导出入口', await page.isVisible('#setNotesExport'));
+
+  // ---- 备份提醒 ----
+  check('有笔记但没备份过时显示提醒点', await page.isVisible('#setDot'));
+  const beforeBackup = (await page.locator('#setBackupNote').textContent()) || '';
+  check('备份状态文案可读', /还没备份过|上次备份|今天备份/.test(beforeBackup), beforeBackup);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 8000 }).catch(() => null),
+    page.click('#setNotesExport'),
+  ]);
+  check('导出真的触发下载', download !== null, download ? download.suggestedFilename() : '无下载事件');
+  await page.waitForTimeout(1000);
+  check('导出后提醒点消失', !(await page.locator('#setDot').isVisible()));
+  const afterBackup = (await page.locator('#setBackupNote').textContent()) || '';
+  check('备份文案更新为今天', afterBackup.includes('今天'), afterBackup);
   await page.locator('.set-note-item').first().click();
   // 展开是异步取全文：等到不是「加载中…」才算数，否则断言打在占位文案上
   await page.waitForFunction(

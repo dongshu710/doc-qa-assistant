@@ -237,6 +237,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         live = load_settings()
         view = appconfig.view()
         service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        count = _count_notes(home)
         return {
             "ok": True,
             "llm": {
@@ -247,10 +249,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             },
             "notes": {
                 **view["notes"],
-                "home_effective": str(service.store.home) if service else "",
+                "home_effective": home,
                 "home_default": str(pathlib.Path.home() / "agent-notes"),
                 "available": service is not None,
                 "error": note_ref["error"],
+                "count": count,
+                "backup": appconfig.backup_state(count),
             },
             "mcp": _mcp_config(),
             "repo_url": _repo_url(),
@@ -523,6 +527,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if method != "GET":
                 guards.audit.write(f"notes.{method.lower()}", client=self._client(),
                                    id=payload.get("id"), duplicate_of=payload.get("duplicate_of"))
+            elif path.rstrip("/") == "/api/notes/export":
+                # 只有真导出成功才记：导出失败也算「备份过」，等于骗自己
+                appconfig.mark_exported()
             self._json(payload, status, {**cors, **extra})
 
         def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:

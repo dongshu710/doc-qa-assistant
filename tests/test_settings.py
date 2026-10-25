@@ -145,6 +145,18 @@ def main() -> int:
           cfg.load_settings().model)
     del os.environ["LLM_MODEL"]
 
+    print("备份提醒")
+    reset(tmp / "backup.json")
+    never = appconfig.backup_state(5)
+    check("从未备份且有笔记要提醒", never["due"] is True and never["text"] == "还没备份过",
+          str(never))
+    check("空库不提醒", appconfig.backup_state(0)["due"] is False)
+    appconfig.mark_exported()
+    fresh = appconfig.backup_state(5)
+    check("导出后不再提醒", fresh["due"] is False, str(fresh))
+    check("文案显示今天", fresh["text"] == "今天备份过", fresh["text"])
+    check("上次导出时间已落盘", bool(appconfig.last_export_at()))
+
     print("页面挂载")
     from src.theme import SETTINGS_HTML, nav
     from src.web_pages import ASK_HTML, KB_HTML
