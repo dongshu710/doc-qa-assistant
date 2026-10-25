@@ -125,7 +125,9 @@ def _list(service: NoteService, query: dict) -> dict:
         limit = int(_one(query, "limit") or 20)
     except ValueError:
         raise ApiError(400, "invalid_argument", "limit 必须是整数") from None
-    limit = max(0, min(limit, 200))
+    if limit < 0:
+        raise ApiError(400, "invalid_argument", "limit 不能为负，至少给 1（想取全部请用导出）")
+    limit = min(limit, 200)
     rows = service.list(tags=query.get("tag") or None, kind=_one(query, "kind"),
                         status=_one(query, "status"), since=_one(query, "since"),
                         limit=limit)

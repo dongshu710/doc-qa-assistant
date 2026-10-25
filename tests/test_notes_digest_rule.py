@@ -152,7 +152,24 @@ def main() -> None:
         failures.append(f"显式标题被截断: {kept_title}")
         print(f"FAIL  显式标题被截断: {kept_title}")
 
-    # 非法输入：报错要能直接读
+    # 陈述句里的「提交」不算待办；用户的祈使句不许混进要点
+    total += 1
+    mixed = service.save({"messages": [
+        {"role": "user", "text": "赎回后多久到账？"},
+        {"role": "assistant", "text": "赎回申请 T 日提交，资金 T+1 个工作日到账。"},
+    ]}, commit=False)
+    mixed_note = Note.from_markdown(mixed["markdown"], fallback_id="x")
+    todos = mixed_note.section("待办")
+    points = mixed_note.section("要点")
+    if "提交" in todos:
+        failures.append(f"「T 日提交」被误判成待办: {todos}")
+        print("FAIL  陈述句被误判成待办")
+    elif "赎回后多久到账" in points or "赎回后多久到账" in mixed_note.section("摘要"):
+        failures.append("用户提问混进了要点/摘要")
+        print("FAIL  用户提问混进要点")
+    else:
+        print("PASS  陈述句不进待办 · 提问不进要点")
+
     for payload, override, keyword in ERRORS:
         total += 1
         body = dict(payload)

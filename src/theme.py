@@ -61,27 +61,25 @@ MARK = (
 BASE_CSS = """
 /* ============ 设计令牌 ============ */
 :root{
-  --ink:#0a1020; --text:#1b2436; --muted:#4a5468; --faint:#667085;
-  --line:#e8ebf2; --line-2:#dce1ec;
-  --bg:#f6f7fb; --surface:#fff; --surface-2:#fbfcfe;
-  --brand:#2f5cf6; --brand-600:#2449d8; --brand-2:#7a5cfb; --brand-soft:#eef2ff; --brand-tint:#f6f8ff;
+  --ink:#17181c; --text:#2b2d33; --muted:#61646b; --faint:#8a8f98;
+  --line:#ececf0; --line-2:#e0e1e6;
+  --bg:#ffffff; --surface:#ffffff; --surface-2:#f7f8fa;
+  --brand:#4d6bfe; --brand-600:#3d5af0; --brand-2:#4d6bfe; --brand-soft:#eef1ff; --brand-tint:#f6f7ff;
   --ok:#0f9d63; --ok-soft:#e9f9f1; --warn:#b26a00; --warn-soft:#fff7e8; --bad:#d92d20; --bad-soft:#fef1f0;
-  --r-sm:10px; --r:14px; --r-lg:18px; --r-xl:24px;
-  --sh-1:0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.03);
-  --sh-2:0 10px 30px -18px rgba(16,24,40,.22), 0 2px 8px rgba(16,24,40,.04);
-  --sh-3:0 30px 70px -30px rgba(10,16,32,.35);
+  --r-sm:8px; --r:12px; --r-lg:16px; --r-xl:20px;
+  --sh-1:0 1px 2px rgba(17,18,22,.04);
+  --sh-2:0 8px 24px -16px rgba(17,18,22,.18), 0 1px 2px rgba(17,18,22,.04);
+  --sh-3:0 24px 56px -28px rgba(17,18,22,.28);
   --font:"Inter","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"JetBrains Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;
-  --nav-h:64px;
+  --nav-h:56px;
 }
 *,*::before,*::after{box-sizing:border-box;}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
 body{
   margin:0;font-family:var(--font);color:var(--text);background:var(--bg);
-  font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;
+  font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden;
   min-height:100vh;display:flex;flex-direction:column;
-  background-image:radial-gradient(900px 420px at 50% -180px,#e9edff 0%,rgba(246,247,251,0) 70%);
-  background-repeat:no-repeat;
 }
 a{color:inherit;text-decoration:none;}
 button{font-family:inherit;}
@@ -111,15 +109,15 @@ main{flex:1 0 auto;}
 /* ============ 页头 ============ */
 .nav{
   position:sticky;top:0;z-index:50;height:var(--nav-h);
-  background:rgba(255,255,255,.82);backdrop-filter:saturate(180%) blur(14px);
-  -webkit-backdrop-filter:saturate(180%) blur(14px);border-bottom:1px solid rgba(232,235,242,.9);
+  background:rgba(255,255,255,.86);backdrop-filter:saturate(180%) blur(12px);
+  -webkit-backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line);
 }
 .nav-inner{max-width:1120px;height:100%;margin:0 auto;padding:0 22px;display:flex;align-items:center;gap:18px;}
 .brand{display:flex;align-items:center;gap:11px;min-width:0;}
 .mark{
-  width:32px;height:32px;border-radius:10px;flex:none;color:#fff;
-  background:linear-gradient(140deg,var(--brand) 0%,var(--brand-2) 100%);
-  box-shadow:0 6px 14px -6px rgba(47,92,246,.7), inset 0 1px 0 rgba(255,255,255,.35);
+  width:30px;height:30px;border-radius:9px;flex:none;color:#fff;
+  background:var(--brand);
+  box-shadow:0 4px 12px -6px rgba(77,107,254,.55);
   display:flex;align-items:center;justify-content:center;
 }
 .mark svg{width:18px;height:18px;}
@@ -159,22 +157,35 @@ main{flex:1 0 auto;}
   border:1px solid var(--line);background:var(--surface);color:var(--muted);
   transition:background .16s ease,color .16s ease,border-color .16s ease;
 }
-.theme-toggle:hover{background:#f3f5fa;color:var(--ink);border-color:var(--line-2);}
+.theme-toggle:hover{background:#f3f4f7;color:var(--ink);border-color:var(--line-2);}
+/* 已存文件的实体入口：放导航栏右侧，和主题/设置同一排，点开即看文件与正文 */
+.nav-files{
+  flex:none;position:relative;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;margin-left:4px;
+  border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--muted);
+  font-size:13px;font-weight:500;cursor:pointer;
+  transition:color .15s,border-color .15s,background .15s;
+}
+.nav-files svg{flex:none;}
+.nav-files:hover{color:var(--brand);border-color:var(--brand);background:var(--brand-tint);}
+.nav-files .nf-count{
+  min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--brand-soft);
+  color:var(--brand);font-size:11px;font-weight:700;line-height:18px;text-align:center;
+}
+.nav-files .nf-count[hidden]{display:none;}
+@media (max-width:720px){ .nav-files .nf-label{display:none;} .nav-files{padding:0 9px;} }
 .theme-toggle .ic-sun{display:none;}
 [data-theme="dark"] .theme-toggle .ic-sun{display:inline-flex;}
 [data-theme="dark"] .theme-toggle .ic-moon{display:none;}
 @media (max-width:640px){.theme-toggle{width:30px;height:30px;}}
 
 /* ============ 页脚 ============ */
-.site-foot{border-top:1px solid var(--line);background:#fff;margin-top:20px;}
-.foot-inner{max-width:1120px;margin:0 auto;padding:28px 22px;display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;}
-.foot-brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:600;font-size:13.5px;}
-.foot-brand .mark{width:26px;height:26px;border-radius:8px;}
-.foot-brand .mark svg{width:15px;height:15px;}
-.foot-links{display:flex;gap:18px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;}
+.site-foot{border-top:1px solid var(--line);background:var(--surface);margin-top:20px;}
+.foot-inner{max-width:1120px;margin:0 auto;padding:16px 22px;display:flex;gap:20px;align-items:center;
+  font-size:12.5px;color:var(--faint);}
+.foot-brand{color:var(--muted);font-weight:600;}
+.foot-links{display:flex;gap:14px;}
 .foot-links a:hover{color:var(--brand);}
-.foot-note{margin-left:auto;max-width:420px;font-size:12px;color:var(--faint);line-height:1.7;text-align:right;}
-@media (max-width:760px){.foot-note{margin-left:0;text-align:left;}}
+.foot-ver{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--faint);}
 
 /* ============ 按钮 ============ */
 .btn{
@@ -328,40 +339,36 @@ pre.cmd .c{color:#7d8db3;}
    所以这段必须最后加载（shell/报告页都把 DARK_CSS 放在页面 CSS 之后）。 */
 [data-theme="dark"]{
   color-scheme:dark;
-  --ink:#eef2ff; --text:#d5dcec; --muted:#a9b4c9; --faint:#8f9bb3;
-  --line:#243049; --line-2:#2f3d59;
-  --bg:#0b1120; --surface:#111827; --surface-2:#0f172a;
-  --brand:#7f9cff; --brand-600:#93aaff; --brand-2:#a78bfa; --brand-soft:#1b2a4d; --brand-tint:#141f38;
+  --ink:#f1f2f4; --text:#d6d8dd; --muted:#a3a7af; --faint:#80848c;
+  --line:#2b2c31; --line-2:#383940;
+  --bg:#17181c; --surface:#1c1d21; --surface-2:#232429;
+  --brand:#7c93ff; --brand-600:#93a6ff; --brand-2:#7c93ff; --brand-soft:#262b44; --brand-tint:#1f2130;
   --ok:#34d399; --ok-soft:#0f2f26; --warn:#fbbf24; --warn-soft:#33260c; --bad:#f87171; --bad-soft:#3a1518;
   --sh-1:0 1px 2px rgba(0,0,0,.45); --sh-2:0 12px 32px -18px rgba(0,0,0,.85);
   --sh-3:0 30px 70px -30px rgba(0,0,0,.9);
 }
-[data-theme="dark"] body{
-  background-image:radial-gradient(900px 420px at 50% -180px,#17244d 0%,rgba(11,17,32,0) 70%);
-}
-[data-theme="dark"] ::selection{background:#2b3f75;color:#eef2ff;}
-[data-theme="dark"] code{background:#182338;border-color:var(--line);color:#c7d2e8;}
-[data-theme="dark"] .nav{background:rgba(15,23,42,.86);border-bottom-color:rgba(36,48,73,.9);}
-[data-theme="dark"] .nav nav a:hover{background:#182338;color:var(--ink);}
-[data-theme="dark"] .nav .nav-tag{background:#16213a;border-color:var(--line);color:#b9c6e2;}
+[data-theme="dark"] ::selection{background:#2f3a63;color:#eef2ff;}
+[data-theme="dark"] code{background:#232429;border-color:var(--line);color:#c9ccd4;}
+[data-theme="dark"] .nav{background:rgba(28,29,33,.88);border-bottom-color:var(--line);}
+[data-theme="dark"] .nav nav a:hover{background:var(--surface-2);color:var(--ink);}
 [data-theme="dark"] .site-foot{background:var(--surface);}
-[data-theme="dark"] .theme-toggle{border-color:var(--line-2);background:#16213a;color:#c7d2e8;}
-[data-theme="dark"] .theme-toggle:hover{background:#1d2a44;color:var(--ink);}
+[data-theme="dark"] .theme-toggle{border-color:var(--line-2);background:var(--surface-2);color:var(--text);}
+[data-theme="dark"] .theme-toggle:hover{background:var(--surface);color:var(--ink);}
 [data-theme="dark"] .btn.ghost{background:var(--surface);border-color:var(--line-2);color:var(--text);}
-[data-theme="dark"] .btn.ghost:hover{background:#182338;border-color:#3a4a6b;color:var(--ink);}
-[data-theme="dark"] .btn.quiet:hover{background:#1a253c;color:var(--ink);}
+[data-theme="dark"] .btn.ghost:hover{background:var(--surface-2);border-color:var(--line-2);color:var(--ink);}
+[data-theme="dark"] .btn.quiet:hover{background:var(--surface-2);color:var(--ink);}
 [data-theme="dark"] .btn.danger-ghost{background:var(--surface);border-color:#5a2a2d;color:#fca5a5;}
 [data-theme="dark"] .btn.danger-ghost:hover{background:var(--bad-soft);}
 [data-theme="dark"] .kpi{background:var(--surface);}
 [data-theme="dark"] .kpi:hover{border-color:#33425f;}
 [data-theme="dark"] .kpi.accent{background:linear-gradient(160deg,#15213c,#111827 62%);border-color:#2b3a5c;}
 [data-theme="dark"] .table-wrap{background:var(--surface);}
-[data-theme="dark"] thead th{background:#16213a;color:#93a1bb;border-bottom-color:var(--line);}
-[data-theme="dark"] tbody td{border-bottom-color:#1d2942;}
-[data-theme="dark"] tbody tr:hover td{background:#16213a;}
+[data-theme="dark"] thead th{background:var(--surface-2);color:var(--faint);border-bottom-color:var(--line);}
+[data-theme="dark"] tbody td{border-bottom-color:var(--line);}
+[data-theme="dark"] tbody tr:hover td{background:var(--surface-2);}
 [data-theme="dark"] .bar{background:#1c2942;}
 [data-theme="dark"] .empty .ic{color:#4a5a78;}
-[data-theme="dark"] .pill{background:#182338;border-color:var(--line);color:#b6c2da;}
+[data-theme="dark"] .pill{background:var(--surface-2);border-color:var(--line);color:var(--muted);}
 [data-theme="dark"] .pill.ok{background:var(--ok-soft);border-color:#1f5a45;color:#6ee7b7;}
 [data-theme="dark"] .pill.warn{background:var(--warn-soft);border-color:#5a4413;color:#fcd34d;}
 [data-theme="dark"] .pill.bad{background:var(--bad-soft);border-color:#5a2a2d;color:#fca5a5;}
@@ -372,16 +379,16 @@ pre.cmd .c{color:#7d8db3;}
 [data-theme="dark"] .modal-card{background:var(--surface);}
 [data-theme="dark"] .field label{color:#a9b4c9;}
 [data-theme="dark"] .field input,[data-theme="dark"] .field select,[data-theme="dark"] .field textarea{
-  background:#0f172a;border-color:var(--line-2);color:var(--text);
+  background:var(--bg);border-color:var(--line-2);color:var(--text);
 }
-[data-theme="dark"] #toasts .toast{background:#1b2743;border:1px solid #2f3d59;color:#eef2ff;}
+[data-theme="dark"] #toasts .toast{background:var(--surface);border:1px solid var(--line);color:var(--ink);}
 
 /* ---------- 页面私有组件 ---------- */
 [data-theme="dark"] .stat-strip{background:var(--surface);}
-[data-theme="dark"] .chat-shell,[data-theme="dark"] .ans-card,[data-theme="dark"] .ex-card,
-[data-theme="dark"] .composer,[data-theme="dark"] .src-drawer{background:var(--surface);}
-[data-theme="dark"] .empty-chat .art{background:linear-gradient(160deg,#182544,#0f172a);}
-[data-theme="dark"] .src-close,[data-theme="dark"] .kb-modal-head button{background:#1c2942;color:var(--text);}
+[data-theme="dark"] .ans-card,[data-theme="dark"] .ex-card,
+[data-theme="dark"] .src-drawer{background:var(--surface);}
+[data-theme="dark"] .empty-chat .art{background:var(--brand-soft);border-color:var(--line);}
+[data-theme="dark"] .src-close,[data-theme="dark"] .kb-modal-head button{background:var(--surface-2);color:var(--text);}
 [data-theme="dark"] .src-text mark{background:#4a3a12;color:#fde68a;}
 [data-theme="dark"] .sim-q{background:#241c0c;border-color:#4a3a14;color:#f4d58a;}
 [data-theme="dark"] .sim-q:hover{border-color:#7a6224;background:#2b2210;}
@@ -445,8 +452,16 @@ def nav(active: str = "", links: bool = True) -> str:
         '<header class="nav"><div class="nav-inner">'
         f'<a class="brand" href="/">{MARK}'
         f'<span class="brand-text"><b>{BRAND}</b><i>{TOPIC}</i></span></a>'
-        f'<span class="nav-tag">v{__version__}</span>'
         f"{nav_html}"
+        # 文件入口：此前只能从「设置 → 已存」里翻，位置隐蔽；现在固定在导航栏右侧
+        '<button class="nav-files" id="filesBtn" type="button" aria-haspopup="dialog" '
+        'aria-controls="filesPanel" title="已存文件">'
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M6 3.5h7.5L18 8v12.5H6z"/><path d="M13.5 3.5V8H18"/></svg>'
+        '<span class="nf-label">文件</span>'
+        '<span class="nf-count" id="filesCount" hidden>0</span>'
+        '<span class="files-dot" id="filesDot" hidden></span></button>'
         f'<button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色模式">'
         f'<span class="ic-moon">{icon("moon", 16)}</span>'
         f'<span class="ic-sun">{icon("sun", 16)}</span></button>'
@@ -454,21 +469,18 @@ def nav(active: str = "", links: bool = True) -> str:
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
         'stroke-width="1.8" stroke-linecap="round"><path d="M4 6h8M18 6h2M4 12h4M12 12h8M4 18h10"/>'
         '<circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'
-        '</svg><span class="gear-dot" id="setDot" hidden></span></button>'
+        '</svg></button>'
         "</div></header>"
     )
 
 
 def footer(links: bool = True) -> str:
-    nav_links = (
-        '<div class="foot-links"><a href="/ask">问答</a><a href="/kb">知识库</a></div>'
-        if links else '<div class="foot-links"><span>独立导出 · 离线可看</span></div>'
-    )
+    links_html = '<a href="/ask">问答</a><a href="/kb">知识库</a>' if links else "<span>独立导出 · 离线可看</span>"
     return (
         '<footer class="site-foot"><div class="foot-inner">'
-        f'<div class="foot-brand">{MARK}<span>{BRAND}</span></div>'
-        f'{nav_links}'
-        '<div class="foot-note">只依据知识库作答，逐条标注出处 · 演示数据不构成投资建议</div>'
+        f'<span class="foot-brand">{BRAND}</span>'
+        f'<span class="foot-links">{links_html}</span>'
+        f'<span class="foot-ver">v{__version__}</span>'
         "</div></footer>"
     )
 
@@ -555,7 +567,6 @@ SETTINGS_HTML = (
     '<button type="button" data-tab="api" class="on">接口</button>'
     '<button type="button" data-tab="store">存储</button>'
     '<button type="button" data-tab="chat">对话</button>'
-    '<button type="button" data-tab="save">已存</button>'
     '<button type="button" data-tab="install">安装</button>'
     "</div>"
     '<div class="set-body">'
@@ -598,15 +609,6 @@ SETTINGS_HTML = (
     '<p class="set-note" id="setChatNote"></p>'
     "</section>"
 
-    '<section class="set-pane" data-pane="save">'
-    '<div class="set-row"><span class="set-note" id="setNotesCount"></span>'
-    '<span class="spacer"></span>'
-    '<button class="btn ghost sm" id="setNotesExport" type="button">导出全部</button>'
-    '<button class="btn ghost sm" id="setNotesRefresh" type="button">刷新</button></div>'
-    '<p class="set-note" id="setBackupNote"></p>'
-    '<div class="set-notes" id="setNotesList"></div>'
-    "</section>"
-
     '<section class="set-pane" data-pane="install">'
     '<div class="set-row"><a class="btn sm" id="setDownload" href="#" target="_blank" rel="noopener">下载到电脑</a>'
     '<button class="btn ghost sm" id="setMcpCopy" type="button">复制配置</button>'
@@ -618,6 +620,203 @@ SETTINGS_HTML = (
 
     "</div></aside>"
 )
+
+FILES_CSS = """
+/* ============ 文件抽屉（已存内容） ============ */
+.files-dot{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;
+  background:var(--bad);box-shadow:0 0 0 2px var(--surface);}
+.files-dot[hidden]{display:none;}
+.files-mask{position:fixed;inset:0;background:rgba(17,18,22,.26);z-index:70;}
+.files-panel{
+  position:fixed;top:0;right:0;bottom:0;width:min(760px,96vw);z-index:71;display:flex;flex-direction:column;
+  background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--sh-3);
+  transform:translateX(14px);opacity:0;transition:transform .18s ease,opacity .18s ease;
+}
+.files-panel.on{transform:none;opacity:1;}
+.files-hd{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);}
+.files-hd b{font-size:14px;color:var(--ink);}
+.files-total{font-size:12px;color:var(--faint);}
+.files-x{width:28px;height:28px;border:0;background:none;color:var(--faint);font-size:19px;line-height:1;
+  border-radius:8px;cursor:pointer;}
+.files-x:hover{background:var(--surface-2);color:var(--ink);}
+.files-body{flex:1;min-height:0;display:grid;grid-template-columns:232px 1fr;}
+.files-list{overflow:auto;border-right:1px solid var(--line);padding:8px;}
+.file-item{display:block;width:100%;text-align:left;border:0;background:none;padding:9px 10px;
+  border-radius:9px;cursor:pointer;transition:background .12s;}
+.file-item:hover{background:var(--surface-2);}
+.file-item.on{background:var(--brand-soft);}
+.file-item b{display:block;font-size:13px;font-weight:600;color:var(--ink);line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.file-item span{font-size:11.5px;color:var(--faint);}
+.files-detail{overflow:auto;padding:18px 20px;}
+.files-detail h3{margin:0 0 4px;font-size:16px;letter-spacing:-.01em;}
+.files-meta{font-size:12px;color:var(--faint);margin-bottom:16px;}
+.files-sec{margin-bottom:14px;}
+.files-sec h4{margin:0 0 4px;font-size:11.5px;font-weight:600;color:var(--brand);letter-spacing:.04em;}
+.files-sec p{margin:0;font-size:13px;line-height:1.75;white-space:pre-wrap;color:var(--text);}
+.files-empty{margin:0;padding:16px;font-size:12.5px;color:var(--faint);line-height:1.7;}
+.files-note{font-size:12px;color:var(--faint);}
+.files-note.err{color:var(--bad);}
+.files-ft{padding:10px 16px;border-top:1px solid var(--line);min-height:40px;}
+@media (max-width:680px){
+  .files-body{grid-template-columns:1fr;}
+  .files-list{border-right:0;border-bottom:1px solid var(--line);max-height:36vh;}
+}
+"""
+
+FILES_HTML = (
+    '<div class="files-mask" id="filesMask" hidden></div>'
+    '<aside class="files-panel" id="filesPanel" hidden role="dialog" aria-modal="true" aria-label="已存文件">'
+    '<div class="files-hd"><b>文件</b><span class="files-total" id="filesTotal"></span>'
+    '<span class="spacer"></span>'
+    '<button class="btn ghost sm" id="filesExport" type="button">导出全部</button>'
+    '<button class="files-x" id="filesClose" type="button" aria-label="关闭">×</button></div>'
+    '<div class="files-body">'
+    '<div class="files-list" id="filesList"></div>'
+    '<div class="files-detail" id="filesDetail"><p class="files-empty">从左侧选一份文件。</p></div>'
+    "</div>"
+    '<div class="files-ft"><span class="files-note" id="filesBackup"></span></div>'
+    "</aside>"
+)
+
+FILES_JS = """
+(function(){
+  var $=function(id){ return document.getElementById(id); };
+  var panel=$('filesPanel'), mask=$('filesMask');
+  if(!panel||!mask) return;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function fmt(iso){
+    var t=String(iso||'').slice(0,16).replace('T',' ');
+    return t||'';
+  }
+  function req(path){
+    return fetch(path,{headers:{'Accept':'application/json'}}).then(function(r){ return r.json(); });
+  }
+  function setBadge(n){
+    n=Number(n)||0;
+    var c=$('filesCount');
+    if(c){ c.textContent=n>99?'99+':String(n); c.hidden=n<=0; }
+    var t=$('filesTotal');
+    if(t) t.textContent=n?('共 '+n+' 篇'):'';
+  }
+
+  function load(){
+    var box=$('filesList');
+    box.innerHTML='<p class="files-empty">加载中…</p>';
+    req('/api/notes?limit=50').then(function(d){
+      if(!d||!d.ok){ box.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      setBadge(d.count);
+      var rows=d.items||[];
+      if(!rows.length){
+        box.innerHTML='<p class="files-empty">还没有文件。在问答里点「存为笔记」，或让智能体通过 MCP 保存。</p>';
+        return;
+      }
+      box.innerHTML='';
+      rows.forEach(function(it){
+        var b=document.createElement('button');
+        b.type='button'; b.className='file-item';
+        b.setAttribute('data-id', it.id);
+        b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmt(it.created))+'</span>';
+        box.appendChild(b);
+      });
+    }).catch(function(){
+      box.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
+    });
+  }
+
+  function show(id, btn){
+    [].forEach.call(panel.querySelectorAll('.file-item'), function(x){
+      x.classList.toggle('on', x===btn);
+    });
+    var box=$('filesDetail');
+    box.innerHTML='<p class="files-empty">读取中…</p>';
+    req('/api/notes/'+encodeURIComponent(id)).then(function(d){
+      if(!d||!d.ok){ box.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      var meta=[fmt(d.created), d.kind||'', (d.tags||[]).join(' · ')].filter(Boolean).join(' · ');
+      var html='<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
+      var secs=(d.sections||[]).filter(function(s){ return s.body&&String(s.body).trim(); });
+      if(!secs.length) html+='<p class="files-empty">这篇还没有正文。</p>';
+      secs.forEach(function(s){
+        html+='<div class="files-sec"><h4>'+esc(s.title)+'</h4><p>'+esc(s.body)+'</p></div>';
+      });
+      box.innerHTML=html;
+      box.scrollTop=0;
+    }).catch(function(){
+      box.innerHTML='<p class="files-empty">读取失败。</p>';
+    });
+  }
+
+  // 首屏与每次打开都同步一次数量/备份状态：存了新笔记再点进来，角标必须是最新的
+  function refreshState(){
+    fetch('/api/settings',{headers:{'Accept':'application/json'}}).then(function(r){ return r.json(); }).then(function(d){
+      if(!d||!d.ok) return;
+      setBadge(d.notes&&d.notes.count);
+      var bk=(d.notes&&d.notes.backup)||{};
+      if($('filesDot')) $('filesDot').hidden=!bk.due;
+      if($('filesBackup')&&bk.text){
+        $('filesBackup').textContent=bk.text+(bk.due?' · 建议导出一次':'');
+        $('filesBackup').className='files-note'+(bk.due?' err':'');
+      }
+    }).catch(function(){});
+  }
+
+  function open(){
+    panel.hidden=false; mask.hidden=false;
+    document.body.classList.add('set-open');
+    requestAnimationFrame(function(){ panel.classList.add('on'); });
+    refreshState();
+    load();
+    var first=panel.querySelector('.file-item')||$('filesClose');
+    if(first) first.focus();
+  }
+  function close(){
+    panel.classList.remove('on');
+    panel.hidden=true; mask.hidden=true;
+    document.body.classList.remove('set-open');
+    if($('filesBtn')) $('filesBtn').focus();
+  }
+
+  // 问答页存完一篇就刷新角标：否则用户得刷新页面才看得到入口上的数字变了
+  var prevSaved=window.__noteSaved;
+  window.__noteSaved=function(d){
+    if(typeof prevSaved==='function') prevSaved(d);
+    refreshState();
+  };
+
+  if($('filesBtn')) $('filesBtn').addEventListener('click',open);
+  if($('filesClose')) $('filesClose').addEventListener('click',close);
+  mask.addEventListener('click',close);
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&!panel.hidden) close();
+  });
+  if($('filesList')) $('filesList').addEventListener('click',function(e){
+    var b=e.target.closest('.file-item'); if(!b) return;
+    show(b.getAttribute('data-id'), b);
+  });
+  if($('filesExport')) $('filesExport').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='导出中…';
+    fetch('/api/notes/export?format=json').then(function(r){ return r.json(); }).then(function(d){
+      if(!d||!d.ok){ if($('filesBackup')) $('filesBackup').textContent=(d&&d.message)||'导出失败'; return; }
+      var blob=new Blob([d.content],{type:d.mime||'application/json;charset=utf-8'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url; a.download=d.filename||'notes.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+      if($('filesBackup')){ $('filesBackup').textContent='已导出 '+(d.count||0)+' 篇'; $('filesBackup').className='files-note'; }
+      if($('filesDot')) $('filesDot').hidden=true;
+    }).catch(function(e){
+      if($('filesBackup')) $('filesBackup').textContent='导出失败：'+((e&&e.message)||e);
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
+  });
+
+  // 首屏就把数量与备份状态读出来：入口上的角标不该等打开抽屉才出现
+  refreshState();
+})();
+"""
 
 THEME_HEAD = (
     "<script>(function(){try{var s=localStorage.getItem('rag_theme');"
@@ -676,7 +875,6 @@ SETTINGS_JS = """
     [].forEach.call(panel.querySelectorAll('.set-pane'),function(p){
       p.classList.toggle('on',p.getAttribute('data-pane')===name);
     });
-    if(name==='save'){ loadNotes(); refreshBackup(); }
   });
 
   function segHome(which){
@@ -687,10 +885,10 @@ SETTINGS_JS = """
 
   function renderBackup(bk){
     bk=bk||{};
-    if($('setDot')) $('setDot').hidden=!bk.due;
-    if($('setBackupNote')){
-      $('setBackupNote').textContent=bk.text?(bk.text+(bk.due?' · 建议导出一次':'')):'';
-      $('setBackupNote').className='set-note'+(bk.due?' err':'');
+    if($('filesDot')) $('filesDot').hidden=!bk.due;
+    if($('filesBackup')){
+      $('filesBackup').textContent=bk.text?(bk.text+(bk.due?' · 建议导出一次':'')):'';
+      $('filesBackup').className='files-note'+(bk.due?' err':'');
     }
   }
 
@@ -878,65 +1076,6 @@ SETTINGS_JS = """
     });
   });
 
-  function loadNotes(){
-    var box=$('setNotesList'); if(!box) return;
-    box.innerHTML='<p class="set-note">加载中…</p>';
-    api('GET','/api/notes?limit=30').then(function(d){
-      if(!d||!d.ok){
-        box.innerHTML='<p class="set-note err">'+esc((d&&d.message)||'读取失败')+'</p>';
-        return;
-      }
-      if($('setNotesCount')) $('setNotesCount').textContent='最近 '+d.count+' 条';
-      var rows=d.items||[];
-      if(!rows.length){
-        box.innerHTML='<p class="set-note">还没有存过内容。开启「储存对话内容」后，在问答里点「存为笔记」。</p>';
-        return;
-      }
-      box.innerHTML=rows.map(function(it){
-        var when=String(it.created||'').slice(0,16).replace('T',' ');
-        return '<div class="set-note-item" data-id="'+esc(it.id)+'"><b>'+esc(it.title||'(无标题)')+'</b>'
-          +'<span>'+esc(when)+' · '+esc(it.kind||'')+'</span>'
-          +'<div class="set-note-view" hidden></div></div>';
-      }).join('');
-    });
-  }
-  if($('setNotesRefresh')) $('setNotesRefresh').addEventListener('click',loadNotes);
-
-  // 个人使用最怕的是「东西没了」。导出走浏览器直接下载，服务端不落文件。
-  if($('setNotesExport')) $('setNotesExport').addEventListener('click',function(){
-    var btn=this, label=btn.textContent;
-    btn.disabled=true; btn.textContent='导出中…';
-    fetch('/api/notes/export?format=json')
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!d||!d.ok){ note('setNotesCount',(d&&d.message)||'导出失败',true); return; }
-        var blob=new Blob([d.content],{type:d.mime||'application/json;charset=utf-8'});
-        var url=URL.createObjectURL(blob);
-        var a=document.createElement('a');
-        a.href=url; a.download=d.filename||'notes.json';
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(function(){ URL.revokeObjectURL(url); },1000);
-        note('setNotesCount','已导出 '+(d.count||0)+' 篇：'+(d.filename||''),false);
-        // 导出成功后红点立刻消失，不用等下次打开面板
-        renderBackup({due:false, text:'今天备份过'});
-      })
-      .catch(function(e){ note('setNotesCount','导出失败：'+((e&&e.message)||e),true); })
-      .finally(function(){ btn.disabled=false; btn.textContent=label; });
-  });
-  if($('setNotesList')) $('setNotesList').addEventListener('click',function(e){
-    var card=e.target.closest('.set-note-item'); if(!card) return;
-    var body=card.querySelector('.set-note-view'); if(!body) return;
-    if(!body.hidden){ body.hidden=true; return; }
-    body.hidden=false; body.textContent='加载中…';
-    api('GET','/api/notes/'+encodeURIComponent(card.getAttribute('data-id'))).then(function(d){
-      if(!d||!d.ok){ body.textContent=(d&&d.message)||'读取失败'; return; }
-      var parts=(d.sections||[]).map(function(s){
-        return (s.body&&s.body.trim()) ? ('【'+s.title+'】\\n'+s.body) : '';
-      }).filter(Boolean);
-      body.textContent=parts.length?parts.join('\\n\\n'):'（这篇还没有正文）';
-    });
-  });
-
   if($('setMcpCopy')) $('setMcpCopy').addEventListener('click',function(){
     var text=$('setMcpPre')?$('setMcpPre').textContent:'';
     function done(){ note('setMcpNote','已复制，粘贴到客户端的 mcpServers 里',false); }
@@ -993,10 +1132,11 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{THEME_HEAD}"
         f'<meta name="color-scheme" content="light dark">'
         '<link rel="icon" href="data:,">'
-        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{css}</style></head><body>"
+        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{css}</style></head><body>"
         f"{nav(active)}{body}{footer()}"
-        f"{SETTINGS_HTML}"
+        f"{FILES_HTML}{SETTINGS_HTML}"
         f'<div id="toasts"></div><script>{script}</script>'
+        f"<script>{FILES_JS}</script>"
         f"<script>{SETTINGS_JS}</script><script>{THEME_JS}</script></body></html>"
     )
 

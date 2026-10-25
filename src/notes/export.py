@@ -164,7 +164,10 @@ def export(service, out: str | Path, note_ids: list[str] | None = None, fmt: str
     else:
         raise ValueError(f"不支持的导出格式：{fmt}（可选 html / json）")
     tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    # newline="" 关掉换行转换：Windows 上默认会把 \n 变成 \r\n，
+    # 于是返回的 bytes 和磁盘实际大小差出「行数个字节」，核对文件时对不上。
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
     tmp.replace(target)
     return {"ok": True, "count": len(notes), "path": str(target), "format": fmt,
             "mime": mime, "bytes": len(text.encode("utf-8"))}

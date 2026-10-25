@@ -9,9 +9,10 @@
 from .theme import BRAND, JS_UTIL, shell
 
 ASK_CSS = """
-.ask-wrap{max-width:920px;}
-.chat-shell{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-1);
-  display:flex;flex-direction:column;height:min(calc(100vh - var(--nav-h) - 92px),820px);min-height:560px;overflow:hidden;}
+.ask-wrap{max-width:860px;}
+/* 去卡片化：一页只有「对话」和「输入框」两层，靠留白分区分组，不用边框圈起来 */
+.chat-shell{background:transparent;border:0;box-shadow:none;border-radius:0;
+  display:flex;flex-direction:column;height:min(calc(100vh - var(--nav-h) - 72px),860px);min-height:520px;overflow:hidden;}
 
 .chat-list{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:16px;}
 .chat-list::-webkit-scrollbar{width:8px;}
@@ -113,7 +114,7 @@ details.src[open] summary .ic{transform:rotate(90deg);}
   background-size:220% 100%;animation:shimmer 1.5s infinite linear;}
 @keyframes shimmer{from{background-position:120% 0;}to{background-position:-120% 0;}}
 
-.composer{padding:11px 16px 13px;border-top:1px solid var(--line);background:#fff;}
+.composer{padding:10px 0 6px;border-top:0;background:transparent;}
 .keybar{display:flex;align-items:center;gap:8px;margin-bottom:9px;padding:8px 10px;border-radius:9px;
   border:1px solid #f0dfc0;background:var(--warn-soft);color:var(--warn);font-size:12.5px;}
 .keybar[hidden]{display:none;}
@@ -121,9 +122,10 @@ details.src[open] summary .ic{transform:rotate(90deg);}
   background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;outline:none;}
 .keybar input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,92,246,.12);}
 .keybar .key-note{color:var(--faint);font-size:12px;}
-.composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--line-2);border-radius:14px;
-  padding:7px 7px 7px 14px;background:#fff;transition:border .15s,box-shadow .15s;}
-.composer-box:focus-within{border-color:#b9c8f7;box-shadow:0 0 0 4px rgba(47,92,246,.08);}
+.composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--line-2);border-radius:18px;
+  padding:8px 8px 8px 16px;background:var(--surface);box-shadow:var(--sh-2);
+  transition:border-color .15s,box-shadow .15s;}
+.composer-box:focus-within{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
 .composer textarea{flex:1;border:none;outline:none;resize:none;font-size:14px;line-height:1.6;max-height:124px;
   min-height:24px;padding:5px 0;font-family:inherit;color:var(--text);background:transparent;}
 .composer textarea::placeholder{color:#a9b3c6;}
@@ -193,6 +195,30 @@ ASK_CSS += """
 }
 """
 
+# 早期组件把蓝色/灰阶写死在规则里，改令牌改不动它们。
+# 这里统一回收成令牌，顺带把气泡、示例卡、引用标签的「渐变+投影」压平成单一层级。
+ASK_CSS += """
+.bubble{background:var(--brand);color:#fff;border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13.5px;}
+.chat-list::-webkit-scrollbar-thumb{background:var(--line-2);}
+.empty-chat .art{background:var(--brand-soft);border-color:var(--line);border-radius:18px;color:var(--brand);}
+.empty-chat .art svg [fill="#f9fbff"]{fill:var(--surface);}
+.ex-card{border-color:var(--line);background:var(--surface);color:var(--muted);box-shadow:none;}
+.ex-card:hover{border-color:var(--brand);background:var(--brand-tint);color:var(--ink);box-shadow:none;transform:none;}
+.answer{color:var(--text);font-size:14px;line-height:1.8;}
+.answer strong{color:var(--ink);font-weight:600;}
+.kw-term{color:var(--brand);background:var(--brand-soft);border-color:var(--line);}
+.ref{background:var(--surface);border-color:var(--line);color:var(--muted);}
+.ref:hover{border-color:var(--brand);background:var(--brand-tint);color:var(--brand);}
+.ans-foot,details.src{border-top-color:var(--line);}
+.src-row{color:var(--muted);border-bottom-color:var(--line);}
+.src-close{background:var(--surface-2);}
+.src-close:hover{background:var(--line);}
+.src-text{color:var(--text);}
+.fb button:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-tint);}
+.fb button.on{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);}
+.nd-field input:focus,.nd-field select:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
+"""
+
 
 ASK_BODY = """
 <main class="wrap ask-wrap">
@@ -212,7 +238,7 @@ ASK_BODY = """
         </button>
       </div>
       <div class="composer-hint">
-        <span class="kbd-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+        <span class="kbd-hint">Enter 发送 · Shift + Enter 换行</span>
         <span class="foot-tools">
           <button class="clear-link" id="exportMd" type="button">导出 Markdown</button>
           <button class="clear-link" id="clear" type="button">清空对话</button>
@@ -242,7 +268,7 @@ ASK_BODY = """
           <option value="log">记录</option></select></label>
       </div>
       <pre class="nd-preview" id="ndPreview">整理中…</pre>
-      <div class="nd-hint" id="ndHint">预览由本地规则整理，不联网；保存后可在知识库页修改。</div>
+      <div class="nd-hint" id="ndHint">本地规则整理，不联网。</div>
     </div>
     <div class="note-dlg-foot">
       <button class="btn ghost sm" id="ndCancel" type="button">取消</button>
@@ -799,7 +825,7 @@ async function openNoteDialog(query,d){
   document.getElementById('ndTags').value=(d.citations||[]).slice(0,2).map(function(c){return c.title;}).join(', ');
   document.getElementById('ndKind').value='qa';
   document.getElementById('ndPreview').textContent='整理中…';
-  document.getElementById('ndHint').textContent='预览由本地规则整理，不联网；保存后可在知识库页修改。';
+  document.getElementById('ndHint').textContent='本地规则整理，不联网。';
   document.getElementById('ndSave').disabled=true;
   try{
     var r=await fetch('/api/notes',{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),
@@ -808,7 +834,10 @@ async function openNoteDialog(query,d){
     if(!r.ok) throw new Error(draft.message||draft.error||('HTTP '+r.status));
     ND.ready=true; ND.payload.hint.title=draft.title||ND.payload.hint.title;
     document.getElementById('ndTitle').value=draft.title||'';
-    document.getElementById('ndPreview').textContent=draft.markdown||'';
+    // 预览只给正文：front matter 是给机器看的，摆出来只会让人以为存了一堆乱码
+    var md=String(draft.markdown||'');
+    var body=md.replace(/^---[\\s\\S]*?\\n---\\n?/,'');
+    document.getElementById('ndPreview').textContent=body||md;
     document.getElementById('ndSave').disabled=false;
   }catch(e){
     document.getElementById('ndPreview').textContent='整理失败：'+(e.message||e);
@@ -855,19 +884,18 @@ ASK_HTML = shell("ask", "问答 · " + BRAND, ASK_BODY, ASK_SCRIPT, ASK_CSS)
 # ======================================================================
 KB_CSS = """
 .kb-wrap{max-width:1060px;}
-.kb-head{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:18px;}
-.kb-head h1{font-size:27px;letter-spacing:-.03em;margin-top:8px;}
-.kb-head .sub{font-size:12.5px;color:var(--muted);margin-top:6px;}
+.kb-head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
+.kb-head h1{font-size:22px;letter-spacing:-.02em;}
 .kb-head .actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.kb-layout{display:grid;grid-template-columns:318px minmax(0,1fr);gap:16px;align-items:start;}
+.kb-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start;}
 .kb-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:calc(var(--nav-h) + 16px);}
 .kb-side .card{padding:16px;}
-.kb-side .side-title{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8b95a8;margin-bottom:11px;}
+.kb-side .side-title{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--faint);margin-bottom:10px;}
 
-.drop{border:1.5px dashed #cfd8ea;border-radius:13px;background:linear-gradient(180deg,#fbfcff,#fff);
-  padding:24px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
-  text-align:center;cursor:pointer;transition:border .16s,background .16s,box-shadow .16s;}
-.drop:hover,.drop.over{border-color:#9db2f2;background:var(--brand-tint);box-shadow:0 0 0 4px rgba(47,92,246,.06);}
+.drop{border:1px dashed var(--line-2);border-radius:var(--r);background:var(--surface-2);
+  padding:22px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  text-align:center;cursor:pointer;transition:border-color .16s,background .16s;}
+.drop:hover,.drop.over{border-color:var(--brand);background:var(--brand-tint);}
 .drop .dic{width:38px;height:38px;border-radius:11px;background:var(--brand-soft);color:var(--brand);
   display:flex;align-items:center;justify-content:center;margin-bottom:4px;}
 .drop b{font-size:13px;color:var(--ink);font-weight:600;}
@@ -876,24 +904,15 @@ KB_CSS = """
 .kb-status.ok{color:var(--ok);font-weight:500;}
 .kb-status.err{color:var(--bad);font-weight:500;}
 
-.tips{font-size:12px;color:var(--muted);line-height:1.75;}
-.tips[open]{padding-bottom:12px;}
-.tips summary{cursor:pointer;list-style:none;display:flex;align-items:center;}
-.tips summary::-webkit-details-marker{display:none;}
-.tips summary::after{content:"展开";margin-left:auto;font-size:11px;color:var(--brand);font-weight:600;}
-.tips[open] summary::after{content:"收起";}
-.tips summary.side-title{margin-bottom:0;}
-.tips div{display:flex;gap:7px;padding:4px 0;}
-.tips i{flex:none;width:4px;height:4px;border-radius:50%;background:#c3ccdd;margin-top:8px;}
-
 .kb-list{padding:16px;}
 .kb-list table{table-layout:fixed;}
 .kb-list th:nth-child(1){width:auto;}
-.kb-list th:nth-child(2){width:60px;}
-.kb-list th:nth-child(3){width:70px;}
-.kb-list th:nth-child(4){width:70px;}
-.kb-list th:nth-child(5){width:112px;}
-.kb-list th:nth-child(6){width:112px;}
+.kb-list th:nth-child(2){width:58px;}
+/* 关键词数量属于「有也行没有也行」的元数据，占一列只会挤压文件名；直接不显示 */
+.kb-list th:nth-child(3),.kb-list td:nth-child(3){display:none;}
+.kb-list th:nth-child(4){width:60px;}
+.kb-list th:nth-child(5){width:142px;}
+.kb-list th:nth-child(6){width:154px;}
 .kb-list td{white-space:nowrap;}
 .kb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
 .search{position:relative;flex:1;min-width:150px;}
@@ -1050,15 +1069,12 @@ KB_BODY = """
 <main class="wrap kb-wrap">
   <div class="kb-head">
     <div>
-      <div class="eyebrow">Knowledge</div>
       <h1>知识库</h1>
-      <p class="sub">上传什么文档，就回答什么内容。</p>
     </div>
     <div class="actions">
       <span class="pill" id="kbVersion">—</span>
       <span class="pill" id="kbMeta">加载中…</span>
       <button class="btn ghost sm" id="reload" type="button">重建索引</button>
-      <a class="btn sm" href="/ask">去提问 <span aria-hidden="true">→</span></a>
     </div>
   </div>
 
@@ -1077,18 +1093,11 @@ KB_BODY = """
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
           </div>
           <b>拖拽或点击上传</b>
-          <span>.md / .txt / .pdf / .docx<br>可一次选择多份<br>文本 ≤ 512 KB · PDF/Word ≤ 6 MB</span>
+          <span>.md / .txt / .pdf / .docx · 可多选<br>文本 ≤ 512 KB · PDF/Word ≤ 6 MB</span>
           <input type="file" id="kbFile" accept=".md,.txt,.pdf,.docx,.xlsx,.csv,.tsv" multiple hidden>
         </div>
         <div class="kb-status" id="kbMsg"></div>
       </section>
-
-      <details class="card tips">
-        <summary class="side-title">说明</summary>
-        <div><i></i><span>审批通过后切分并重建索引；本机管理员直通时立即生效。</span></div>
-        <div><i></i><span>清单 / 标签类条目命中后本地直出，不调用模型。</span></div>
-        <div><i></i><span>PDF / Word / Excel / CSV 服务端转 Markdown；扫描件需先 OCR。</span></div>
-      </details>
     </div>
 
     <section class="card kb-list">

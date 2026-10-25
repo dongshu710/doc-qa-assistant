@@ -19,7 +19,9 @@ _SENTENCE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
 _CONCLUSION = ("结论", "因此", "所以", "确定", "采用", "定为", "统一", "最终",
                "建议", "需要", "必须", "不得", "标准", "上限", "下限", "比例", "期限", "金额")
 _DECISION = re.compile(r"决定|采用|定为|改成|改为|拍板|敲定|以.{0,12}为准")
-_TODO = re.compile(r"待办|todo|下一步|待确认|需要确认|跟进|落实|复核|补充材料|提交|完成时间", re.I)
+# 「提交」单独出现时多是陈述（「赎回申请 T 日提交」），只有带动作宾语才算待办
+_TODO = re.compile(r"待办|todo|下一步|待确认|需要确认|跟进|落实|复核|补充材料|完成时间"
+                   r"|提交(?:材料|申请|报告|表单|审核|审批|需求|名单)", re.I)
 _URL = re.compile(r"https?://[^\s<>\)\"']+")
 _LEAD = re.compile(r"^[\s\-*•·\d.、)）]+")
 _TODO_LEAD = re.compile(r"^(待办|todo|下一步)[:：]\s*", re.I)
@@ -29,12 +31,9 @@ def digest(messages: list[Msg], hint: dict | None = None) -> dict:
     hint = hint or {}
     assistant_text = "\n".join(msg.text for msg in messages if msg.role == "assistant")
     user_text = "\n".join(msg.text for msg in messages if msg.role != "assistant")
-    # 要点优先来自助手的回答；纯用户输入（例如转存的笔记片段）再回落到全部内容
+    # 要点优先来自助手的回答；纯用户输入（例如转存的笔记片段）再回落到全部内容。
+    # 不能「助手句子不够 3 条就补几条用户的」——那样用户的提问/祈使句会混进要点与待办。
     sentences = _clean_sentences(assistant_text) or _clean_sentences(user_text)
-    if len(sentences) < 3 and user_text:
-        for sentence in _clean_sentences(user_text):
-            if sentence not in sentences:
-                sentences.append(sentence)
 
     decisions = _matched(sentences, _DECISION, 3)
     todos = _matched(sentences, _TODO, 3, exclude=set(decisions))

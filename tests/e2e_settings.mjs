@@ -226,26 +226,47 @@ try {
   });
   check('开启后可以保存笔记', seeded.status === 201, `HTTP ${seeded.status}`);
 
-  // ---- 已存 ----
-  await page.click('[data-tab="save"]');
-  await page.waitForSelector('.set-note-item', { timeout: 8000 }).catch(() => {});
-  check('已存列表出现笔记', (await page.locator('.set-note-item').count()) >= 1);
-  check('已存分区有导出入口', await page.isVisible('#setNotesExport'));
+  // ---- 文件抽屉：已存内容的实体入口 ----
+  // 设置抽屉还开着，它盖住了导航栏右侧；先关掉再点文件入口（真实用户也是这个顺序）
+  if (await page.isVisible('#setPanel')) await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  check('导航栏有文件入口', await page.isVisible('#filesBtn'));
+  check('入口带数量角标', /^\d+\+?$/.test(((await page.locator('#filesCount').textContent()) || '').trim()),
+        (await page.locator('#filesCount').textContent()) || '');
+  await page.click('#filesBtn');
+  await page.waitForSelector('.file-item', { timeout: 8000 }).catch(() => {});
+  check('文件抽屉已打开', await page.isVisible('#filesPanel'));
+  check('列表里有文件', (await page.locator('.file-item').count()) >= 1);
+
+  await page.locator('.file-item').first().click();
+  await page.waitForFunction(
+    () => {
+      const el = document.getElementById('filesDetail');
+      const text = (el && el.textContent) || '';
+      return text.length > 12 && !text.includes('读取中') && !text.includes('从左侧选');
+    }, null, { timeout: 6000 },
+  );
+  const body = await page.locator('#filesDetail').textContent();
+  // 不断言具体某句话：列表按时间倒序，种了多条之后第一条会变
+  check('点开后能看到正文', (body || '').length > 12, (body || '').slice(0, 40));
 
   // ---- 备份提醒 ----
-  check('有笔记但没备份过时显示提醒点', await page.isVisible('#setDot'));
-  const beforeBackup = (await page.locator('#setBackupNote').textContent()) || '';
+  check('有笔记但没备份过时显示提醒点', await page.isVisible('#filesDot'));
+  const beforeBackup = (await page.locator('#filesBackup').textContent()) || '';
   check('备份状态文案可读', /还没备份过|上次备份|今天备份/.test(beforeBackup), beforeBackup);
 
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 8000 }).catch(() => null),
-    page.click('#setNotesExport'),
+    page.click('#filesExport'),
   ]);
   check('导出真的触发下载', download !== null, download ? download.suggestedFilename() : '无下载事件');
   await page.waitForTimeout(1000);
-  check('导出后提醒点消失', !(await page.locator('#setDot').isVisible()));
-  const afterBackup = (await page.locator('#setBackupNote').textContent()) || '';
-  check('备份文案更新为今天', afterBackup.includes('今天'), afterBackup);
+  check('导出后提醒点消失', !(await page.locator('#filesDot').isVisible()));
+  const afterBackup = (await page.locator('#filesBackup').textContent()) || '';
+  check('备份文案已更新', /已导出|今天/.test(afterBackup), afterBackup);
+
+  await page.click('#filesClose');
+  check('抽屉可以关闭', await page.isHidden('#filesPanel'));
 
   // HEAD 复用 GET 的处理分支，但不能被当成「下载过」——否则探测一下红点就没了
   const beforeHead = await page.evaluate(
@@ -254,21 +275,10 @@ try {
   const afterHead = await page.evaluate(
     () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
   check('HEAD 探测不算备份', beforeHead === afterHead, `${beforeHead} -> ${afterHead}`);
-  await page.locator('.set-note-item').first().click();
-  // 展开是异步取全文：等到不是「加载中…」才算数，否则断言打在占位文案上
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('.set-note-view');
-      const text = (el && el.textContent) || '';
-      return el && !el.hidden && text.length > 0 && text !== '加载中…';
-    }, null, { timeout: 6000 },
-  );
-  const body = await page.locator('.set-note-view').first().textContent();
-  // 不断言具体某句话：列表顺序按时间倒序，种了多条之后第一条会变
-  check('展开后能看到正文', (body || '').length > 8 && !(body || '').includes('加载中'),
-        (body || '').slice(0, 60));
 
   // ---- 安装 ----
+  await page.click('#setBtn');
+  await page.waitForSelector('#setPanel:not([hidden])', { timeout: 6000 });
   await page.click('[data-tab="install"]');
   check('切到安装分区', await page.isVisible('[data-pane="install"]'));
   const mcp = await page.locator('#setMcpPre').textContent();

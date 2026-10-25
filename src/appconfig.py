@@ -280,9 +280,11 @@ def backup_state(notes_count: int) -> dict:
 
 def _check_base_url(value: str) -> str:
     value = value.strip().rstrip("/")
-    if not re.match(r"^https?://[^\s/]+", value):
+    match = re.match(r"(?i)^(https?)://([^\s/]+)", value)
+    if not match:
         raise ValueError("接口地址要写成 https://… 的形式")
-    return value
+    # 协议头大小写不敏感：从别处粘来的地址常写成 HTTPS://，不该因此被拒
+    return f"{match.group(1).lower()}://{match.group(2)}{value[match.end():]}"
 
 
 def clean_path(raw: str) -> str:

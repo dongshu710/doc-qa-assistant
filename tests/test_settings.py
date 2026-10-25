@@ -108,6 +108,11 @@ def main() -> int:
         except ValueError:
             check(name, True)
 
+    # 协议头大小写不敏感：HTTPS:// 是合法地址，不该被拒
+    upper = appconfig.update({"llm": {"base_url": "HTTPS://api.example.com/v1"}})
+    check("大写协议头被规范化", upper["llm"]["base_url"] == "https://api.example.com/v1",
+          upper["llm"]["base_url"])
+
     print("存储位置")
     custom = tmp / "my-notes"
     view = appconfig.update({"notes": {"home": str(custom)}})
@@ -244,20 +249,25 @@ def main() -> int:
         check("编码无法识别不抛异常", False, str(exc))
 
     print("页面挂载")
-    from src.theme import SETTINGS_HTML, nav
+    from src.theme import FILES_HTML, SETTINGS_HTML, nav
     from src.web_pages import ASK_HTML, KB_HTML
     check("导航有设置入口", 'id="setBtn"' in nav("ask"))
+    check("导航有文件入口", 'id="filesBtn"' in nav("ask") and 'id="filesCount"' in nav("ask"))
+    check("已存不再重复出现在设置里", 'data-tab="save"' not in SETTINGS_HTML)
+    check("文件抽屉结构独立", 'id="filesPanel"' in FILES_HTML and 'id="filesList"' in FILES_HTML)
     for label, html in (("问答页", ASK_HTML), ("知识库页", KB_HTML)):
         parser = IdStack()
         parser.feed(html)
         check(f"{label}含设置面板", "setPanel" in parser.found)
-        chain = parser.found.get("setPanel", [])
-        check(f"{label}设置面板不在内容容器内", chain and chain[-1] == "body",
-              str(chain))
+        check(f"{label}含文件抽屉", "filesPanel" in parser.found)
+        for panel_id in ("setPanel", "filesPanel"):
+            chain = parser.found.get(panel_id, [])
+            check(f"{label}{panel_id} 挂在 body 下", chain and chain[-1] == "body", str(chain))
         check(f"{label}含储存开关", 'id="setStoreChat"' in html)
         check(f"{label}含存储位置控件", 'id="setHomeSeg"' in html)
         check(f"{label}含接口控件", 'id="setBase"' in html)
         check(f"{label}设置脚本已注入", "setMcpInstall" in html)
+        check(f"{label}文件脚本已注入", "filesExport" in html)
 
     print(f"\n{passed} 项通过，{len(failures)} 项失败")
     if failures:
