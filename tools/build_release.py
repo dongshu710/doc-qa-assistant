@@ -5,9 +5,9 @@
     python tools/build_release.py
 
 产物：
-    dist/zhiyuan-app-<version>.zip       完整服务，解压双击 start 脚本即用
-    dist/zhiyuan-plugin-<version>.zip    只含 src/notes，挂到任意 MCP 客户端
-    dist/zhiyuan-skill-<version>.zip     zhiyuan-files 技能，解压进 ~/.workbuddy/skills/
+    dist/jiyi-app-<version>.zip       完整服务，解压双击 start 脚本即用
+    dist/jiyi-plugin-<version>.zip    只含 src/notes，挂到任意 MCP 客户端
+    dist/jiyi-skill-<version>.zip     jiyi-files 技能，解压进 ~/.workbuddy/skills/
     dist/SHA256SUMS.txt                  两个包的 sha256
 
 设计取舍：只打源码包，不做 PyInstaller 单文件。运行时零第三方依赖，
@@ -24,10 +24,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 
-APP_PREFIX = "zhiyuan-app"
-PLUGIN_PREFIX = "zhiyuan-plugin"
-SKILL_PREFIX = "zhiyuan-skill"
-SKILL_DIR = ROOT / "skills" / "zhiyuan-files"
+APP_PREFIX = "jiyi-app"
+PLUGIN_PREFIX = "jiyi-plugin"
+SKILL_PREFIX = "jiyi-skill"
+SKILL_DIR = ROOT / "skills" / "jiyi-files"
 
 INCLUDE_DIRS = ("src", "data", "docs", "tests", "tools", "deploy")
 INCLUDE_FILES = (
@@ -104,7 +104,7 @@ def iter_plugin_payload() -> list[Path]:
 
 
 def iter_skill_payload() -> list[Path]:
-    """技能包：整个 skills/zhiyuan-files 目录，4 个文件，解压到技能目录即可用。"""
+    """技能包：整个 skills/jiyi-files 目录，4 个文件，解压到技能目录即可用。"""
     if not SKILL_DIR.is_dir():
         raise FileNotFoundError(f"缺少技能目录: {SKILL_DIR}")
     files = [path for path in sorted(SKILL_DIR.rglob("*"))
@@ -142,7 +142,7 @@ def build() -> list[Path]:
          "files": iter_payload(), "readme": False, "base": ROOT},
         {"out": DIST / f"{PLUGIN_PREFIX}-{ver}.zip", "root": f"{PLUGIN_PREFIX}-{ver}",
          "files": iter_plugin_payload(), "readme": True, "base": ROOT},
-        # 技能包的根目录必须叫 zhiyuan-files（不带版本号），解压进 skills/ 才能直接被识别
+        # 技能包的根目录必须叫 jiyi-files（不带版本号），解压进 skills/ 才能直接被识别
         {"out": DIST / f"{SKILL_PREFIX}-{ver}.zip", "root": SKILL_DIR.name,
          "files": iter_skill_payload(), "readme": False, "base": SKILL_DIR},
     ]

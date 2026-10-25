@@ -1,27 +1,27 @@
-# 技能包：zhiyuan-files（知源文件）
+# 技能包：jiyi-files（记忆文档）
 
-把「知源」的笔记能力交给智能体：列文件、搜内容、读全文、存对话、导出、打开文件页。
-本页是交付说明；技能自己读的说明书在同目录的 [`skills/zhiyuan-files/SKILL.md`](../skills/zhiyuan-files/SKILL.md)。
+把「记忆文档」的笔记能力交给智能体：列文件、搜内容、读全文、存对话、导出、打开文件页。
+本页是交付说明；技能自己读的说明书在同目录的 [`skills/jiyi-files/SKILL.md`](../skills/jiyi-files/SKILL.md)。
 
 ## 一、基本信息
 
 | 项 | 值 |
 |---|---|
-| 名称 | `zhiyuan-files`（显示名：知源文件） |
+| 名称 | `jiyi-files`（显示名：记忆文档） |
 | 作用域 | 用户级，装在 `~/.workbuddy/skills/`，所有工作区可用 |
 | 用途 | 读写本机笔记库（`NOTE_HOME`），并给用户一个可点的文件页地址 |
 | 触发方式 | 由 `SKILL.md` 的 `description` 触发：提到「我的笔记 / 之前存过什么 / 文件页 / 把这段存成笔记 / 找关于 X 的笔记 / 导出笔记」时加载 |
 | 参数输入 | 命令参数 + 环境变量 + `config.json`，优先级从高到低 |
 | 依赖 | Python ≥ 3.11；运行时零第三方包 |
-| 外部依赖 | 知源服务（默认 `http://127.0.0.1:8000`）——**只有存与导出需要**，读不依赖 |
-| 自带文件 | 4 个：`SKILL.md`、`scripts/zy.py`、`references/api.md`、`assets/config.example.json` |
+| 外部依赖 | 记忆文档服务（默认 `http://127.0.0.1:8000`）——**只有存与导出需要**，读不依赖 |
+| 自带文件 | 4 个：`SKILL.md`、`scripts/jy.py`、`references/api.md`、`assets/config.example.json` |
 
 ## 二、它到底做什么
 
 | 动作 | 走哪条路 | 服务没起时 |
 |---|---|---|
 | 列文件 / 搜内容 / 读全文 | 直接读 `NOTE_HOME/notes/**/*.md` | **照常可用** |
-| 存对话 | `POST /api/notes` | 若配了 `zhiyuan_home`，退回 `python -m src.notes save` 离线写；否则报错并给启动命令 |
+| 存对话 | `POST /api/notes` | 若配了 `jiyi_home`，退回 `python -m src.notes save` 离线写；否则报错并给启动命令 |
 | 导出 | `GET /api/notes/export` | 不可用（导出由服务生成），只报错，不假装成功 |
 | 打开文件页 | 打印 / 拉起 `{base_url}/files` | 无浏览器就只打印地址 |
 
@@ -33,21 +33,21 @@
 
 | 参数 | 环境变量 | 配置文件键 | 默认值 | 说明 |
 |---|---|---|---|---|
-| `--base-url` | `ZHIYUAN_BASE_URL` | `base_url` | `http://127.0.0.1:8000` | 知源服务地址 |
+| `--base-url` | `JIYI_BASE_URL` | `base_url` | `http://127.0.0.1:8000` | 记忆文档服务地址 |
 | `--home` | `NOTE_HOME` | `note_home` | `~/agent-notes` | 笔记根目录 |
-| `--zhiyuan-home` | `ZHIYUAN_HOME` | `zhiyuan_home` | 空 | 知源源码目录，服务没起时用于离线保存 |
+| `--jiyi-home` | `JIYI_HOME` | `jiyi_home` | 空 | 记忆文档源码目录，服务没起时用于离线保存 |
 | `--json` | — | — | 关 | 输出 JSON，便于程序消费 |
 
 子命令与各自的参数：
 
 ```bash
-zy.py doctor                                    # 自检：Python / 目录 / 可写 / 服务 / 文件页
-zy.py list [--limit 20] [--tag T] [--kind K] [--status S]
-zy.py search <词…> [--limit 20]                 # 多个词是「全部命中」
-zy.py get <id 或标题片段>                        # 命中多篇会列出候选并以退出码 2 结束
-zy.py save [--file conv.json] [--title T] [--tags a,b] [--kind K] [--status S] [--draft]
-zy.py export [--format json|html] [--out PATH]
-zy.py open [--page files|ask|kb] [--no-launch]
+jy.py doctor                                    # 自检：Python / 目录 / 可写 / 服务 / 文件页
+jy.py list [--limit 20] [--tag T] [--kind K] [--status S]
+jy.py search <词…> [--limit 20]                 # 多个词是「全部命中」
+jy.py get <id 或标题片段>                        # 命中多篇会列出候选并以退出码 2 结束
+jy.py save [--file conv.json] [--title T] [--tags a,b] [--kind K] [--status S] [--draft]
+jy.py export [--format json|html] [--out PATH]
+jy.py open [--page files|ask|kb] [--no-launch]
 ```
 
 `save` 的输入格式：
@@ -67,9 +67,9 @@ zy.py open [--page files|ask|kb] [--no-launch]
 
 ```
 rag_assistant/
-├── skills/zhiyuan-files/          # 技能源码，改了这里才算改
+├── skills/jiyi-files/          # 技能源码，改了这里才算改
 │   ├── SKILL.md                   # 给智能体读的说明书（frontmatter 决定何时触发）
-│   ├── scripts/zy.py              # 唯一入口，零依赖
+│   ├── scripts/jy.py              # 唯一入口，零依赖
 │   ├── references/api.md          # 接口、请求体、文件格式、错误码
 │   └── assets/config.example.json # 配置模板
 └── tools/install_skill.py         # 安装 / 卸载 / 检查
@@ -78,7 +78,7 @@ rag_assistant/
 安装后（用户级）：
 
 ```
-~/.workbuddy/skills/zhiyuan-files/   # 与上面四个文件一致，目录名不能改
+~/.workbuddy/skills/jiyi-files/   # 与上面四个文件一致，目录名不能改
 ~/.workbuddy/skills-backup/          # 覆盖或卸载时的备份，可手工恢复
 ```
 
@@ -91,8 +91,8 @@ cd rag_assistant
 python tools/install_skill.py
 ```
 
-它会：校验源码完整 → 已有旧版先备份到 `~/.workbuddy/skills-backup/zhiyuan-files-<时间>/` →
-复制到 `~/.workbuddy/skills/zhiyuan-files` → 打印文件清单 → 跑一次 `doctor` 自检。
+它会：校验源码完整 → 已有旧版先备份到 `~/.workbuddy/skills-backup/jiyi-files-<时间>/` →
+复制到 `~/.workbuddy/skills/jiyi-files` → 打印文件清单 → 跑一次 `doctor` 自检。
 
 装到别处（例如只想临时试试）：
 
@@ -100,11 +100,11 @@ python tools/install_skill.py
 python tools/install_skill.py --target D:/tmp/skills
 ```
 
-### 方式 B：从 Release 的 `zhiyuan-skill-<版本>.zip` 装
+### 方式 B：从 Release 的 `jiyi-skill-<版本>.zip` 装
 
 ```bash
-unzip zhiyuan-skill-1.16.0.zip -d ~/.workbuddy/skills/
-# 解压后应为 ~/.workbuddy/skills/zhiyuan-files/SKILL.md，多一层目录就装错了
+unzip jiyi-skill-1.16.0.zip -d ~/.workbuddy/skills/
+# 解压后应为 ~/.workbuddy/skills/jiyi-files/SKILL.md，多一层目录就装错了
 ```
 
 ### 装完做什么
@@ -117,10 +117,10 @@ unzip zhiyuan-skill-1.16.0.zip -d ~/.workbuddy/skills/
 
 ```bash
 python tools/install_skill.py --uninstall
-# 或手动：删掉 ~/.workbuddy/skills/zhiyuan-files 整个目录
+# 或手动：删掉 ~/.workbuddy/skills/jiyi-files 整个目录
 ```
 
-卸载会先把目录复制到 `~/.workbuddy/skills-backup/zhiyuan-files-removed-<时间>/` 再删除，
+卸载会先把目录复制到 `~/.workbuddy/skills-backup/jiyi-files-removed-<时间>/` 再删除，
 想恢复就把它复制回 `~/.workbuddy/skills/`。卸载不影响笔记本身——笔记是 `NOTE_HOME` 下的普通文件。
 
 ## 七、配置示例
@@ -131,22 +131,22 @@ python tools/install_skill.py --uninstall
 {
   "base_url": "http://127.0.0.1:8000",
   "note_home": "C:/Users/你的用户名/agent-notes",
-  "zhiyuan_home": "D:/apps/zhiyuan-app-1.16.0"
+  "jiyi_home": "D:/apps/jiyi-app-1.16.0"
 }
 ```
 
-三项都可省略，省略即默认值。`zhiyuan_home` 只在「服务没起、还要存笔记」时用到。
+三项都可省略，省略即默认值。`jiyi_home` 只在「服务没起、还要存笔记」时用到。
 
 ## 八、验证安装是否成功
 
 ```bash
-python ~/.workbuddy/skills/zhiyuan-files/scripts/zy.py doctor
+python ~/.workbuddy/skills/jiyi-files/scripts/jy.py doctor
 ```
 
 期望：
 
 ```
-知源文件 · 自检
+记忆文档 · 自检
   ✓ Python     3.13.14（需要 ≥ 3.11）
   ✓ 笔记目录   C:\Users\你\agent-notes
   ✓ 可写       能写才能存新笔记
@@ -161,15 +161,15 @@ python ~/.workbuddy/skills/zhiyuan-files/scripts/zy.py doctor
 | 现象 | 结论 |
 |---|---|
 | 五项全 ✓、退出码 `0` | 装好了，读写都通 |
-| 服务 / 文件页是 ✗，退出码 `1` | 装好了，但只能读；先启动知源（`start.bat` 或 `python -m src.server`） |
+| 服务 / 文件页是 ✗，退出码 `1` | 装好了，但只能读；先启动记忆文档（`start.bat` 或 `python -m src.server`） |
 | 笔记目录 ✗ | `NOTE_HOME` 配错，或目录下没有 `notes/` |
 | `doctor` 命令都跑不起来 | 装错层级（缺 `SKILL.md`）或 Python < 3.11 |
 
 再做两件小事确认端到端：
 
 ```bash
-python ~/.workbuddy/skills/zhiyuan-files/scripts/zy.py list        # 能看到笔记
-python ~/.workbuddy/skills/zhiyuan-files/scripts/zy.py get <某个 id>  # 能读出正文
+python ~/.workbuddy/skills/jiyi-files/scripts/jy.py list        # 能看到笔记
+python ~/.workbuddy/skills/jiyi-files/scripts/jy.py get <某个 id>  # 能读出正文
 ```
 
 `--check` 用来看「装了没、和源码是否一致」，不会改任何文件：

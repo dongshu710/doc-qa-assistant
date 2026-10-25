@@ -1,4 +1,4 @@
-# 知源 · 笔记插件（MCP）
+# 记忆文档 · 笔记插件（MCP）
 
 让智能体把对话里值得留下的部分整理成结构化笔记，写进你自己的目录。
 **这个包只做笔记**，不带文档问答、不带页面、不带索引——需要那些请下载「应用包」。
@@ -13,8 +13,8 @@
 解压到任意目录，路径里最好不要有空格：
 
 ```bash
-unzip zhiyuan-plugin-1.15.0.zip -d ~/tools/
-# → ~/tools/zhiyuan-plugin-1.15.0/
+unzip jiyi-plugin-1.15.0.zip -d ~/tools/
+# → ~/tools/jiyi-plugin-1.15.0/
 ```
 
 ## 二、配置客户端
@@ -29,7 +29,7 @@ unzip zhiyuan-plugin-1.15.0.zip -d ~/tools/
       "command": "python",
       "args": ["-m", "src.notes.mcp_server"],
       "env": {
-        "PYTHONPATH": "/绝对路径/zhiyuan-plugin-1.15.0",
+        "PYTHONPATH": "/绝对路径/jiyi-plugin-1.15.0",
         "NOTE_HOME": "/绝对路径/agent-notes"
       }
     }
@@ -40,7 +40,7 @@ unzip zhiyuan-plugin-1.15.0.zip -d ~/tools/
 Windows 示例：
 
 ```json
-"PYTHONPATH": "D:\\tools\\zhiyuan-plugin-1.15.0",
+"PYTHONPATH": "D:\\tools\\jiyi-plugin-1.15.0",
 "NOTE_HOME": "D:\\agent-notes"
 ```
 
@@ -68,7 +68,7 @@ front matter 里带 `hash`，同样内容重复保存不会写第二篇。
 不想挂 MCP 也能直接用 CLI：
 
 ```bash
-cd zhiyuan-plugin-1.15.0
+cd jiyi-plugin-1.15.0
 PYTHONPATH=. python -m src.notes save --from conv.json --draft
 PYTHONPATH=. python -m src.notes list --limit 20
 PYTHONPATH=. python -m src.notes export --format html --out notes.html

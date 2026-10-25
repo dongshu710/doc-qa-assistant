@@ -19,8 +19,8 @@ python tools/build_release.py
 产物：
 
 ```
-dist/zhiyuan-app-<version>.zip      应用包（问答 + 笔记）
-dist/zhiyuan-plugin-<version>.zip   插件包（只有笔记）
+dist/jiyi-app-<version>.zip      应用包（问答 + 笔记）
+dist/jiyi-plugin-<version>.zip   插件包（只有笔记）
 dist/SHA256SUMS.txt                 两个包的 sha256
 ```
 
@@ -33,8 +33,8 @@ dist/SHA256SUMS.txt                 两个包的 sha256
 
 ```bash
 mkdir -p /tmp/docqa-test && cd /tmp/docqa-test
-unzip <path>/zhiyuan-app-<version>.zip
-cd zhiyuan-app-<version>
+unzip <path>/jiyi-app-<version>.zip
+cd jiyi-app-<version>
 python -m src.server --port 8021 &
 curl http://127.0.0.1:8021/api/health
 curl -X POST http://127.0.0.1:8021/api/ask \

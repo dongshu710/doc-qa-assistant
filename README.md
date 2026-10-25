@@ -1,4 +1,4 @@
-# 知源 · 文档问答 + 智能体笔记
+# 记忆文档 · 文档问答 + 智能体笔记
 
 把制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
 资料不足时明确说不知道，并给出相似问题。再把对话里值得留下的部分整理成**结构化笔记**，
@@ -17,9 +17,9 @@
 
 | 包 | 里面有什么 | 适合谁 | 文件 |
 |---|---|---|---|
-| **应用包** | 问答 + 知识库 + 笔记 + 两页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `zhiyuan-app-<版本>.zip` |
-| **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `zhiyuan-plugin-<版本>.zip` |
-| **技能包** | `zhiyuan-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `zhiyuan-skill-<版本>.zip` |
+| **应用包** | 问答 + 知识库 + 笔记 + 两页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
+| **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `jiyi-plugin-<版本>.zip` |
+| **技能包** | `jiyi-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `jiyi-skill-<版本>.zip` |
 
 解压即用，运行时零第三方依赖（Python 3.11+）。应用包双击 `start.bat` / `sh start.sh`；
 插件包按包内 `README.md` 的三段 JSON 挂进客户端；
@@ -30,7 +30,7 @@
 
 - **人看的**：页面右上角「文件」（或直接打开 `http://127.0.0.1:8000/files`，可收藏）；
 - **智能体用的**：连接器（MCP，配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)），
-  或上面那个技能包（让智能体直接调 `zy.py`，不必接 MCP）。
+  或上面那个技能包（让智能体直接调 `jy.py`，不必接 MCP）。
 
 | 问答（带引用） | 文件（`/files`，可收藏的固定地址） |
 |---|---|
@@ -212,13 +212,13 @@ doc-qa-assistant/
 
 ### 方式 A：下载应用包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `zhiyuan-app-<版本>.zip`（同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `jiyi-app-<版本>.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
 
 应用包已内置演示知识库与启动脚本，**不需要 `pip install`**。未配置 Key 时自动进入离线抽取模式。
-只需要笔记能力的话，下载 `zhiyuan-plugin-<版本>.zip`，按包内 `README.md` 挂进 MCP 客户端。
+只需要笔记能力的话，下载 `jiyi-plugin-<版本>.zip`，按包内 `README.md` 挂进 MCP 客户端。
 
 ### 方式 B：源码运行
 

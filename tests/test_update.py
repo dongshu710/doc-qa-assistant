@@ -68,8 +68,8 @@ def test_repo() -> None:
 
 def test_assets() -> None:
     names = update.asset_names("1.15.0")
-    check("应用包名", names["app"] == "zhiyuan-app-1.15.0.zip")
-    check("插件包名", names["plugin"] == "zhiyuan-plugin-1.15.0.zip")
+    check("应用包名", names["app"] == "jiyi-app-1.15.0.zip")
+    check("插件包名", names["plugin"] == "jiyi-plugin-1.15.0.zip")
 
 
 def test_success() -> None:
@@ -86,8 +86,8 @@ def test_success() -> None:
     check("最新版号去掉 v", data["latest"] == "1.16.0")
     check("发布日期只留日期", data["published_at"] == "2026-11-01")
     check("正文截断到 400 字", len(data["notes"]) == 400, str(len(data["notes"])))
-    check("应用包直链", data["downloads"]["app"].endswith("zhiyuan-app-1.16.0.zip"))
-    check("插件包直链", data["downloads"]["plugin"].endswith("zhiyuan-plugin-1.16.0.zip"))
+    check("应用包直链", data["downloads"]["app"].endswith("jiyi-app-1.16.0.zip"))
+    check("插件包直链", data["downloads"]["plugin"].endswith("jiyi-plugin-1.16.0.zip"))
     check("说明页带 tag", data["url"].endswith("/releases/tag/v1.16.0"), data["url"])
     check("只请求一次", len(calls) == 1)
 

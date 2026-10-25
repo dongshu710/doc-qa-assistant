@@ -2,6 +2,23 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.16.1] - 2026-10-25
+
+改名「记忆文档」。
+
+### 变更
+
+- 产品名统一为 **记忆文档**：页面、页脚、设置面板、CLI、OpenAPI、启动脚本、README 与全部文档同步。
+- 技能标识随之改名：`zhiyuan-files` → `jiyi-files`，入口脚本 `zy.py` → `jy.py`，
+  环境变量 `ZHIYUAN_BASE_URL` / `ZHIYUAN_HOME` → `JIYI_BASE_URL` / `JIYI_HOME`。
+- 发布包前缀改为 `jiyi-app` / `jiyi-plugin` / `jiyi-skill`。
+- 仓库 slug 仍为 `doc-qa-assistant`，避免外部链接失效。
+
+### 升级提示
+
+- 旧技能目录 `~/.workbuddy/skills/zhiyuan-files/` 需删除；用新的安装器装 `jiyi-files` 即可。
+- 手写过 `config.json` 的，把 `zhiyuan_home` 改成 `jiyi_home`（其余键不变）。
+
 ## [1.16.0] - 2026-10-25
 
 把「文件入口」封装成可安装的技能：能读能写，服务没起也能读。

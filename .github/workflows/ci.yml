@@ -156,11 +156,11 @@ jobs:
         if: matrix.python == '3.13'
         uses: actions/upload-artifact@v4
         with:
-          name: zhiyuan-packages
+          name: jiyi-packages
           path: |
-            dist/zhiyuan-app-*.zip
-            dist/zhiyuan-plugin-*.zip
-            dist/zhiyuan-skill-*.zip
+            dist/jiyi-app-*.zip
+            dist/jiyi-plugin-*.zip
+            dist/jiyi-skill-*.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
 

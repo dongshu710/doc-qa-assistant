@@ -21,7 +21,7 @@ set "VER=dev"
 if exist VERSION set /p VER=<VERSION
 
 echo.
-echo   知源 v%VER%
+echo   记忆文档 v%VER%
 echo   地址: http://127.0.0.1:%PORT%
 echo   未配置模型 Key 时自动进入离线抽取模式，功能与评测仍可用。
 echo   按 Ctrl+C 停止服务。

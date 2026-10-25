@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 zhiyuan-files 技能装进 WorkBuddy 的用户技能目录（零第三方依赖）。
+"""把 jiyi-files 技能装进 WorkBuddy 的用户技能目录（零第三方依赖）。
 
 用法：
     python tools/install_skill.py                 # 安装（已有旧版先备份）
@@ -7,7 +7,7 @@
     python tools/install_skill.py --uninstall     # 卸载（先备份再删）
     python tools/install_skill.py --target D:/某处/skills
 
-为什么不用「复制粘贴文件夹」了事：用户会忘、会复制到错的层级（多一层 zhiyuan-files/zhiyuan-files），
+为什么不用「复制粘贴文件夹」了事：用户会忘、会复制到错的层级（多一层 jiyi-files/jiyi-files），
 装完也不知道成没成。这里把备份、层级校验、装完自检一次做完。
 """
 from __future__ import annotations
@@ -20,11 +20,11 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "skills" / "zhiyuan-files"
+SOURCE = ROOT / "skills" / "jiyi-files"
 DEFAULT_TARGET = Path.home() / ".workbuddy" / "skills"
 BACKUP_ROOT = Path.home() / ".workbuddy" / "skills-backup"
-NAME = "zhiyuan-files"
-REQUIRED = ("SKILL.md", "scripts/zy.py")
+NAME = "jiyi-files"
+REQUIRED = ("SKILL.md", "scripts/jy.py")
 
 
 def stamp() -> str:
@@ -61,7 +61,7 @@ def cmd_check(target: Path) -> int:
         print(f"状态：已安装（文件{'一致' if same else '与源码不同，建议重装'}）")
     else:
         print("状态：未安装")
-    print("自检：python " + str(installed / "scripts" / "zy.py") + " doctor")
+    print("自检：python " + str(installed / "scripts" / "jy.py") + " doctor")
     return 0
 
 
@@ -82,7 +82,7 @@ def cmd_install(target: Path) -> int:
     print_tree([dest / p.relative_to(SOURCE) for p in files], dest)
     print("\n下一步：")
     print("  1) 在 WorkBuddy 技能列表里刷新（多数版本会自动发现新目录；没看到就重启客户端）")
-    print("  2) 跑一次自检：python " + str(dest / "scripts" / "zy.py") + " doctor")
+    print("  2) 跑一次自检：python " + str(dest / "scripts" / "jy.py") + " doctor")
     return 0
 
 
@@ -101,7 +101,7 @@ def cmd_uninstall(target: Path) -> int:
 
 
 def run_doctor(dest: Path) -> None:
-    script = dest / "scripts" / "zy.py"
+    script = dest / "scripts" / "jy.py"
     if not script.is_file():
         return
     sys.stdout.flush()          # 先把自己打印完，否则子进程输出会插到前面
@@ -112,7 +112,7 @@ def run_doctor(dest: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="安装 / 卸载 zhiyuan-files 技能")
+    parser = argparse.ArgumentParser(description="安装 / 卸载 jiyi-files 技能")
     parser.add_argument("--target", default=str(DEFAULT_TARGET), help="技能目录，默认 ~/.workbuddy/skills")
     parser.add_argument("--check", action="store_true", help="只检查状态")
     parser.add_argument("--uninstall", action="store_true", help="卸载")

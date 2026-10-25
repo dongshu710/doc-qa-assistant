@@ -625,7 +625,7 @@ SETTINGS_HTML = (
 
     '<section class="set-pane" data-pane="install">'
     '<div class="set-row">'
-    f'<span class="set-ver-now">知源 <b>v{__version__}</b></span>'
+    f'<span class="set-ver-now">记忆文档 <b>v{__version__}</b></span>'
     '<span class="spacer"></span>'
     '<button class="btn ghost sm" id="setUpdate" type="button">检查更新</button></div>'
     '<p class="set-note" id="setUpdateNote">只查不改：读 GitHub 上的最新版本号，不会自动下载或覆盖本地文件。</p>'

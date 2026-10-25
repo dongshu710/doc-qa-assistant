@@ -69,8 +69,8 @@
 | 控件 | 元素 | 作用 | 交互与生效 |
 |---|---|---|---|
 | 检查更新 | `button#setUpdate` | 查 GitHub 最新 Release | **只查不装**：4 秒超时、缓存 10 分钟；有新版给三条链接，无新版提示已最新，失败说明原因并给发布页 |
-| 下载应用包 | `a#setDownload` | `releases/latest/download/zhiyuan-app-<版本>.zip` | 普通链接，新窗口打开；取不到地址就退回发布页 |
-| 下载插件包 | `a#setDownloadPlugin` | `…/zhiyuan-plugin-<版本>.zip` | 只含笔记的 MCP 包，同上 |
+| 下载应用包 | `a#setDownload` | `releases/latest/download/jiyi-app-<版本>.zip` | 普通链接，新窗口打开；取不到地址就退回发布页 |
+| 下载插件包 | `a#setDownloadPlugin` | `…/jiyi-plugin-<版本>.zip` | 只含笔记的 MCP 包，同上 |
 | 打开文件页 | `a[href="/files"]` | 打开 `/files` | 独立页，可收藏；和抽屉读同一套接口 |
 | 复制配置 | `button#setMcpCopy` | 复制 MCP JSON 到剪贴板 | 含当前解释器绝对路径、`PYTHONPATH`、`NOTE_HOME` |
 | 写入 Claude Desktop | `button#setMcpInstall` | 写 `claude_desktop_config.json` | 先备份原文件；现有 JSON 坏了不覆盖，直接报错 |

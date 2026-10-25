@@ -34,7 +34,7 @@ FINANCE_PROMPT = (
 )
 
 GENERIC_PROMPT = (
-    "你是「知源」，只能依据【资料】回答问题，禁止编造。\n"
+    "你是「记忆文档」，只能依据【资料】回答问题，禁止编造。\n"
     "规则：\n"
     "1) 每个结论后用 [n] 标注来源编号；\n"
     "2) 资料不足时直接回答「资料中未找到」，不要猜测；\n"
@@ -55,14 +55,14 @@ class Profile:
 PROFILES: dict[str, Profile] = {
     "finance": Profile(
         key="finance",
-        app_name="知源",
+        app_name="记忆文档",
         topic_label="金融理财",
         system_prompt=FINANCE_PROMPT,
         extra_refuse=FINANCE_REFUSE,
     ),
     "generic": Profile(
         key="generic",
-        app_name="知源",
+        app_name="记忆文档",
         topic_label="通用文档",
         system_prompt=GENERIC_PROMPT,
         extra_refuse=[],

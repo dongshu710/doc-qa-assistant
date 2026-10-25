@@ -109,9 +109,9 @@ def changelog_body(version: str) -> str:
 
 def asset_paths(version: str) -> list[Path]:
     """三个包一起发：应用包、插件包、技能包。"""
-    return [DIST / f"zhiyuan-app-{version}.zip",
-            DIST / f"zhiyuan-plugin-{version}.zip",
-            DIST / f"zhiyuan-skill-{version}.zip"]
+    return [DIST / f"jiyi-app-{version}.zip",
+            DIST / f"jiyi-plugin-{version}.zip",
+            DIST / f"jiyi-skill-{version}.zip"]
 
 
 def sha256_of(path: Path) -> str:
@@ -127,9 +127,9 @@ def build_body(version: str, slug: str, digests: dict[str, str]) -> str:
     parts.append("---")
     base = f"https://github.com/{slug}/releases/download/v{version}"
     rows = [
-        ("应用包", "文档问答 + 笔记，解压后 `start.bat` / `start.sh` 启动", f"zhiyuan-app-{version}.zip"),
-        ("插件包", "只有笔记能力，挂到任意 MCP 客户端（stdio）", f"zhiyuan-plugin-{version}.zip"),
-        ("技能包", "`zhiyuan-files` 技能，解压进 `~/.workbuddy/skills/` 即装", f"zhiyuan-skill-{version}.zip"),
+        ("应用包", "文档问答 + 笔记，解压后 `start.bat` / `start.sh` 启动", f"jiyi-app-{version}.zip"),
+        ("插件包", "只有笔记能力，挂到任意 MCP 客户端（stdio）", f"jiyi-plugin-{version}.zip"),
+        ("技能包", "`jiyi-files` 技能，解压进 `~/.workbuddy/skills/` 即装", f"jiyi-skill-{version}.zip"),
     ]
     table = ["## 下载", "", "| 包 | 内容 | 文件 |", "|---|---|---|"]
     for label, desc, name in rows:
@@ -273,7 +273,7 @@ def main(argv: list[str]) -> int:
 
     if "--all" in argv:
         existing = release_tags(slug)
-        for path in sorted(DIST.glob("zhiyuan-app-*.zip")):
+        for path in sorted(DIST.glob("jiyi-app-*.zip")):
             version = path.stem.rsplit("-", 1)[-1]
             tag = f"v{version}"
             if tag not in existing:

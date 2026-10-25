@@ -1675,7 +1675,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="知源 Web 服务")
+    ap = argparse.ArgumentParser(description="记忆文档 Web 服务")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--model", help="临时指定模型（等价于设置 LLM_MODEL）")

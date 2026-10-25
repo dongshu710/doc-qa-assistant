@@ -18,12 +18,12 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-APP_ASSET = "zhiyuan-app-{version}.zip"
-PLUGIN_ASSET = "zhiyuan-plugin-{version}.zip"
+APP_ASSET = "jiyi-app-{version}.zip"
+PLUGIN_ASSET = "jiyi-plugin-{version}.zip"
 
 CACHE_TTL = 600           # 秒；点「检查更新」是低频操作，10 分钟足够
 TIMEOUT = 4.0
-UA = "zhiyuan-updater"
+UA = "jiyi-updater"
 
 _cache: dict[str, dict] = {}
 _lock = threading.Lock()
