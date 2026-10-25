@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# 文档问答助手 · 一键启动（macOS / Linux）
+# 知源 · 一键启动（macOS / Linux）
 set -eu
 cd "$(dirname "$0")"
 
@@ -16,7 +16,7 @@ VER="$(cat VERSION 2>/dev/null || echo dev)"
 URL="http://127.0.0.1:${PORT}"
 
 echo
-echo "  文档问答助手 v${VER}"
+echo "  知源 v${VER}"
 echo "  地址: ${URL}"
 echo "  未配置模型 Key 时自动进入离线抽取模式，功能与评测仍可用。"
 echo "  按 Ctrl+C 停止服务。"
