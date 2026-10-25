@@ -138,12 +138,26 @@ def _check_base_url(value: str) -> str:
     return value
 
 
+def clean_path(raw: str) -> str:
+    """清洗粘贴来的路径：去空白、去包裹的引号、展开 ~。
+
+    从资源管理器「复制为路径」拿到的字符串带双引号（"D:\\我的笔记"），
+    直接丢给 Path 会当成文件名的一部分，报「不可写」——用户看不出哪里错了。
+    """
+    text = str(raw or "").strip()
+    # 左右引号可能不是同一个字符（中文引号就是 “ 和 ”），得成对匹配
+    for left, right in (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’")):
+        if len(text) >= 2 and text.startswith(left) and text.endswith(right):
+            text = text[1:-1]
+    return text.strip()
+
+
 def _check_home(value: str) -> str:
     """自定义存储位置：必须是绝对路径，且真的能建目录、能写文件。
 
     只在界面点了应用时才调，不要求目录已存在——用户选一个新文件夹是常规操作。
     """
-    raw = value.strip()
+    raw = clean_path(value)
     if not raw:
         return ""
     target = Path(raw).expanduser()

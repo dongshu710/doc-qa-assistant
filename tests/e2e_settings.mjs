@@ -83,7 +83,9 @@ try {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rag-settings-e2e-'));
   const py = process.env.PYTHON || 'python';
   const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector',
-                NOTE_HOME: path.join(tmp, 'notes'), APP_CONFIG: path.join(tmp, 'app.json') };
+                NOTE_HOME: path.join(tmp, 'notes'), APP_CONFIG: path.join(tmp, 'app.json'),
+                // 原生目录框会真的弹窗并卡住无头测试；关掉后走「返回可读提示」分支
+                SETTINGS_PICKER: 'off' };
   delete env.LLM_API_KEY;
   delete env.DEEPSEEK_API_KEY;
   const logPath = path.join(ROOT, 'tests', 'e2e-settings-server.log');
@@ -131,10 +133,34 @@ try {
   check('保存后的模型已落到服务端', saved.llm.model === 'demo-model');
 
   // ---- 存储 ----
+  // 先在旧位置留一篇，切换后才有的可搬——迁移提示要靠它才有内容
+  const oldHome = (await (await fetch(`${base}/api/settings`)).json()).notes.home_effective;
+  const seedOld = await fetch(`${base}/api/notes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [
+      { role: 'user', text: '旧位置的一篇' },
+      { role: 'assistant', text: '切换后应该能搬过去。' },
+    ] }),
+  });
+  check('旧位置先有一篇笔记', seedOld.status === 201, `HTTP ${seedOld.status}`);
+
   await page.click('[data-tab="store"]');
   check('切到存储分区', await page.isVisible('[data-pane="store"]'));
   await page.click('[data-home="custom"]');
   check('选自定义后出现目录输入框', await page.isVisible('#setHomeWrap'));
+  check('目录旁有原生选择按钮', await page.isVisible('#setPick'));
+
+  const pickRes = await (await fetch(`${base}/api/settings/pick-folder`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  })).json();
+  check('选择器不可用时给结构化提示', pickRes.ok === false && pickRes.error === 'disabled',
+        JSON.stringify(pickRes));
+
+  await page.click('#setPick');
+  await page.waitForTimeout(600);
+  const pickNote = (await page.locator('#setHomeNote').textContent()) || '';
+  check('点选择按钮不会静默失败', /已关闭|手动填/.test(pickNote), pickNote);
+
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'rag-notes-'));
   await page.fill('#setHome', target);
   await page.click('#setHomeSave');
@@ -143,6 +169,19 @@ try {
     target, { timeout: 8000 },
   );
   check('切换存储位置有反馈', true);
+
+  await page.waitForSelector('#setMigrate:not([hidden])', { timeout: 5000 }).catch(() => {});
+  check('切换后提示可以把旧笔记搬过来', await page.isVisible('#setMigrate'));
+  const migText = (await page.locator('#setMigrateText').textContent()) || '';
+  check('提示里带篇数', /\d+\s*篇/.test(migText), migText);
+  await page.click('#setMigrateGo');
+  await page.waitForTimeout(1200);
+  const migrated = fs.existsSync(path.join(target, 'notes'))
+    && fs.readdirSync(path.join(target, 'notes'), { recursive: true })
+      .some((f) => String(f).endsWith('.md'));
+  check('旧笔记已复制到新位置', migrated, target);
+  check('迁移后提示条收起', !(await page.isVisible('#setMigrate')));
+  check('旧位置仍在（复制不是移动）', fs.existsSync(oldHome));
   const moved = await (await fetch(`${base}/api/settings`)).json();
   check('服务端已采用新位置', moved.notes.home_effective.startsWith(target));
   check('新位置目录已创建', fs.existsSync(target));

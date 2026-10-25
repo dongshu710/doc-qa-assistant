@@ -113,6 +113,14 @@ def main() -> int:
     view = appconfig.update({"notes": {"home": str(custom)}})
     check("自定义目录已创建", custom.is_dir())
     check("视图回显自定义目录", view["notes"]["home"] == str(custom))
+
+    print("路径清洗")
+    check("去掉成对双引号", appconfig.clean_path('"D:\\notes"') == "D:\\notes")
+    check("去掉成对单引号", appconfig.clean_path("'D:\\notes'") == "D:\\notes")
+    check("中文引号也处理", appconfig.clean_path("“D:\\notes”") == "D:\\notes")
+    check("首尾空白清掉", appconfig.clean_path("  D:\\notes  ") == "D:\\notes")
+    check("带引号也能通过校验", appconfig._check_home(f'"{custom}"') == str(custom))
+    check("空串原样返回", appconfig.clean_path("   ") == "")
     from src.notes.store import NoteStore
     store = NoteStore()
     check("笔记库采用界面里选的位置", str(store.home) == str(custom.resolve()),

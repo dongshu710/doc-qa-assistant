@@ -524,6 +524,13 @@ SETTINGS_CSS = """
 .set-pre{font-family:var(--mono);font-size:11px;line-height:1.55;background:var(--surface-2);
   border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;max-height:210px;overflow:auto;
   white-space:pre-wrap;word-break:break-all;color:var(--text);margin:0;}
+.set-path{display:flex;gap:6px;}
+.set-path input{flex:1;min-width:0;}
+.set-path .btn{flex:none;white-space:nowrap;}
+.set-migrate{border:1px solid var(--brand);background:var(--brand-tint);border-radius:var(--r-sm);
+  padding:10px 12px;display:flex;flex-direction:column;gap:8px;}
+.set-migrate[hidden]{display:none;}
+.set-migrate .set-note{color:var(--brand-600);}
 .set-notes{display:flex;flex-direction:column;gap:6px;}
 .set-note-item{border:1px solid var(--line);border-radius:10px;padding:9px 11px;cursor:pointer;
   background:var(--surface);}
@@ -564,10 +571,18 @@ SETTINGS_HTML = (
     '<div class="set-seg" id="setHomeSeg">'
     '<button type="button" data-home="default" class="on">默认位置</button>'
     '<button type="button" data-home="custom">自定义</button></div>'
-    '<label class="set-f" id="setHomeWrap" hidden>目录<input id="setHome" placeholder="D:\\我的笔记" autocomplete="off" spellcheck="false"></label>'
+    '<div class="set-f" id="setHomeWrap" hidden><span>目录</span>'
+    '<div class="set-path">'
+    '<input id="setHome" placeholder="D:\\我的笔记" autocomplete="off" spellcheck="false">'
+    '<button class="btn ghost sm" id="setPick" type="button">选择…</button>'
+    "</div></div>"
     '<div class="set-row"><button class="btn sm" id="setHomeSave" type="button">应用</button>'
     '<button class="btn ghost sm" id="setOpen" type="button">打开文件夹</button></div>'
     '<p class="set-note" id="setHomeNote"></p>'
+    '<div class="set-migrate" id="setMigrate" hidden>'
+    '<p class="set-note" id="setMigrateText"></p>'
+    '<div class="set-row"><button class="btn sm" id="setMigrateGo" type="button">复制过来</button>'
+    '<button class="btn ghost sm" id="setMigrateNo" type="button">不用</button></div></div>'
     '<p class="set-note">笔记是普通 Markdown，放哪儿都能用别的编辑器打开。</p>'
     "</section>"
 
@@ -684,6 +699,20 @@ SETTINGS_JS = """
       ? ('当前生效：'+d.notes.home_effective)
       : '当前生效：默认位置', !!d.notes.error);
 
+    var mig=$('setMigrate');
+    if(mig){
+      var pending=d.pending_migration;
+      if(pending&&pending.count){
+        mig.hidden=false;
+        mig.setAttribute('data-from',pending.from||'');
+        if($('setMigrateText')) $('setMigrateText').textContent=
+          '原位置还有 '+pending.count+' 篇笔记，要复制到新位置吗？';
+      } else {
+        mig.hidden=true;
+        mig.removeAttribute('data-from');
+      }
+    }
+
     if($('setStoreChat')) $('setStoreChat').checked=!!d.notes.store_chat;
     window.__storeChat=!!d.notes.store_chat;
     try{ document.dispatchEvent(new CustomEvent('storechat:change',{detail:window.__storeChat})); }catch(e){}
@@ -730,18 +759,67 @@ SETTINGS_JS = """
     if(btn.getAttribute('data-home')==='custom'&&$('setHome')) $('setHome').focus();
   });
 
+  function applyHome(home){
+    note('setHomeNote','切换中…',false);
+    return api('POST','/api/settings',{notes:{home:home}}).then(function(d){
+      if(!d||!d.ok){ note('setHomeNote',(d&&d.message)||'切换失败',true); return d; }
+      applyView(d);
+      note('setHomeNote','已切换：'+(d.notes.home_effective||''),false);
+      if(window.__afterHomeChange) window.__afterHomeChange();
+      return d;
+    });
+  }
+
   if($('setHomeSave')) $('setHomeSave').addEventListener('click',function(){
     var seg=$('setHomeSeg').querySelector('button.on');
     var custom=seg&&seg.getAttribute('data-home')==='custom';
     var home=custom?$('setHome').value.trim():'';
     if(custom&&!home){ note('setHomeNote','先填一个目录，或用「默认位置」',true); return; }
-    note('setHomeNote','切换中…',false);
-    api('POST','/api/settings',{notes:{home:home}}).then(function(d){
-      if(!d||!d.ok){ note('setHomeNote',(d&&d.message)||'切换失败',true); return; }
-      applyView(d);
-      note('setHomeNote','已切换：'+(d.notes.home_effective||''),false);
+    applyHome(home);
+  });
+
+  if($('setPick')) $('setPick').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='等待选择…';
+    note('setHomeNote','已弹出系统窗口，选好目录会自动应用',false);
+    api('POST','/api/settings/pick-folder',{}).then(function(d){
+      btn.disabled=false; btn.textContent=label;
+      if(!d||!d.ok){
+        var kind=d&&d.error;
+        note('setHomeNote', kind==='cancelled' ? '已取消'
+          : ((d&&d.message)||'选择失败，请手动填路径'), !(kind==='cancelled'));
+        return;
+      }
+      segHome('custom');
+      if($('setHome')) $('setHome').value=d.path;
+      // 选中即应用：对话框本身就是一次确认，再要求点「应用」是多余的一步
+      applyHome(d.path);
+    },function(){
+      btn.disabled=false; btn.textContent=label;
+      note('setHomeNote','请求超时，请手动填路径',true);
+    });
+  });
+
+  if($('setMigrateGo')) $('setMigrateGo').addEventListener('click',function(){
+    var mig=$('setMigrate');
+    var from=mig&&mig.getAttribute('data-from');
+    if(!from){ if(mig) mig.hidden=true; return; }
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='复制中…';
+    api('POST','/api/settings/notes/migrate',{from:from}).then(function(d){
+      btn.disabled=false; btn.textContent=label;
+      if(!d||!d.ok){ note('setHomeNote',(d&&d.message)||'复制失败',true); return; }
+      if(mig) mig.hidden=true;
+      var msg='已复制 '+d.copied+' 篇';
+      if(d.skipped) msg+='，跳过 '+d.skipped+' 篇同名';
+      if(d.failed&&d.failed.length) msg+='，失败 '+d.failed.length+' 篇';
+      note('setHomeNote',msg,!!(d.failed&&d.failed.length));
       if(window.__afterHomeChange) window.__afterHomeChange();
     });
+  });
+
+  if($('setMigrateNo')) $('setMigrateNo').addEventListener('click',function(){
+    var mig=$('setMigrate'); if(mig) mig.hidden=true;
   });
 
   if($('setOpen')) $('setOpen').addEventListener('click',function(){

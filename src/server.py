@@ -57,6 +57,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.error
@@ -303,6 +304,94 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             return pathlib.Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
         return None
 
+    pick_lock = threading.Lock()      # 连点两次不能弹两个框
+
+    def _picker_command() -> list[str] | None:
+        """各平台的原生目录选择器。找不到就返回 None，让前端回退到手输。"""
+        if os.name == "nt":
+            exe = shutil.which("powershell") or shutil.which("pwsh")
+            if not exe:
+                return None
+            script = (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$d.Description='选择笔记存储位置';"
+                "$d.ShowNewFolderButton=$true;"
+                "if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)"
+                "{[Console]::Out.Write($d.SelectedPath)}"
+            )
+            cmd = [exe, "-NoProfile", "-Command", script]
+            # Windows PowerShell 5.1 需要 -STA 才能弹 WinForms；pwsh 7 默认就是 STA，传了反而报错
+            if os.path.basename(exe).lower().startswith("powershell"):
+                cmd.insert(2, "-STA")
+            return cmd
+        if sys.platform == "darwin":
+            return ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择笔记存储位置")']
+        if shutil.which("zenity"):
+            return ["zenity", "--file-selection", "--directory", "--title=选择笔记存储位置"]
+        if shutil.which("kdialog"):
+            return ["kdialog", "--getexistingdirectory", str(pathlib.Path.home())]
+        return None
+
+    def _pick_folder() -> tuple[int, dict]:
+        """弹系统原生目录选择框，返回 (HTTP 状态, 响应体)。
+
+        浏览器拿不到本机路径，只能由服务进程在桌面会话里弹。
+        独立子进程执行：不占 HTTP 线程，也不和 GUI 主线程纠缠；
+        取消 / 超时 / 无图形环境都返回结构化结果，前端据此回退到手输。
+        """
+        if (os.environ.get("SETTINGS_PICKER") or "").strip().lower() in ("off", "0", "false"):
+            return 200, {"ok": False, "error": "disabled", "message": "目录选择已关闭，请手动填路径"}
+        if not pick_lock.acquire(timeout=1):
+            return 429, {"ok": False, "error": "busy", "message": "已经有一个选择窗口开着"}
+        try:
+            cmd = _picker_command()
+            if not cmd:
+                return 200, {"ok": False, "error": "unsupported",
+                             "message": "这个系统没有可用的目录选择器，请手动填路径"}
+            started = time.time()
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=180)
+            except subprocess.TimeoutExpired:
+                return 200, {"ok": False, "error": "timeout", "message": "等了 180 秒没有选择，已取消"}
+            except OSError as exc:
+                return 200, {"ok": False, "error": "unsupported", "message": f"弹不出选择框：{exc}"}
+            path = appconfig.clean_path(proc.stdout or "")
+            if proc.returncode != 0 or not path:
+                return 200, {"ok": False, "error": "cancelled", "message": "已取消"}
+            return 200, {"ok": True, "path": path,
+                         "elapsed_ms": int((time.time() - started) * 1000)}
+        finally:
+            pick_lock.release()
+
+    def _count_notes(home: str) -> int:
+        root = pathlib.Path(home) / "notes"
+        if not home or not root.is_dir():
+            return 0
+        return sum(1 for _ in root.rglob("*.md"))
+
+    def _copy_notes(src: str, dst: str) -> dict:
+        """把旧位置的笔记复到新位置。同名文件一律跳过，绝不覆盖用户手改过的内容。"""
+        src_root = pathlib.Path(src).expanduser().resolve() / "notes"
+        dst_root = pathlib.Path(dst).expanduser().resolve() / "notes"
+        copied = skipped = 0
+        failed: list[str] = []
+        for path in src_root.rglob("*.md"):
+            rel = path.relative_to(src_root)
+            target = dst_root / rel
+            if target.exists():
+                skipped += 1
+                continue
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+                copied += 1
+            except OSError as exc:
+                if len(failed) < 5:
+                    failed.append(f"{rel}: {exc}")
+        return {"copied": copied, "skipped": skipped, "failed": failed}
+
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
         # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
@@ -520,16 +609,52 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         self._json(_settings_payload(), 200, cors)
                         return
                     if method == "POST":
+                        before = str(note_ref["service"].store.home) if note_ref["service"] else ""
                         appconfig.update(body or {})
                         reopened = _reopen_notes()
                         payload = _settings_payload()
                         payload["notes_reloaded"] = reopened
+                        after = str(note_ref["service"].store.home) if note_ref["service"] else ""
+                        if before and after and os.path.normcase(before) != os.path.normcase(after):
+                            count = _count_notes(before)
+                            if count:
+                                # 只提示不自动搬：换个空目录是常规操作，替用户决定反而吓人
+                                payload["pending_migration"] = {"from": before, "count": count}
                         guards.audit.write("settings.update", client=self._client(),
                                            model=payload["llm"]["effective_model"],
                                            notes_home=payload["notes"]["home_effective"],
                                            store_chat=payload["notes"]["store_chat"])
                         self._json(payload, 200, cors)
                         return
+                if path == "/api/settings/pick-folder" and method == "POST":
+                    status, result = _pick_folder()
+                    self._json(result, status, cors)
+                    return
+                if path == "/api/settings/notes/migrate" and method == "POST":
+                    service = note_ref["service"]
+                    if service is None:
+                        self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
+                        return
+                    src = appconfig.clean_path(str((body or {}).get("from") or ""))
+                    dst = str(service.store.home)
+                    if not src or not os.path.isabs(src):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "需要旧位置的绝对路径"}, 400, cors)
+                        return
+                    if os.path.normcase(os.path.abspath(src)) == os.path.normcase(dst):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "新旧位置是同一个目录"}, 400, cors)
+                        return
+                    if not (pathlib.Path(src) / "notes").is_dir():
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "旧位置里没有 notes 目录，没东西可搬"}, 400, cors)
+                        return
+                    result = _copy_notes(src, dst)
+                    guards.audit.write("settings.notes_migrate", client=self._client(),
+                                       from_path=src, to_path=dst, copied=result["copied"],
+                                       skipped=result["skipped"], failed=len(result["failed"]))
+                    self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
+                    return
                 if path == "/api/settings/test" and method == "POST":
                     live = load_settings()
                     sent = body or {}
