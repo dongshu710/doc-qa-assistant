@@ -19,8 +19,9 @@ python tools/build_release.py
 产物：
 
 ```
-dist/doc-qa-assistant-<version>.zip
-dist/SHA256SUMS.txt
+dist/zhiyuan-app-<version>.zip      应用包（问答 + 笔记）
+dist/zhiyuan-plugin-<version>.zip   插件包（只有笔记）
+dist/SHA256SUMS.txt                 两个包的 sha256
 ```
 
 包含：`src/`、`data/`（演示知识库与原始 PDF）、`docs/`、`tests/`、`tools/`、README、LICENSE、CHANGELOG、启动脚本、`.env.example`。
@@ -32,8 +33,8 @@ dist/SHA256SUMS.txt
 
 ```bash
 mkdir -p /tmp/docqa-test && cd /tmp/docqa-test
-unzip <path>/doc-qa-assistant-1.4.0.zip
-cd doc-qa-assistant-1.4.0
+unzip <path>/zhiyuan-app-<version>.zip
+cd zhiyuan-app-<version>
 python -m src.server --port 8021 &
 curl http://127.0.0.1:8021/api/health
 curl -X POST http://127.0.0.1:8021/api/ask \

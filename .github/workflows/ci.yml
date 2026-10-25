@@ -148,17 +148,18 @@ jobs:
       - name: 页面 / API 冒烟（离线模式）
         run: python tests/test_server.py
 
-      - name: 构建安装包
+      - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'
         run: python tools/build_release.py
 
-      - name: 上传安装包
+      - name: 上传发布包
         if: matrix.python == '3.13'
         uses: actions/upload-artifact@v4
         with:
-          name: doc-qa-assistant-package
+          name: zhiyuan-packages
           path: |
-            dist/doc-qa-assistant-*.zip
+            dist/zhiyuan-app-*.zip
+            dist/zhiyuan-plugin-*.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
 

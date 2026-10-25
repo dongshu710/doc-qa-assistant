@@ -107,8 +107,10 @@ def changelog_body(version: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def asset_path(version: str) -> Path:
-    return DIST / f"doc-qa-assistant-{version}.zip"
+def asset_paths(version: str) -> list[Path]:
+    """两个包一起发：应用包（问答+笔记）与插件包（只有笔记）。"""
+    return [DIST / f"zhiyuan-app-{version}.zip",
+            DIST / f"zhiyuan-plugin-{version}.zip"]
 
 
 def sha256_of(path: Path) -> str:
@@ -119,16 +121,21 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_body(version: str, slug: str, digest: str | None) -> str:
+def build_body(version: str, slug: str, digests: dict[str, str]) -> str:
     parts = [changelog_body(version) or f"版本 {version}。"]
     parts.append("---")
-    if digest:
-        parts.append(
-            f"**下载**：[`doc-qa-assistant-{version}.zip`]"
-            f"(https://github.com/{slug}/releases/download/v{version}/doc-qa-assistant-{version}.zip)"
-            f"（源码包，零第三方依赖；解压后 `start.bat` / `start.sh` 启动）\n\n"
-            f"```\nsha256  {digest}\n```"
-        )
+    base = f"https://github.com/{slug}/releases/download/v{version}"
+    rows = [
+        ("应用包", "文档问答 + 笔记，解压后 `start.bat` / `start.sh` 启动", f"zhiyuan-app-{version}.zip"),
+        ("插件包", "只有笔记能力，挂到任意 MCP 客户端（stdio）", f"zhiyuan-plugin-{version}.zip"),
+    ]
+    table = ["## 下载", "", "| 包 | 内容 | 文件 |", "|---|---|---|"]
+    for label, desc, name in rows:
+        table.append(f"| **{label}** | {desc} | [`{name}`]({base}/{name}) |")
+    parts.append("\n".join(table))
+    if digests:
+        block = "\n".join(f"{digest}  {name}" for name, digest in digests.items())
+        parts.append(f"```\n{block}\n```")
     parts.append(f"完整变更见 [CHANGELOG.md](https://github.com/{slug}/blob/main/CHANGELOG.md)。")
     return "\n\n".join(parts)
 
@@ -171,15 +178,14 @@ def delete_asset(slug: str, asset_id: int) -> bool:
 
 def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool = False) -> bool:
     version = tag.lstrip("v")
-    body = build_body(version, slug, None)
+    paths = [p for p in asset_paths(version) if p.exists()]
+    digests = {p.name: sha256_of(p) for p in paths}
+    body = build_body(version, slug, digests)
     existing = find_release(slug, tag)
-    zip_path = asset_path(version)
-    digest = sha256_of(zip_path) if zip_path.exists() else None
-    body = build_body(version, slug, digest)
 
     if dry_run:
         say(f"[dry-run] {tag}：release={'已存在' if existing else '将创建'}，"
-            f"附件={'有' if zip_path.exists() else '无'}（{zip_path.name}）")
+            f"附件 {len(paths)} 个（{', '.join(p.name for p in paths) or '无'}）")
         say(f"[dry-run] 正文 {len(body)} 字符，前 80 字：{body[:80]!r}")
         return True
 
@@ -205,20 +211,24 @@ def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool 
         release_id = data["id"]
         say(f"{tag}：Release 已创建")
 
-    if not with_asset or not zip_path.exists():
+    if not with_asset or not paths:
         return True
 
-    old = next((a for a in (existing or {}).get("assets", []) if a["name"] == zip_path.name), None)
-    if old and not replace:
-        say(f"  附件已存在，跳过：{zip_path.name}")
-        return True
-    if old:
-        if not delete_asset(slug, old["id"]):
+    for path in paths:
+        old = next((a for a in (existing or {}).get("assets", []) if a["name"] == path.name), None)
+        if old and not replace:
+            say(f"  附件已存在，跳过：{path.name}")
+            continue
+        if old:
+            if not delete_asset(slug, old["id"]):
+                return False
+            say(f"  已删除旧附件：{path.name}")
+        ok = upload_asset(slug, release_id, path)
+        say(f"  附件 {'上传完成' if ok else '未上传'}：{path.name}"
+            f"（{path.stat().st_size // 1024} KB）")
+        if not ok:
             return False
-        say(f"  已删除旧附件：{zip_path.name}")
-    ok = upload_asset(slug, release_id, zip_path)
-    say(f"  附件 {'上传完成' if ok else '未上传'}：{zip_path.name}（{zip_path.stat().st_size // 1024} KB）")
-    return ok
+    return True
 
 
 def version_key(tag: str) -> tuple[int, ...]:
@@ -261,7 +271,7 @@ def main(argv: list[str]) -> int:
 
     if "--all" in argv:
         existing = release_tags(slug)
-        for path in sorted(DIST.glob("doc-qa-assistant-*.zip")):
+        for path in sorted(DIST.glob("zhiyuan-app-*.zip")):
             version = path.stem.rsplit("-", 1)[-1]
             tag = f"v{version}"
             if tag not in existing:

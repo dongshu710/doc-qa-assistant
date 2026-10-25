@@ -75,6 +75,8 @@ BASE_CSS = """
   --nav-h:56px;
 }
 *,*::before,*::after{box-sizing:border-box;}
+/* 面板自己写了 display:flex，没有这条 hidden 就形同虚设（/files 上曾因此露出设置抽屉） */
+[hidden]{display:none !important;}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
 body{
   margin:0;font-family:var(--font);color:var(--text);background:var(--bg);
@@ -159,14 +161,16 @@ main{flex:1 0 auto;}
 }
 .theme-toggle:hover{background:#f3f4f7;color:var(--ink);border-color:var(--line-2);}
 /* 已存文件的实体入口：放导航栏右侧，和主题/设置同一排，点开即看文件与正文 */
+.nav-files-wrap{position:relative;flex:none;display:inline-flex;margin-left:4px;}
 .nav-files{
-  flex:none;position:relative;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;margin-left:4px;
+  flex:none;position:relative;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;
   border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--muted);
   font-size:13px;font-weight:500;cursor:pointer;
   transition:color .15s,border-color .15s,background .15s;
 }
 .nav-files svg{flex:none;}
 .nav-files:hover{color:var(--brand);border-color:var(--brand);background:var(--brand-tint);}
+.nav-files[aria-expanded="true"]{color:var(--brand);border-color:var(--brand);background:var(--brand-tint);}
 .nav-files .nf-count{
   min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--brand-soft);
   color:var(--brand);font-size:11px;font-weight:700;line-height:18px;text-align:center;
@@ -185,7 +189,9 @@ main{flex:1 0 auto;}
 .foot-brand{color:var(--muted);font-weight:600;}
 .foot-links{display:flex;gap:14px;}
 .foot-links a:hover{color:var(--brand);}
-.foot-ver{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--faint);}
+.foot-ver{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--faint);
+  border:0;background:none;padding:2px 4px;border-radius:5px;cursor:pointer;}
+.foot-ver:hover{color:var(--brand);background:var(--surface-2);}
 
 /* ============ 按钮 ============ */
 .btn{
@@ -453,15 +459,20 @@ def nav(active: str = "", links: bool = True) -> str:
         f'<a class="brand" href="/">{MARK}'
         f'<span class="brand-text"><b>{BRAND}</b><i>{TOPIC}</i></span></a>'
         f"{nav_html}"
-        # 文件入口：此前只能从「设置 → 已存」里翻，位置隐蔽；现在固定在导航栏右侧
+        # 文件入口：固定在导航栏右侧，位置上不再有第二种解释
+        '<div class="nav-files-wrap">'
         '<button class="nav-files" id="filesBtn" type="button" aria-haspopup="dialog" '
-        'aria-controls="filesPanel" title="已存文件">'
+        'aria-controls="filesPanel" aria-expanded="false" aria-keyshortcuts="Control+Shift+F" '
+        'title="已存文件 · Ctrl+Shift+F">'
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
         'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
         '<path d="M6 3.5h7.5L18 8v12.5H6z"/><path d="M13.5 3.5V8H18"/></svg>'
         '<span class="nf-label">文件</span>'
-        '<span class="nf-count" id="filesCount" hidden>0</span>'
-        '<span class="files-dot" id="filesDot" hidden></span></button>'
+        '<span class="nf-count" id="filesCount" hidden>0</span></button>'
+        # 红点单独成按钮：点它只消提醒，不会顺手把抽屉拉开
+        '<button class="files-dot" id="filesDot" type="button" aria-label="消除备份提醒" '
+        'title="点一下消除提醒" hidden></button>'
+        "</div>"
         f'<button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色模式">'
         f'<span class="ic-moon">{icon("moon", 16)}</span>'
         f'<span class="ic-sun">{icon("sun", 16)}</span></button>'
@@ -480,7 +491,7 @@ def footer(links: bool = True) -> str:
         '<footer class="site-foot"><div class="foot-inner">'
         f'<span class="foot-brand">{BRAND}</span>'
         f'<span class="foot-links">{links_html}</span>'
-        f'<span class="foot-ver">v{__version__}</span>'
+        f'<button class="foot-ver" id="footVer" type="button" title="查看版本与更新">v{__version__}</button>'
         "</div></footer>"
     )
 
@@ -519,6 +530,9 @@ SETTINGS_CSS = """
 .set-note{font-size:12px;color:var(--faint);line-height:1.6;margin:0;}
 .set-note.ok{color:var(--ok);}
 .set-note.err{color:var(--bad);}
+.set-note a{color:var(--brand);text-decoration:underline;text-underline-offset:2px;}
+.set-ver-now{font-size:13px;color:var(--text);}
+.set-ver-now b{font-family:var(--mono);font-size:12px;color:var(--ink);}
 .set-seg{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;padding:2px;background:var(--surface-2);}
 .set-seg button{border:0;background:transparent;padding:6px 14px;border-radius:8px;font-size:13px;
   color:var(--muted);cursor:pointer;}
@@ -610,12 +624,23 @@ SETTINGS_HTML = (
     "</section>"
 
     '<section class="set-pane" data-pane="install">'
-    '<div class="set-row"><a class="btn sm" id="setDownload" href="#" target="_blank" rel="noopener">下载到电脑</a>'
+    '<div class="set-row">'
+    f'<span class="set-ver-now">知源 <b>v{__version__}</b></span>'
+    '<span class="spacer"></span>'
+    '<button class="btn ghost sm" id="setUpdate" type="button">检查更新</button></div>'
+    '<p class="set-note" id="setUpdateNote">只查不改：读 GitHub 上的最新版本号，不会自动下载或覆盖本地文件。</p>'
+    '<div class="set-row">'
+    '<a class="btn sm" id="setDownload" href="#" target="_blank" rel="noopener">下载应用包</a>'
+    '<a class="btn ghost sm" id="setDownloadPlugin" href="#" target="_blank" rel="noopener">下载插件包</a>'
+    '<a class="btn ghost sm" href="/files" target="_blank" rel="noopener">打开文件页</a></div>'
+    '<p class="set-note">应用包＝问答 + 笔记，解压双击即用；插件包＝只有笔记，挂到任意 MCP 客户端。</p>'
+    '<div class="set-row">'
     '<button class="btn ghost sm" id="setMcpCopy" type="button">复制配置</button>'
     '<button class="btn ghost sm" id="setMcpInstall" type="button">写入 Claude Desktop</button></div>'
-    '<p class="set-note">下载包解压即用，零第三方依赖；也可以把下面这段挂到任何支持 MCP 的智能体里。</p>'
     '<pre class="set-pre" id="setMcpPre">加载中…</pre>'
     '<p class="set-note" id="setMcpNote"></p>'
+    '<p class="set-note">WorkBuddy 的「更多选项」里没有放自定义按钮的位置：'
+    '要让智能体读写这些笔记，接的是连接器（MCP）；人看的入口在页面右上角「文件」。</p>'
     "</section>"
 
     "</div></aside>"
@@ -623,9 +648,39 @@ SETTINGS_HTML = (
 
 FILES_CSS = """
 /* ============ 文件抽屉（已存内容） ============ */
-.files-dot{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;
-  background:var(--bad);box-shadow:0 0 0 2px var(--surface);}
+/* 红点是个独立按钮：点只有 7px，点击区做到 18px，鼠标和手指都点得中 */
+.files-dot{position:absolute;top:-5px;right:-5px;width:18px;height:18px;padding:0;border:0;
+  background:none;cursor:pointer;}
+.files-dot::after{content:"";position:absolute;top:50%;left:50%;width:7px;height:7px;
+  margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--bad);
+  box-shadow:0 0 0 2px var(--surface);transition:transform .12s;}
+.files-dot:hover::after{transform:scale(1.4);}
+.files-dot:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:50%;}
 .files-dot[hidden]{display:none;}
+/* 首次进入指一下入口在哪：位置写死在导航栏，提示只做一次，不打扰 */
+.files-tip{position:fixed;z-index:60;max-width:230px;padding:8px 11px;border-radius:9px;
+  background:#1f2228;color:#fff;font-size:12px;line-height:1.65;box-shadow:0 10px 24px -12px rgba(0,0,0,.5);}
+.files-tip::before{content:"";position:absolute;top:-4px;right:26px;width:8px;height:8px;
+  background:#1f2228;transform:rotate(45deg);}
+.files-tip kbd{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.18);
+  padding:1px 4px;border-radius:4px;}
+/* 独立页面 /files：不套抽屉，直接在正常文档流里两栏 */
+.pf-wrap{max-width:1120px;margin:0 auto;padding:22px 22px 40px;width:100%;}
+.pf-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.pf-head h1{font-size:20px;letter-spacing:-.02em;margin:0;}
+.pf-sub{margin:0;font-size:12.5px;color:var(--muted);}
+.pf-actions{margin-left:auto;display:flex;gap:8px;align-items:center;}
+.pf-total{font-size:12px;color:var(--faint);}
+.pf-grid{display:grid;grid-template-columns:280px minmax(0,1fr);
+  border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden;
+  min-height:min(70vh,640px);}
+.pf-list{border-right:1px solid var(--line);padding:8px;overflow:auto;max-height:78vh;}
+.pf-detail{padding:20px 24px;overflow:auto;max-height:78vh;}
+@media (max-width:760px){
+  .pf-grid{grid-template-columns:1fr;}
+  .pf-list{border-right:0;border-bottom:1px solid var(--line);max-height:38vh;}
+  .pf-detail{max-height:none;}
+}
 .files-mask{position:fixed;inset:0;background:rgba(17,18,22,.26);z-index:70;}
 .files-panel{
   position:fixed;top:0;right:0;bottom:0;width:min(760px,96vw);z-index:71;display:flex;flex-direction:column;
@@ -721,10 +776,27 @@ FILES_JS = """
         b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmt(it.created))+'</span>';
         box.appendChild(b);
       });
+      // 打开就直接读第一篇：让用户再点一次才看到内容，等于白给一步
+      var first=box.querySelector('.file-item');
+      if(first) first.click();
     }).catch(function(){
       box.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
     });
   }
+
+  // 正文渲染只写一份：抽屉和 /files 页共用，两处各写一套迟早长歪
+  function detailHtml(d){
+    var meta=[fmt(d.created), d.kind||'', (d.tags||[]).join(' · ')].filter(Boolean).join(' · ');
+    var html='<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
+    var secs=(d.sections||[]).filter(function(s){ return s.body&&String(s.body).trim(); });
+    if(!secs.length) html+='<p class="files-empty">这篇还没有正文。</p>';
+    secs.forEach(function(s){
+      html+='<div class="files-sec"><h4>'+esc(s.title)+'</h4><p>'+esc(s.body)+'</p></div>';
+    });
+    return html;
+  }
+  window.__notesDetailHtml=detailHtml;
+  window.__notesFetch=req;
 
   function show(id, btn){
     [].forEach.call(panel.querySelectorAll('.file-item'), function(x){
@@ -734,36 +806,42 @@ FILES_JS = """
     box.innerHTML='<p class="files-empty">读取中…</p>';
     req('/api/notes/'+encodeURIComponent(id)).then(function(d){
       if(!d||!d.ok){ box.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
-      var meta=[fmt(d.created), d.kind||'', (d.tags||[]).join(' · ')].filter(Boolean).join(' · ');
-      var html='<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
-      var secs=(d.sections||[]).filter(function(s){ return s.body&&String(s.body).trim(); });
-      if(!secs.length) html+='<p class="files-empty">这篇还没有正文。</p>';
-      secs.forEach(function(s){
-        html+='<div class="files-sec"><h4>'+esc(s.title)+'</h4><p>'+esc(s.body)+'</p></div>';
-      });
-      box.innerHTML=html;
+      box.innerHTML=detailHtml(d);
       box.scrollTop=0;
     }).catch(function(){
       box.innerHTML='<p class="files-empty">读取失败。</p>';
     });
   }
 
+  // 红点属于「提醒」，不属于「数据」：点一下就该消失，且刷新后也别回来。
+  // 用「上次导出时间」当签名——同一次未备份周期内只消一次，真导出过状态本来就会变。
+  var DOT_KEY='rag_dot_off';
+  function dotOff(){ try{ return localStorage.getItem(DOT_KEY)||''; }catch(e){ return ''; } }
+  function dotSig(bk){ return String((bk&&bk.last_export_at)||'none'); }
+  function renderBackup(bk){
+    bk=bk||{};
+    var dot=$('filesDot'), show=!!bk.due&&dotOff()!==dotSig(bk);
+    if(dot){ dot.hidden=!show; dot.setAttribute('data-sig',dotSig(bk)); }
+    if($('filesBackup')){
+      $('filesBackup').textContent=bk.text?(bk.text+(bk.due?' · 建议导出一次':'')):'';
+      $('filesBackup').className='files-note'+(bk.due?' err':'');
+    }
+  }
+  // 设置面板也读同一份备份状态，红点的显示规则只能有一处，否则两边会打架
+  window.__filesBackup=renderBackup;
+
   // 首屏与每次打开都同步一次数量/备份状态：存了新笔记再点进来，角标必须是最新的
   function refreshState(){
     fetch('/api/settings',{headers:{'Accept':'application/json'}}).then(function(r){ return r.json(); }).then(function(d){
       if(!d||!d.ok) return;
       setBadge(d.notes&&d.notes.count);
-      var bk=(d.notes&&d.notes.backup)||{};
-      if($('filesDot')) $('filesDot').hidden=!bk.due;
-      if($('filesBackup')&&bk.text){
-        $('filesBackup').textContent=bk.text+(bk.due?' · 建议导出一次':'');
-        $('filesBackup').className='files-note'+(bk.due?' err':'');
-      }
+      renderBackup((d.notes&&d.notes.backup)||{});
     }).catch(function(){});
   }
 
   function open(){
     panel.hidden=false; mask.hidden=false;
+    if($('filesBtn')) $('filesBtn').setAttribute('aria-expanded','true');
     document.body.classList.add('set-open');
     requestAnimationFrame(function(){ panel.classList.add('on'); });
     refreshState();
@@ -774,6 +852,7 @@ FILES_JS = """
   function close(){
     panel.classList.remove('on');
     panel.hidden=true; mask.hidden=true;
+    if($('filesBtn')) $('filesBtn').setAttribute('aria-expanded','false');
     document.body.classList.remove('set-open');
     if($('filesBtn')) $('filesBtn').focus();
   }
@@ -791,6 +870,45 @@ FILES_JS = """
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'&&!panel.hidden) close();
   });
+
+  // 红点：点它只消提醒，不打开抽屉——「我知道了」和「我要看」是两个意图
+  if($('filesDot')) $('filesDot').addEventListener('click',function(e){
+    e.preventDefault(); e.stopPropagation();
+    try{ localStorage.setItem(DOT_KEY, this.getAttribute('data-sig')||'none'); }catch(err){}
+    this.hidden=true;
+    if(window.toast) window.toast('备份提醒已消除');
+  });
+
+  // Ctrl/Cmd+Shift+F 开合文件面板；在输入框里不抢按键（那里常按组合键选词）
+  document.addEventListener('keydown',function(e){
+    if(!(e.ctrlKey||e.metaKey)||!e.shiftKey||(e.key||'').toLowerCase()!=='f') return;
+    var tag=(document.activeElement||{}).tagName;
+    if(tag==='INPUT'||tag==='TEXTAREA') return;
+    e.preventDefault();
+    if(panel.hidden) open(); else close();
+  });
+
+  // 位置再明确，也还是要有一次「它在这儿」的提示；每个浏览器只提示一次
+  function showTip(){
+    if(location.pathname.indexOf('/files')===0) return;   // 这一页本身全是文件，不用指路
+    if(/[?&]notip=1/.test(location.search)) return;
+    try{ if(localStorage.getItem('rag_files_tip')) return; }catch(e){ return; }
+    var btn=$('filesBtn'); if(!btn||!btn.offsetParent) return;
+    var tip=document.createElement('div');
+    tip.className='files-tip';
+    tip.innerHTML='已存文件都在这里 · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd>';
+    document.body.appendChild(tip);
+    var r=btn.getBoundingClientRect();
+    tip.style.top=(r.bottom+10)+'px';
+    tip.style.right=Math.max(12, window.innerWidth-r.right-4)+'px';
+    function done(){
+      try{ localStorage.setItem('rag_files_tip','1'); }catch(e){}
+      tip.remove();
+    }
+    setTimeout(done,7000);
+    document.addEventListener('click',done,{once:true});
+  }
+  setTimeout(showTip,1200);
   if($('filesList')) $('filesList').addEventListener('click',function(e){
     var b=e.target.closest('.file-item'); if(!b) return;
     show(b.getAttribute('data-id'), b);
@@ -818,6 +936,86 @@ FILES_JS = """
 })();
 """
 
+# /files：不套抽屉的独立页。给「加不进 WorkBuddy 工具栏」这件事一个可直接收藏、
+# 可直接被智能体打开的地址；抽屉那套仍留在两页里，用于不打断问答。
+FILES_PAGE_HTML = (
+    '<main class="pf-wrap">'
+    '<div class="pf-head"><h1>文件</h1>'
+    '<p class="pf-sub">已存的对话笔记，都是本地 Markdown。</p>'
+    '<div class="pf-actions"><span class="pf-total" id="pfTotal"></span>'
+    '<button class="btn sm" id="pfExport" type="button">导出全部</button></div></div>'
+    '<div class="pf-grid">'
+    '<div class="pf-list" id="pfList"></div>'
+    '<div class="pf-detail" id="pfDetail"><p class="files-empty">从左侧选一份文件。</p></div>'
+    "</div></main>"
+)
+
+FILES_PAGE_JS = """
+(function(){
+  var $=function(id){ return document.getElementById(id); };
+  var list=$('pfList'); if(!list) return;
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function req(p){
+    if(window.__notesFetch) return window.__notesFetch(p);
+    return fetch(p,{headers:{'Accept':'application/json'}}).then(function(r){ return r.json(); });
+  }
+  function fmt(iso){ return String(iso||'').slice(0,16).replace('T',' '); }
+
+  function load(){
+    list.innerHTML='<p class="files-empty">加载中…</p>';
+    req('/api/notes?limit=100').then(function(d){
+      if(!d||!d.ok){ list.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      if($('pfTotal')) $('pfTotal').textContent='共 '+(d.count||0)+' 篇';
+      var rows=d.items||[];
+      if(!rows.length){
+        list.innerHTML='<p class="files-empty">还没有文件。在问答里点「存为笔记」，或让智能体通过 MCP 保存。</p>';
+        return;
+      }
+      list.innerHTML='';
+      rows.forEach(function(it){
+        var b=document.createElement('button');
+        b.type='button'; b.className='file-item'; b.setAttribute('data-id',it.id);
+        b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmt(it.created))+'</span>';
+        list.appendChild(b);
+      });
+      var first=list.querySelector('.file-item'); if(first) first.click();
+    }).catch(function(){
+      list.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
+    });
+  }
+
+  list.addEventListener('click',function(e){
+    var b=e.target.closest('.file-item'); if(!b) return;
+    [].forEach.call(list.querySelectorAll('.file-item'),function(x){ x.classList.toggle('on',x===b); });
+    var box=$('pfDetail'); box.innerHTML='<p class="files-empty">读取中…</p>';
+    req('/api/notes/'+encodeURIComponent(b.getAttribute('data-id'))).then(function(d){
+      if(!d||!d.ok){ box.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      box.innerHTML=window.__notesDetailHtml?window.__notesDetailHtml(d):'';
+      box.scrollTop=0;
+    }).catch(function(){ box.innerHTML='<p class="files-empty">读取失败。</p>'; });
+  });
+
+  if($('pfExport')) $('pfExport').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='导出中…';
+    req('/api/notes/export?format=json').then(function(d){
+      if(!d||!d.ok){ if(window.toast) window.toast((d&&d.message)||'导出失败',true); return; }
+      var blob=new Blob([d.content],{type:d.mime||'application/json;charset=utf-8'});
+      var url=URL.createObjectURL(blob), a=document.createElement('a');
+      a.href=url; a.download=d.filename||'notes.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+      if(window.toast) window.toast('已导出 '+(d.count||0)+' 篇');
+    }).catch(function(e){
+      if(window.toast) window.toast('导出失败：'+((e&&e.message)||e),true);
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
+  });
+
+  load();
+})();
+"""
+
 THEME_HEAD = (
     "<script>(function(){try{var s=localStorage.getItem('rag_theme');"
     "var t=(s==='dark'||s==='light')?s:(window.matchMedia&&"
@@ -841,6 +1039,16 @@ SETTINGS_JS = """
     var el=$(id); if(!el) return;
     el.textContent=msg||'';
     el.className='set-note'+(msg?(bad?' err':' ok'):'');
+  }
+  // 更新结果里要放链接，textContent 装不下；进来的一律先转义
+  function noteHtml(id,html,bad){
+    var el=$(id); if(!el) return;
+    el.innerHTML=html||'';
+    el.className='set-note'+(html?(bad?' err':' ok'):'');
+  }
+  function outLink(href,text){
+    if(!href) return '';
+    return '<a href="'+esc(href)+'" target="_blank" rel="noopener">'+esc(text)+'</a>';
   }
   function api(method,path,body){
     var opt={method:method,headers:{'Content-Type':'application/json'}};
@@ -868,13 +1076,21 @@ SETTINGS_JS = """
     if(e.key==='Escape'&&!panel.hidden) closePanel();
   });
 
-  if(tabs) tabs.addEventListener('click',function(e){
-    var btn=e.target.closest('button[data-tab]'); if(!btn) return;
-    var name=btn.getAttribute('data-tab');
-    [].forEach.call(tabs.children,function(x){ x.classList.toggle('on',x===btn); });
+  function selectTab(name){
+    if(!tabs) return;
+    [].forEach.call(tabs.children,function(x){ x.classList.toggle('on',x.getAttribute('data-tab')===name); });
     [].forEach.call(panel.querySelectorAll('.set-pane'),function(p){
       p.classList.toggle('on',p.getAttribute('data-pane')===name);
     });
+  }
+  if(tabs) tabs.addEventListener('click',function(e){
+    var btn=e.target.closest('button[data-tab]'); if(!btn) return;
+    selectTab(btn.getAttribute('data-tab'));
+  });
+  // 页脚版本号点开就是「安装」分区：想看版本的人，下一个动作通常是查更新
+  var footVer=$('footVer');
+  if(footVer) footVer.addEventListener('click',function(){
+    openPanel(); selectTab('install');
   });
 
   function segHome(which){
@@ -885,7 +1101,8 @@ SETTINGS_JS = """
 
   function renderBackup(bk){
     bk=bk||{};
-    if($('filesDot')) $('filesDot').hidden=!bk.due;
+    // 红点规则收在 FILES_JS 里（含「点过就消」的本地标记），这里只转发，避免两处各判一次
+    if(window.__filesBackup){ window.__filesBackup(bk); return; }
     if($('filesBackup')){
       $('filesBackup').textContent=bk.text?(bk.text+(bk.due?' · 建议导出一次':'')):'';
       $('filesBackup').className='files-note'+(bk.due?' err':'');
@@ -949,8 +1166,10 @@ SETTINGS_JS = """
     window.__storeChat=!!d.notes.store_chat;
     try{ document.dispatchEvent(new CustomEvent('storechat:change',{detail:window.__storeChat})); }catch(e){}
 
-    var dl=$('setDownload');
-    if(dl) dl.href=(d.repo_url||'')+'/releases/latest';
+    var dl=d.downloads||{};
+    var page=(d.repo_url||'')+'/releases/latest';
+    if($('setDownload')) $('setDownload').href=dl.app||page;
+    if($('setDownloadPlugin')) $('setDownloadPlugin').href=dl.plugin||page;
     if($('setMcpPre')) $('setMcpPre').textContent=JSON.stringify(d.mcp||{},null,2);
   }
 
@@ -983,6 +1202,33 @@ SETTINGS_JS = """
       if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'测试失败',true); return; }
       note('setApiNote','连接正常，往返 '+d.latency_ms+' ms',false);
     });
+  });
+
+  // 检查更新：只读一次 GitHub 的 latest Release，不下载、不落盘、不改配置。
+  // 离线、被代理拦、仓库没发过 Release 都要说清楚是哪一种，而不是笼统地「失败」。
+  if($('setUpdate')) $('setUpdate').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='检查中…';
+    note('setUpdateNote','正在查 GitHub…','');
+    api('GET','/api/update/check?force=1').then(function(d){
+      if(!d||!d.ok){
+        var url=(d&&d.url)||'';
+        noteHtml('setUpdateNote',esc((d&&d.message)||'检查失败')
+          +(url?' · '+outLink(url,'打开发布页'):''),true);
+        return;
+      }
+      if(!d.has_update){
+        noteHtml('setUpdateNote','已是最新：v'+esc(d.latest)+'（本地 v'+esc(d.current)+'）');
+        return;
+      }
+      var dl=d.downloads||{};
+      var links=[outLink(dl.app,'下载应用包'),outLink(dl.plugin,'下载插件包'),
+                 outLink(d.url,'更新说明')].filter(Boolean).join(' · ');
+      noteHtml('setUpdateNote','发现新版本 v'+esc(d.latest)
+        +(d.published_at?'（'+esc(d.published_at)+'）':'')+'：'+links);
+    }).catch(function(e){
+      note('setUpdateNote','检查失败：'+((e&&e.message)||e),true);
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
   });
 
   if($('setHomeSeg')) $('setHomeSeg').addEventListener('click',function(e){
@@ -1159,3 +1405,7 @@ function toast(msg,isErr){
   setTimeout(function(){ d.style.transition='opacity .25s, transform .25s'; d.style.opacity='0'; d.style.transform='translateY(6px)'; setTimeout(function(){d.remove();},260); }, 2600);
 }
 """
+
+
+# 独立文件页：`/files` 直接用，不必先打开抽屉
+FILES_PAGE = shell("files", f"文件 · {BRAND}", FILES_PAGE_HTML, FILES_PAGE_JS)

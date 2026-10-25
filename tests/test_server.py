@@ -35,12 +35,17 @@ try:
     print("examples:", examples)
 
     pages = {}
-    for page, needle in (("/ask", "可以这样问"), ("/kb", "拖拽或点击上传")):
+    for page, needle in (("/ask", "可以这样问"), ("/kb", "拖拽或点击上传"),
+                         ("/files", "pf-grid")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             pages[page] = resp.read().decode("utf-8")
         assert needle in pages[page], page
         assert 'href="/insights"' not in pages[page], "导航里不该再出现已下线的页面"
-    print("pages OK（仅问答与知识库）")
+    # /files 是「加不进客户端工具栏」时的固定地址，必须自己也能开出来
+    assert "<title>文件 ·" in pages["/files"], "文件页标题没带上品牌名"
+    assert 'id="setPanel"' in pages["/files"], "文件页也要有设置抽屉骨架"
+    assert 'id="filesDot"' in pages["/files"], "文件页导航上要有红点按钮"
+    print("pages OK（问答 / 知识库 / 文件）")
 
     # 笔记入口：问答页能发起保存，知识库页有两个分区且不是嵌套关系。
     # 结构错位（面板套进另一个面板）在浏览器里表现为「点了没反应」，字符串断言抓不到，

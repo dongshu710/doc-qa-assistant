@@ -1,7 +1,8 @@
-# 文档问答助手（RAG）
+# 知源 · 文档问答 + 智能体笔记
 
-把你的制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
-资料不足时明确说不知道，并给出相似问题。金融制度是首版示例，换一套文档 + `APP_PROFILE=generic` 就是另一个领域的助手。
+把制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
+资料不足时明确说不知道，并给出相似问题。再把对话里值得留下的部分整理成**结构化笔记**，
+落到你自己的目录——人能离线看改，下一个智能体直接读同一份文件。
 
 不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。
 
@@ -10,22 +11,34 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Dependencies](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)
 
-**[下载安装包](https://github.com/dongshu710/doc-qa-assistant/releases/latest)** ·
-[快速开始](#3-快速开始零依赖python-311) ·
-[架构说明](docs/ARCHITECTURE.md) ·
-[评测方法](docs/EVALUATION.md) ·
-[安全边界](docs/SECURITY.md)
+## 下载
 
-| 问答（带引用） | 知识库（文档上传） |
+两个包，**选一个就够**。都在同一页：**[Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)**（同页附 `SHA256SUMS.txt`）
+
+| 包 | 里面有什么 | 适合谁 | 文件 |
+|---|---|---|---|
+| **应用包** | 问答 + 知识库 + 笔记 + 两页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `zhiyuan-app-<版本>.zip` |
+| **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `zhiyuan-plugin-<版本>.zip` |
+
+解压即用，运行时零第三方依赖（Python 3.11+）。应用包双击 `start.bat` / `sh start.sh`；
+插件包按 `README.md` 里的三段 JSON 挂进客户端。
+
+**关于「实体按钮」**：WorkBuddy、Claude Desktop 这类客户端的工具栏不开放自定义按钮，
+插件也放不进去。所以入口分两边——
+
+- **人看的**：页面右上角「文件」（或直接打开 `http://127.0.0.1:8011/files`，可收藏）；
+- **智能体用的**：连接器（MCP），配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)。
+
+| 问答（带引用） | 文件（`/files`，可收藏的固定地址） |
 |---|---|
-| ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
-| **知识库 · 笔记分区（可改可导出）** | **从回答存为笔记（先预览再落盘）** |
-| ![](docs/screenshots/kb-notes.png) | ![](docs/screenshots/ask-note.png) |
+| ![](docs/screenshots/ask.png) | ![](docs/screenshots/files.png) |
+| **知识库（文档上传）** | **知识库 · 笔记分区（可改可导出）** |
+| ![](docs/screenshots/kb.png) | ![](docs/screenshots/kb-notes.png) |
 
-> v1.10.0 起只保留这两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不再占用页面。
-> 截图使用演示知识库与离线抽取模式，示例笔记文件见 [docs/examples/note-example.md](docs/examples/note-example.md)。
+> 页面只有问答与知识库两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
+> 截图使用演示知识库与离线抽取模式，示例笔记见 [docs/examples/note-example.md](docs/examples/note-example.md)。
 
-## 0. 定位：这是「文档问答助手」，不是只服务金融
+## 0. 定位：这是「文档问答 + 笔记」，不是只服务金融
 
 同一个引擎可以挂任意文档，金融只是当前这套知识库的**第一个实例**：
 
@@ -194,14 +207,15 @@ doc-qa-assistant/
 
 ## 3. 快速开始（零依赖，Python 3.11+）
 
-### 方式 A：下载安装包
+### 方式 A：下载应用包
 
-1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `doc-qa-assistant-*.zip`（版本号以 Releases 页为准，同页附 `SHA256SUMS.txt`）；
+1. 打开 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)，下载 `zhiyuan-app-<版本>.zip`（同页附 `SHA256SUMS.txt`）；
 2. 解压到任意目录（路径尽量不含空格）；
 3. Windows 双击 `start.bat`；macOS / Linux 执行 `sh start.sh`；
 4. 浏览器自动打开 `http://127.0.0.1:8000`（未自动打开就手动访问）。
 
-安装包已内置演示知识库与启动脚本，**不需要 `pip install`**。未配置 Key 时自动进入离线抽取模式。
+应用包已内置演示知识库与启动脚本，**不需要 `pip install`**。未配置 Key 时自动进入离线抽取模式。
+只需要笔记能力的话，下载 `zhiyuan-plugin-<版本>.zip`，按包内 `README.md` 挂进 MCP 客户端。
 
 ### 方式 B：源码运行
 
@@ -487,16 +501,20 @@ python tests/eval_run.py --include-hard  # 再叠加难题集（诊断用）
 实测：给一份 DOCX 制度出 3 条题（`12.6 万元` / `3 个工作日` / `2 年`），
 文档用例 **3/3**；「运行全部」基础 25 + 反馈 1 + 文档 3 = **29/29**，耗时约 282s（含查询扩展，`sleep=1`）。
 
-## 4.5 汇报页与独立导出（可分享的那一页）
+## 4.5 界面与「文件」入口（v1.15.0）
 
-```bash
-python -m src.report --out dist/report.html   # 导出独立 HTML（不依赖服务）
-# 或服务在线时直接看 http://127.0.0.1:8000/report，页内「下载独立 HTML」
-```
+页面只有两页：`/ask` 问答、`/kb` 知识库。已存内容不在设置抽屉里，入口固定两处：
 
-导出的文件**数据全部内联**：双击即可打开、可发邮件/网盘，对方不需要装环境或起服务。
-内容不是功能罗列，而是四件事：**功能清单**、**链路每层的失败动作**、**L1+L3 评测结果**、
-**生产控制与运行约束**。
+| 入口 | 位置 | 交互 |
+|---|---|---|
+| 导航栏「文件」 | 右上角，主题/设置左侧 | 点开右侧抽屉：左列文件、右列正文；`Esc`、点遮罩、× 都能收起 |
+| 直达地址 `/files` | `http://127.0.0.1:8000/files` | 独立页，可加书签、可被智能体直接打开 |
+
+- 快捷键 `Ctrl/Cmd + Shift + F` 开合抽屉（焦点在输入框时不抢按键）。
+- 入口上的数字是篇数；**红点**表示「该备份了」，**点红点只消提醒，不打开抽屉**，
+  导出成功后红点同样消失。
+- 为什么不做成客户端的按钮：WorkBuddy / Claude Desktop 的工具栏不开放自定义按钮。
+  智能体那一侧走连接器（MCP），人这一侧走页面，两条路互不依赖。
 
 ## 4.6 真 embedding 与向量索引（可选，接口已隔离）
 
@@ -893,11 +911,11 @@ API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥
 - `GET /openapi.json` 输出 OpenAPI 3.0.3：21 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
   `x-retrieval` / `x-model`，可直接导入 Postman / Apifox / Swagger UI。
 
-### 四页 Playwright E2E
+### 两页 Playwright E2E
 
 `tests/e2e_pages.mjs` 会自己起服务（随机端口、离线模式），逐页检查：
 
-- HTTP 200、标题、关键选择器、4 项导航、数据加载完成；
+- HTTP 200、标题、关键选择器、2 项导航、数据加载完成；
 - 1280px 与 390px 都没有横向溢出；
 - 控制台无报错（过滤 favicon 等噪声）；
 - 深色模式切换生效、刷新后保持，卡片不再是白底；
@@ -1307,7 +1325,19 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - `[待核实: Redis 高可用方案（主从/哨兵/集群）与 maxmemory 策略以部署环境为准；当前只验证单实例语义]`
 - `[待核实: IVF 的 nlist/nprobe 需在真实语料上以 Recall@k 调参；本仓库 31 块使用 flat，未做大规模基准]`
 
-## 10. 文档与发布
+## 10. 检查更新
+
+设置 → 安装 → 「检查更新」（点页脚版本号也直接到这里）。**只查不装**：
+
+1. 点一下 → 服务端读 GitHub 的 `releases/latest`（4 秒超时，结果缓存 10 分钟，未认证额度只有 60 次/小时）；
+2. **有新版本** → 显示版本号、发布日期，以及「下载应用包 / 下载插件包 / 更新说明」三个链接；
+3. **已是最新** → 显示两边版本号，不弹窗、不打扰；
+4. **连不上** → 说明是离线还是被代理拦，并给发布页链接，不假装成功。
+
+为什么不自动替换文件：服务正在用的 `.py` 被覆盖，下一次 import 就是半新半旧，
+排查成本远高于手动换一次目录。升级＝下载新包、解压到新目录、`NOTE_HOME` 仍指原目录。
+
+## 11. 文档与发布
 
 | 文档 | 内容 |
 |---|---|
@@ -1315,15 +1345,16 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 | [docs/EVALUATION.md](docs/EVALUATION.md) | 数据集构成、L1/L3/召回口径、实测结果与局限 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 密钥处理、输入防护、威胁模型与已知缺口 |
 | [docs/PLUGIN.md](docs/PLUGIN.md) | 设置里的实体控件清单、MCP 插件集成方式、依赖与适用场景 |
+| [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md) | 插件包说明：三段 JSON、7 个工具、常见问题 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 改进优先级（P0–P3）、工作量与不推荐做的事 |
 | [docs/AUDIT.md](docs/AUDIT.md) | 两轮代码审查：问题、证据、修复与实测数据 |
 | [docs/RELEASE.md](docs/RELEASE.md) | 版本号、打包、解压验证、Release 流程 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 本地开发、提交前自检、PR 约定 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |
 
-安装包与独立汇报页随 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest) 发布。
+应用包与插件包随 [Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest) 发布。
 
-## 11. License
+## 12. License
 
 [MIT](LICENSE)。演示知识库为模拟样本与公开条款摘录，不代表任何机构正式制度。
 

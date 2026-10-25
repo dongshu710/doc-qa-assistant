@@ -29,7 +29,7 @@ def _knowledge_dir() -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="文档问答助手")
+    ap = argparse.ArgumentParser(description="知源 · 文档问答")
     ap.add_argument("query", nargs="*", help="问题；省略则进入交互模式")
     ap.add_argument("--model", help="临时指定模型（等价于设置 LLM_MODEL）")
     ap.add_argument("--base-url", help="临时指定端点（等价于设置 LLM_BASE_URL）")
@@ -52,7 +52,7 @@ def main() -> None:
         print("非交互环境：请用命令行参数传入问题，例如 python -m src.cli \"问题\"")
         return
 
-    print("文档问答助手（输入 exit 退出）")
+    print("知源 · 文档问答（输入 exit 退出）")
     while True:
         try:
             query = input("\n问> ").strip()

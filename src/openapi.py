@@ -23,7 +23,7 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
     spec = {
         "openapi": "3.0.3",
         "info": {
-            "title": "文档问答助手 API",
+            "title": "知源 API",
             "version": version,
             "description": (
                 "只依据知识库作答，逐条返回引用；资料不足时返回 no_answer，不编造。\n\n"

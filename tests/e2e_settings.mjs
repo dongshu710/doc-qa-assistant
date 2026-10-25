@@ -230,13 +230,39 @@ try {
   // 设置抽屉还开着，它盖住了导航栏右侧；先关掉再点文件入口（真实用户也是这个顺序）
   if (await page.isVisible('#setPanel')) await page.keyboard.press('Escape');
   await page.waitForTimeout(250);
+  // 上面是用接口种的笔记，没走页面里的保存按钮；刷新一次模拟「下次再来」，
+  // 否则入口的数量与红点还停在种笔记之前的 0 篇。
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => ((document.getElementById('filesCount') || {}).textContent || '') !== '',
+    null, { timeout: 8000 },
+  ).catch(() => {});
   check('导航栏有文件入口', await page.isVisible('#filesBtn'));
   check('入口带数量角标', /^\d+\+?$/.test(((await page.locator('#filesCount').textContent()) || '').trim()),
         (await page.locator('#filesCount').textContent()) || '');
+  // ---- 小红点：点一下就消，刷新也不回来 ----
+  // 抽屉打开时遮罩盖住导航栏，所以这一步必须在抽屉关着的时候做（真实用户也是这样）
+  check('有笔记但没备份过时显示提醒点', await page.isVisible('#filesDot'));
+  await page.click('#filesDot');
+  check('点红点即消除提醒', !(await page.locator('#filesDot').isVisible()));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  // 等首屏那次 /api/settings 回来再断言，否则「没出现」可能只是还没加载
+  await page.waitForFunction(
+    () => ((document.getElementById('filesCount') || {}).textContent || '') !== '',
+    null, { timeout: 8000 },
+  ).catch(() => {});
+  check('刷新后提醒不再回来', !(await page.locator('#filesDot').isVisible()));
+  // 复原本地标记，继续验证「导出后也消失」这条路径
+  await page.evaluate(() => localStorage.removeItem('rag_dot_off'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(300);
+
+  // ---- 文件抽屉 ----
   await page.click('#filesBtn');
   await page.waitForSelector('.file-item', { timeout: 8000 }).catch(() => {});
   check('文件抽屉已打开', await page.isVisible('#filesPanel'));
   check('列表里有文件', (await page.locator('.file-item').count()) >= 1);
+  check('提醒点回到入口上', await page.isVisible('#filesDot'));
 
   await page.locator('.file-item').first().click();
   await page.waitForFunction(
@@ -250,8 +276,6 @@ try {
   // 不断言具体某句话：列表按时间倒序，种了多条之后第一条会变
   check('点开后能看到正文', (body || '').length > 12, (body || '').slice(0, 40));
 
-  // ---- 备份提醒 ----
-  check('有笔记但没备份过时显示提醒点', await page.isVisible('#filesDot'));
   const beforeBackup = (await page.locator('#filesBackup').textContent()) || '';
   check('备份状态文案可读', /还没备份过|上次备份|今天备份/.test(beforeBackup), beforeBackup);
 
@@ -276,7 +300,22 @@ try {
     () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
   check('HEAD 探测不算备份', beforeHead === afterHead, `${beforeHead} -> ${afterHead}`);
 
+  // ---- 独立文件页 /files：加不进客户端工具栏时的固定地址 ----
+  await page.goto(`${base}/files`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.file-item', { timeout: 8000 }).catch(() => {});
+  check('/files 是独立页', await page.isVisible('.pf-grid'));
+  check('/files 列出文件', (await page.locator('.file-item').count()) >= 1);
+  await page.waitForFunction(
+    () => {
+      const t = (document.getElementById('pfDetail') || {}).textContent || '';
+      return t.length > 12 && !t.includes('读取中') && !t.includes('从左侧选');
+    }, null, { timeout: 6000 },
+  ).catch(() => {});
+  const pfBody = (await page.locator('#pfDetail').textContent()) || '';
+  check('/files 默认展开第一篇', pfBody.length > 12, pfBody.slice(0, 40));
+
   // ---- 安装 ----
+  await page.goto(`${base}/ask`, { waitUntil: 'networkidle' });
   await page.click('#setBtn');
   await page.waitForSelector('#setPanel:not([hidden])', { timeout: 6000 });
   await page.click('[data-tab="install"]');
@@ -284,7 +323,22 @@ try {
   const mcp = await page.locator('#setMcpPre').textContent();
   check('MCP 配置已生成', (mcp || '').includes('src.notes.mcp_server'), (mcp || '').slice(0, 80));
   const href = await page.getAttribute('#setDownload', 'href');
-  check('下载链接指向 releases', (href || '').includes('/releases/latest'), href || '');
+  check('应用包链接指向 releases', (href || '').includes('/releases'),
+        href || '');
+  const pluginHref = await page.getAttribute('#setDownloadPlugin', 'href');
+  check('插件包链接指向 releases', (pluginHref || '').includes('/releases'),
+        pluginHref || '');
+
+  // 检查更新：结果必须落到三种明确状态之一，不能停在「检查中…」
+  await page.click('#setUpdate');
+  await page.waitForFunction(
+    () => /已是最新|发现新版本|连不上|检查失败|出错/
+      .test((document.getElementById('setUpdateNote') || {}).textContent || ''),
+    null, { timeout: 15000 },
+  ).catch(() => {});
+  const upd = (await page.locator('#setUpdateNote').textContent()) || '';
+  check('检查更新给出明确结果', /已是最新|发现新版本|连不上|检查失败|出错/.test(upd),
+        upd.slice(0, 70));
 
   // ---- 配置写坏时的可见提示 ----
   // 手改 app.json 少个逗号，界面必须说清楚「显示的是默认值」，不能装作密钥丢了

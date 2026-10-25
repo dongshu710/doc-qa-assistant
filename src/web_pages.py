@@ -69,7 +69,6 @@ ASK_CSS = """
 .src-text{margin:0;padding:18px;overflow:auto;white-space:pre-wrap;word-break:break-word;
   font-size:13px;line-height:1.9;color:#344054;font-family:inherit;flex:1;}
 .src-text mark{background:#fff3bf;color:#6b4b00;border-radius:3px;padding:0 1px;}
-[hidden]{display:none !important;}
 .ref b{width:16px;height:16px;border-radius:5px;background:var(--brand);color:#fff;font-size:12px;
   display:flex;align-items:center;justify-content:center;font-weight:600;flex:none;}
 .ans-foot{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;padding-top:11px;border-top:1px dashed #e8ecf5;}
@@ -980,7 +979,6 @@ KB_CSS = """
 .diff-title{display:flex;align-items:center;gap:8px;margin:12px 0 6px;font-size:12px;color:var(--muted);}
 .hist-item{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap;}
 .hist-item:last-child{border-bottom:none;}
-[hidden]{display:none !important;}
 
 @media (max-width:900px){
   .kb-layout{grid-template-columns:1fr;}

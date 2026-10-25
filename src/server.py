@@ -69,6 +69,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, settings_ops, suggest
+from . import update as update_mod
 from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
 from .guards import Guards
@@ -81,6 +82,7 @@ from .notes.tools import tools_payload as notes_tools_payload
 from .openapi import build_spec
 from .pipeline import RAGPipeline
 from .version import __version__
+from .theme import FILES_PAGE
 from .web_pages import ASK_HTML, KB_HTML
 
 MAX_BODY_BYTES = 8192
@@ -223,6 +225,17 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         match = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?$", url)
         return f"https://github.com/{match.group(1)}/{match.group(2)}" if match else ""
 
+    def _downloads() -> dict:
+        """两种下载入口：整包（问答+笔记）与插件包（只有笔记）。页面按钮直接指到这里。"""
+        repo = _repo_url()
+        if not repo:
+            return {"page": "", "app": "", "plugin": ""}
+        names = update_mod.asset_names(__version__)
+        base = f"{repo}/releases/latest/download"
+        return {"page": f"{repo}/releases/latest",
+                "app": f"{base}/{names['app']}",
+                "plugin": f"{base}/{names['plugin']}"}
+
     def _mcp_config() -> dict:
         """生成 MCP 客户端配置；实现放在 settings_ops，这里只负责取当前实际路径。"""
         service = note_ref["service"]
@@ -258,6 +271,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             },
             "mcp": _mcp_config(),
             "repo_url": _repo_url(),
+            "downloads": _downloads(),
             "config_path": view["config_path"],
             "config_error": view.get("config_error") or "",
             "config_backup": view.get("config_backup") or "",
@@ -832,6 +846,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 host = self.headers.get("Host") or "127.0.0.1"
                 self._json(notes_tools_payload(__version__, f"http://{host}"))
                 return
+            if path == "/api/update/check":
+                # 只查不装：返回版本号与下载地址，本地文件一个字节都不动
+                force = (qs.get("force") or ["0"])[0].lower() in ("1", "true", "yes")
+                self._json(update_mod.check(__version__, _repo_url(), force=force),
+                           200, self._cors_headers())
+                return
             if path == "/api/notes" or path.startswith("/api/notes/"):
                 self._notes("GET", path, qs, None)
                 return
@@ -843,6 +863,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self._redirect("/ask")
             elif path == "/ask":
                 self._send(200, ASK_HTML, "text/html; charset=utf-8")
+            elif path == "/files":
+                # 能被收藏、能被智能体直接打开的固定地址：加不进客户端工具栏时用这个
+                self._send(200, FILES_PAGE, "text/html; charset=utf-8")
             elif path == "/kb":
                 self._send(200, KB_HTML, "text/html; charset=utf-8")
             elif path == "/api/l3":
@@ -1652,7 +1675,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="文档问答助手 Web 服务")
+    ap = argparse.ArgumentParser(description="知源 Web 服务")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--model", help="临时指定模型（等价于设置 LLM_MODEL）")
