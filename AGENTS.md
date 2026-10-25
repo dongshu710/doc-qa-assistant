@@ -60,6 +60,10 @@ python -m src.notes export --out exports/all.html
 `NOTE_HOME`（默认 `~/agent-notes`）下 `notes/YYYY/MM/<id>.md` 就是全部内容，
 格式见 `notes://schema` 或 `src/notes/schema_doc.py`。索引删了会自动重建。
 
+**位置可能被界面改过**：用户在页面「设置 → 存储」里选的自定义目录写在 `data/app.json`，
+优先级高于 `NOTE_HOME`。不确定当前用哪个目录时，先看 `data/app.json` 的 `notes.home`，
+或调 `GET /api/settings` 读 `notes.home_effective`，不要假设还是默认值。
+
 ## 行为约定
 
 - **先查再写**：用户问「上次那个结论」时先 `search_notes`，不要凭记忆编。

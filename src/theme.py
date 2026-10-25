@@ -450,6 +450,11 @@ def nav(active: str = "", links: bool = True) -> str:
         f'<button class="theme-toggle" id="themeToggle" type="button" aria-label="切换深色模式" title="切换深色模式">'
         f'<span class="ic-moon">{icon("moon", 16)}</span>'
         f'<span class="ic-sun">{icon("sun", 16)}</span></button>'
+        '<button class="nav-gear" id="setBtn" type="button" aria-label="设置" title="设置">'
+        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+        'stroke-width="1.8" stroke-linecap="round"><path d="M4 6h8M18 6h2M4 12h4M12 12h8M4 18h10"/>'
+        '<circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'
+        "</svg></button>"
         "</div></header>"
     )
 
@@ -463,11 +468,135 @@ def footer(links: bool = True) -> str:
         '<footer class="site-foot"><div class="foot-inner">'
         f'<div class="foot-brand">{MARK}<span>{BRAND}</span></div>'
         f'{nav_links}'
-        '<div class="foot-note">只依据知识库作答，逐条标注出处；资料不足时明确说明无法找到答案。<br>'
-        '演示知识库为模拟样本与公开条款摘录，不构成投资建议。</div>'
+        '<div class="foot-note">只依据知识库作答，逐条标注出处 · 演示数据不构成投资建议</div>'
         "</div></footer>"
     )
 
+
+SETTINGS_CSS = """
+/* ============ 设置抽屉 ============ */
+.nav-gear{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--surface);
+  color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:color .15s,border-color .15s,background .15s;margin-left:4px;flex:none;}
+.nav-gear:hover{color:var(--brand);border-color:var(--brand);background:var(--brand-tint);}
+.set-mask{position:fixed;inset:0;background:rgba(10,16,32,.32);z-index:70;}
+.set-panel{position:fixed;inset:0 0 0 auto;width:min(430px,100vw);background:var(--surface);z-index:71;
+  display:flex;flex-direction:column;box-shadow:var(--sh-3);animation:setIn .18s ease;}
+@keyframes setIn{from{transform:translateX(16px);opacity:.5}to{transform:none;opacity:1}}
+.set-hd{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line);}
+.set-hd b{font-size:15px;color:var(--ink);}
+.set-x{margin-left:auto;width:30px;height:30px;border:0;background:transparent;color:var(--faint);
+  font-size:20px;line-height:1;cursor:pointer;border-radius:8px;}
+.set-x:hover{background:var(--surface-2);color:var(--ink);}
+.set-tabs{display:flex;gap:4px;padding:9px 12px;border-bottom:1px solid var(--line);overflow-x:auto;}
+.set-tabs button{border:0;background:transparent;color:var(--muted);font-size:13px;padding:6px 11px;
+  border-radius:8px;cursor:pointer;white-space:nowrap;}
+.set-tabs button:hover{background:var(--surface-2);color:var(--ink);}
+.set-tabs button.on{background:var(--brand-soft);color:var(--brand-600);font-weight:600;}
+.set-body{flex:1;overflow-y:auto;padding:16px 18px 28px;}
+.set-pane{display:none;flex-direction:column;gap:12px;}
+.set-pane.on{display:flex;}
+.set-f{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:600;}
+.set-f input,.set-f select{padding:9px 11px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+  background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit;width:100%;}
+.set-f input:focus{border-color:var(--brand);outline:2px solid var(--brand);outline-offset:0;}
+.set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.set-note{font-size:12px;color:var(--faint);line-height:1.6;margin:0;}
+.set-note.ok{color:var(--ok);}
+.set-note.err{color:var(--bad);}
+.set-seg{display:inline-flex;border:1px solid var(--line-2);border-radius:10px;padding:2px;background:var(--surface-2);}
+.set-seg button{border:0;background:transparent;padding:6px 14px;border-radius:8px;font-size:13px;
+  color:var(--muted);cursor:pointer;}
+.set-seg button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--sh-1);}
+.set-switch{display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:12px;
+  border:1px solid var(--line);border-radius:var(--r);background:var(--surface-2);}
+.set-switch input{position:absolute;opacity:0;width:0;height:0;}
+.set-track{flex:none;width:40px;height:22px;border-radius:11px;background:#cfd6e4;position:relative;
+  transition:background .18s;margin-top:2px;}
+.set-track::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:transform .18s;box-shadow:0 1px 3px rgba(0,0,0,.2);}
+.set-switch input:checked + .set-track{background:var(--brand);}
+.set-switch input:checked + .set-track::after{transform:translateX(18px);}
+.set-switch input:focus-visible + .set-track{outline:2px solid var(--brand);outline-offset:2px;}
+.set-switch-text{display:flex;flex-direction:column;gap:2px;}
+.set-switch-text b{font-size:13px;color:var(--ink);}
+.set-switch-text i{font-size:12px;color:var(--faint);font-style:normal;line-height:1.5;}
+.set-pre{font-family:var(--mono);font-size:11px;line-height:1.55;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:10px;max-height:210px;overflow:auto;
+  white-space:pre-wrap;word-break:break-all;color:var(--text);margin:0;}
+.set-notes{display:flex;flex-direction:column;gap:6px;}
+.set-note-item{border:1px solid var(--line);border-radius:10px;padding:9px 11px;cursor:pointer;
+  background:var(--surface);}
+.set-note-item:hover{border-color:var(--brand);background:var(--brand-tint);}
+.set-note-item b{display:block;font-size:13px;color:var(--ink);font-weight:600;}
+.set-note-item span{font-size:11px;color:var(--faint);}
+.set-note-view{font-size:12.5px;line-height:1.7;white-space:pre-wrap;border-top:1px solid var(--line);
+  margin-top:8px;padding-top:8px;color:var(--text);}
+body.set-open{overflow:hidden;}
+@media (max-width:520px){ .set-panel{width:100vw;} }
+"""
+
+SETTINGS_HTML = (
+    '<div class="set-mask" id="setMask" hidden></div>'
+    '<aside class="set-panel" id="setPanel" hidden aria-label="设置">'
+    '<div class="set-hd"><b>设置</b>'
+    '<button class="set-x" id="setClose" type="button" aria-label="关闭">×</button></div>'
+    '<div class="set-tabs" id="setTabs">'
+    '<button type="button" data-tab="api" class="on">接口</button>'
+    '<button type="button" data-tab="store">存储</button>'
+    '<button type="button" data-tab="chat">对话</button>'
+    '<button type="button" data-tab="save">已存</button>'
+    '<button type="button" data-tab="install">安装</button>'
+    "</div>"
+    '<div class="set-body">'
+
+    '<section class="set-pane on" data-pane="api">'
+    '<label class="set-f">接口地址<input id="setBase" autocomplete="off" spellcheck="false"></label>'
+    '<label class="set-f">模型<input id="setModel" autocomplete="off" spellcheck="false"></label>'
+    '<label class="set-f">密钥<input id="setKey" type="password" autocomplete="off" spellcheck="false"></label>'
+    '<div class="set-row"><button class="btn sm" id="setSave" type="button">保存</button>'
+    '<button class="btn ghost sm" id="setTest" type="button">测试连接</button></div>'
+    '<p class="set-note" id="setApiNote"></p>'
+    '<p class="set-note">兼容 OpenAI 协议的端点都行，填到 /v1 这一层。</p>'
+    "</section>"
+
+    '<section class="set-pane" data-pane="store">'
+    '<div class="set-seg" id="setHomeSeg">'
+    '<button type="button" data-home="default" class="on">默认位置</button>'
+    '<button type="button" data-home="custom">自定义</button></div>'
+    '<label class="set-f" id="setHomeWrap" hidden>目录<input id="setHome" placeholder="D:\\我的笔记" autocomplete="off" spellcheck="false"></label>'
+    '<div class="set-row"><button class="btn sm" id="setHomeSave" type="button">应用</button>'
+    '<button class="btn ghost sm" id="setOpen" type="button">打开文件夹</button></div>'
+    '<p class="set-note" id="setHomeNote"></p>'
+    '<p class="set-note">笔记是普通 Markdown，放哪儿都能用别的编辑器打开。</p>'
+    "</section>"
+
+    '<section class="set-pane" data-pane="chat">'
+    '<label class="set-switch"><input type="checkbox" id="setStoreChat">'
+    '<span class="set-track"></span>'
+    '<span class="set-switch-text"><b>储存对话内容</b>'
+    '<i>关闭时，任何对话都不会写进笔记库</i></span></label>'
+    '<p class="set-note" id="setChatNote"></p>'
+    "</section>"
+
+    '<section class="set-pane" data-pane="save">'
+    '<div class="set-row"><span class="set-note" id="setNotesCount"></span>'
+    '<span class="spacer"></span>'
+    '<button class="btn ghost sm" id="setNotesRefresh" type="button">刷新</button></div>'
+    '<div class="set-notes" id="setNotesList"></div>'
+    "</section>"
+
+    '<section class="set-pane" data-pane="install">'
+    '<div class="set-row"><a class="btn sm" id="setDownload" href="#" target="_blank" rel="noopener">下载到电脑</a>'
+    '<button class="btn ghost sm" id="setMcpCopy" type="button">复制配置</button>'
+    '<button class="btn ghost sm" id="setMcpInstall" type="button">写入 Claude Desktop</button></div>'
+    '<p class="set-note">下载包解压即用，零第三方依赖；也可以把下面这段挂到任何支持 MCP 的智能体里。</p>'
+    '<pre class="set-pre" id="setMcpPre">加载中…</pre>'
+    '<p class="set-note" id="setMcpNote"></p>'
+    "</section>"
+
+    "</div></aside>"
+)
 
 THEME_HEAD = (
     "<script>(function(){try{var s=localStorage.getItem('rag_theme');"
@@ -475,6 +604,227 @@ THEME_HEAD = (
     "window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');"
     "document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>"
 )
+
+SETTINGS_JS = """
+(function(){
+  var panel=document.getElementById('setPanel');
+  if(!panel) return;
+  var mask=document.getElementById('setMask');
+  var gear=document.getElementById('setBtn');
+  var tabs=document.getElementById('setTabs');
+  var state={loaded:false, view:null};
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function note(id,msg,bad){
+    var el=$(id); if(!el) return;
+    el.textContent=msg||'';
+    el.className='set-note'+(msg?(bad?' err':' ok'):'');
+  }
+  function api(method,path,body){
+    var opt={method:method,headers:{'Content-Type':'application/json'}};
+    if(body) opt.body=JSON.stringify(body);
+    return fetch(path,opt).then(function(r){
+      return r.json().catch(function(){ return {ok:false,message:'服务端返回了非 JSON 内容'}; });
+    },function(){ return {ok:false,message:'连不上本地服务'}; });
+  }
+
+  function openPanel(){
+    panel.hidden=false; if(mask) mask.hidden=false;
+    document.body.classList.add('set-open');
+    if(!state.loaded) load();
+    var first=$('setBase');
+    if(first) setTimeout(function(){ try{ first.focus(); }catch(e){} },60);
+  }
+  function closePanel(){
+    panel.hidden=true; if(mask) mask.hidden=true;
+    document.body.classList.remove('set-open');
+  }
+  if(gear) gear.addEventListener('click',openPanel);
+  var closeBtn=$('setClose'); if(closeBtn) closeBtn.addEventListener('click',closePanel);
+  if(mask) mask.addEventListener('click',closePanel);
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&!panel.hidden) closePanel();
+  });
+
+  if(tabs) tabs.addEventListener('click',function(e){
+    var btn=e.target.closest('button[data-tab]'); if(!btn) return;
+    var name=btn.getAttribute('data-tab');
+    [].forEach.call(tabs.children,function(x){ x.classList.toggle('on',x===btn); });
+    [].forEach.call(panel.querySelectorAll('.set-pane'),function(p){
+      p.classList.toggle('on',p.getAttribute('data-pane')===name);
+    });
+    if(name==='save') loadNotes();
+  });
+
+  function segHome(which){
+    var seg=$('setHomeSeg'); if(!seg) return;
+    [].forEach.call(seg.children,function(b){ b.classList.toggle('on',b.getAttribute('data-home')===which); });
+    var wrap=$('setHomeWrap'); if(wrap) wrap.hidden=(which!=='custom');
+  }
+
+  function applyView(d){
+    state.view=d; state.loaded=true;
+    if($('setBase')){ $('setBase').value=d.llm.base_url||''; $('setBase').placeholder=d.llm.base_url_default||''; }
+    if($('setModel')){ $('setModel').value=d.llm.model||''; $('setModel').placeholder=d.llm.model_default||''; }
+    if($('setKey')){
+      $('setKey').value='';
+      $('setKey').placeholder=d.llm.api_key_set
+        ? ('已保存 '+d.llm.api_key_masked+'，留空不改')
+        : '粘贴密钥';
+    }
+    note('setApiNote', d.llm.key_ready
+      ? ('当前生效：'+(d.llm.effective_model||'')+' @ '+(d.llm.effective_base_url||''))
+      : '还没配密钥，问答会走本地抽取，不调用模型', !d.llm.key_ready);
+
+    segHome(d.notes.home?'custom':'default');
+    if($('setHome')) $('setHome').value=d.notes.home||'';
+    note('setHomeNote', d.notes.home_effective
+      ? ('当前生效：'+d.notes.home_effective)
+      : '当前生效：默认位置', !!d.notes.error);
+
+    if($('setStoreChat')) $('setStoreChat').checked=!!d.notes.store_chat;
+    window.__storeChat=!!d.notes.store_chat;
+    try{ document.dispatchEvent(new CustomEvent('storechat:change',{detail:window.__storeChat})); }catch(e){}
+
+    var dl=$('setDownload');
+    if(dl) dl.href=(d.repo_url||'')+'/releases/latest';
+    if($('setMcpPre')) $('setMcpPre').textContent=JSON.stringify(d.mcp||{},null,2);
+  }
+
+  function load(){
+    api('GET','/api/settings').then(function(d){
+      if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'读取设置失败',true); return; }
+      applyView(d);
+    });
+  }
+
+  if($('setSave')) $('setSave').addEventListener('click',function(){
+    var body={llm:{base_url:$('setBase').value.trim(),model:$('setModel').value.trim()}};
+    var key=$('setKey').value.trim();
+    if(key) body.llm.api_key=key;
+    note('setApiNote','保存中…',false);
+    api('POST','/api/settings',body).then(function(d){
+      if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'保存失败',true); return; }
+      applyView(d);
+      note('setApiNote','已保存，下一次提问就用新配置',false);
+    });
+  });
+
+  if($('setTest')) $('setTest').addEventListener('click',function(){
+    note('setApiNote','测试中（最多等 15 秒）…',false);
+    api('POST','/api/settings/test',{
+      base_url:$('setBase').value.trim(),
+      model:$('setModel').value.trim(),
+      api_key:$('setKey').value.trim()
+    }).then(function(d){
+      if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'测试失败',true); return; }
+      note('setApiNote','连接正常，往返 '+d.latency_ms+' ms',false);
+    });
+  });
+
+  if($('setHomeSeg')) $('setHomeSeg').addEventListener('click',function(e){
+    var btn=e.target.closest('button[data-home]'); if(!btn) return;
+    segHome(btn.getAttribute('data-home'));
+    if(btn.getAttribute('data-home')==='custom'&&$('setHome')) $('setHome').focus();
+  });
+
+  if($('setHomeSave')) $('setHomeSave').addEventListener('click',function(){
+    var seg=$('setHomeSeg').querySelector('button.on');
+    var custom=seg&&seg.getAttribute('data-home')==='custom';
+    var home=custom?$('setHome').value.trim():'';
+    if(custom&&!home){ note('setHomeNote','先填一个目录，或用「默认位置」',true); return; }
+    note('setHomeNote','切换中…',false);
+    api('POST','/api/settings',{notes:{home:home}}).then(function(d){
+      if(!d||!d.ok){ note('setHomeNote',(d&&d.message)||'切换失败',true); return; }
+      applyView(d);
+      note('setHomeNote','已切换：'+(d.notes.home_effective||''),false);
+      if(window.__afterHomeChange) window.__afterHomeChange();
+    });
+  });
+
+  if($('setOpen')) $('setOpen').addEventListener('click',function(){
+    api('POST','/api/settings/open',{}).then(function(d){
+      if(!d||!d.ok) note('setHomeNote',(d&&d.message)||'打不开文件夹',true);
+    });
+  });
+
+  if($('setStoreChat')) $('setStoreChat').addEventListener('change',function(){
+    var on=this.checked;
+    api('POST','/api/settings',{notes:{store_chat:on}}).then(function(d){
+      if(!d||!d.ok){
+        $('setStoreChat').checked=!on;
+        note('setChatNote',(d&&d.message)||'保存失败',true);
+        return;
+      }
+      window.__storeChat=on;
+      note('setChatNote', on
+        ? '已开启：问答里会出现「存为笔记」'
+        : '已关闭：不再写入任何对话内容，已有笔记不受影响', false);
+      try{ document.dispatchEvent(new CustomEvent('storechat:change',{detail:on})); }catch(e){}
+    });
+  });
+
+  function loadNotes(){
+    var box=$('setNotesList'); if(!box) return;
+    box.innerHTML='<p class="set-note">加载中…</p>';
+    api('GET','/api/notes?limit=30').then(function(d){
+      if(!d||!d.ok){
+        box.innerHTML='<p class="set-note err">'+esc((d&&d.message)||'读取失败')+'</p>';
+        return;
+      }
+      if($('setNotesCount')) $('setNotesCount').textContent='最近 '+d.count+' 条';
+      var rows=d.items||[];
+      if(!rows.length){
+        box.innerHTML='<p class="set-note">还没有存过内容。开启「储存对话内容」后，在问答里点「存为笔记」。</p>';
+        return;
+      }
+      box.innerHTML=rows.map(function(it){
+        var when=String(it.created||'').slice(0,16).replace('T',' ');
+        return '<div class="set-note-item" data-id="'+esc(it.id)+'"><b>'+esc(it.title||'(无标题)')+'</b>'
+          +'<span>'+esc(when)+' · '+esc(it.kind||'')+'</span>'
+          +'<div class="set-note-view" hidden></div></div>';
+      }).join('');
+    });
+  }
+  if($('setNotesRefresh')) $('setNotesRefresh').addEventListener('click',loadNotes);
+  if($('setNotesList')) $('setNotesList').addEventListener('click',function(e){
+    var card=e.target.closest('.set-note-item'); if(!card) return;
+    var body=card.querySelector('.set-note-view'); if(!body) return;
+    if(!body.hidden){ body.hidden=true; return; }
+    body.hidden=false; body.textContent='加载中…';
+    api('GET','/api/notes/'+encodeURIComponent(card.getAttribute('data-id'))).then(function(d){
+      if(!d||!d.ok){ body.textContent=(d&&d.message)||'读取失败'; return; }
+      var parts=(d.sections||[]).map(function(s){
+        return (s.body&&s.body.trim()) ? ('【'+s.title+'】\\n'+s.body) : '';
+      }).filter(Boolean);
+      body.textContent=parts.length?parts.join('\\n\\n'):'（这篇还没有正文）';
+    });
+  });
+
+  if($('setMcpCopy')) $('setMcpCopy').addEventListener('click',function(){
+    var text=$('setMcpPre')?$('setMcpPre').textContent:'';
+    function done(){ note('setMcpNote','已复制，粘贴到客户端的 mcpServers 里',false); }
+    function fail(){ note('setMcpNote','复制失败，请手动选中复制',true); }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done,fail);
+    } else { fail(); }
+  });
+
+  if($('setMcpInstall')) $('setMcpInstall').addEventListener('click',function(){
+    if(!confirm('会写入 Claude Desktop 的配置，原文件先备份。继续？')) return;
+    api('POST','/api/settings/mcp/install',{}).then(function(d){
+      if(!d||!d.ok){ note('setMcpNote',(d&&d.message)||'写入失败',true); return; }
+      note('setMcpNote',d.message+'（'+d.target+'）',false);
+    });
+  });
+
+  // 每页加载都先拉一次：问答页要靠 store_chat 决定「存为笔记」是否出现，
+  // 不能等用户打开设置面板才拿到状态。
+  load();
+})();
+"""
 
 THEME_JS = """
 (function(){
@@ -499,9 +849,11 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{THEME_HEAD}"
         f'<meta name="color-scheme" content="light dark">'
         '<link rel="icon" href="data:,">'
-        f"<title>{title}</title><style>{BASE_CSS}{css}</style></head><body>"
+        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{css}</style></head><body>"
         f"{nav(active)}{body}{footer()}"
-        f"<div id=\"toasts\"></div><script>{script}</script><script>{THEME_JS}</script></body></html>"
+        f"{SETTINGS_HTML}"
+        f'<div id="toasts"></div><script>{script}</script>'
+        f"<script>{SETTINGS_JS}</script><script>{THEME_JS}</script></body></html>"
     )
 
 

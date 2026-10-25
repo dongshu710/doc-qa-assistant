@@ -96,7 +96,8 @@ doc-qa-assistant/
 │  ├─ index/                   # embedding 索引 + keywords.json（运行时生成）
 │  └─ demo/                    # 演示文档：小a的生活习惯.md（关键词直出示例）
 ├─ src/
-│  ├─ config.py                # 通道/超时/重试/阈值配置
+│  ├─ config.py                # 通道/超时/重试/阈值配置（界面配置优先，其次环境变量）
+│  ├─ appconfig.py             # 设置面板的读写层：data/app.json、掩码、路径校验
 │  ├─ chunking.py              # 标题/条款感知切分
 │  ├─ retriever.py             # embedding / n-gram / BM25 召回 + 重排
 │  ├─ embeddings.py            # OpenAI 兼容 embedding（批请求 / 重试 / 维度探测 / 缓存）
@@ -173,6 +174,8 @@ doc-qa-assistant/
 │  ├─ test_kb_hardlink.py       # 版本硬链接 / 保留 N 版 / 回退复制
 │  ├─ test_auth_openapi.py      # API Key 401 / 两种携带方式 / OpenAPI 契约
 │  ├─ e2e_pages.mjs             # Playwright 四页 E2E + 侧栏收起（开发期依赖）
+│  ├─ test_settings.py          # 设置面板：配置读写、掩码、校验、优先级、挂载位置
+│  ├─ e2e_settings.mjs          # Playwright：抽屉开合 / 五分区 / 开关生效 / MCP 生成
 │  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
 │  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
 │  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
@@ -221,7 +224,13 @@ python -m src.cli
 
 ## 4. 模型接入（任意 OpenAI 兼容端点）
 
-不配 Key 时走「离线抽取模式」，链路照样跑通、可评测；配了 Key 自动切换为大模型生成。**源码不含任何密钥**，只从环境变量读取。
+**两种改法，优先级从高到低：界面 > 环境变量 > 代码默认。**
+
+页面右上角齿轮 → 「接口」里填地址、模型、密钥，点保存即生效，不用重启；
+旁边的「测试连接」会真打一次请求，401 / 404 / 429 / 超时分别给出对应原因。
+配置落在 `data/app.json`（已加入 `.gitignore`，接口只回掩码）。
+
+不配 Key 时走「离线抽取模式」，链路照样跑通、可评测；配了 Key 自动切换为大模型生成。**源码不含任何密钥**，只从环境变量或本地配置读取。
 
 默认指向 DeepSeek 官方，但代码里没有写死任何一家：改 `LLM_BASE_URL` + `LLM_MODEL` 就能换成你手上的任意兼容端点（自建 vLLM、公司网关、其他云厂商都行）。
 

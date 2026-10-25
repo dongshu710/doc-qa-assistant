@@ -9,16 +9,38 @@
 换服务商只改这两个变量，不改代码；未配置 Key 时生成层自动降级为抽取式回答。
 """
 import os
+import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
+
+from . import appconfig
 
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 
+_OVERRIDES: dict[str, str] = {}
+_OVERRIDES_AT = 0.0
+
+
+def _overrides() -> dict[str, str]:
+    """界面配置加 1 秒缓存：一次问答会调几十次 load_settings，不必每次都 stat 配置文件。"""
+    global _OVERRIDES, _OVERRIDES_AT
+    now = time.monotonic()
+    if now - _OVERRIDES_AT > 1.0:
+        _OVERRIDES = appconfig.as_env()
+        _OVERRIDES_AT = now
+    return _OVERRIDES
+
 
 def _first_env(*names: str, default: str = "") -> str:
-    """按顺序取第一个非空环境变量。"""
+    """按顺序取第一个非空值：界面配置优先，其次环境变量。
+
+    界面里显式清空的项（空串）不再回落到环境变量——否则用户清不干净，会以为开关坏了。
+    """
+    overrides = _overrides()
     for name in names:
+        if name in overrides:
+            return overrides[name]
         value = os.getenv(name)
         if value:
             return value

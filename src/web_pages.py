@@ -598,11 +598,14 @@ function bindFeedback(body,d,query){
   var fb=document.createElement('div'); fb.className='fb';
   var up='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></svg>';
   var down='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(180 12 12)"><path d="M7 10v9H4v-9z"/><path d="M7 10l3.6-7a1.8 1.8 0 0 1 3.1 1.6L13 9h5a2 2 0 0 1 2 2.3l-1.1 6A2 2 0 0 1 17 19H7z"/></g></svg>';
+  // 关掉「储存对话内容」时按钮根本不出现：默认就不该有保存入口
+  var noteBtn=(window.__storeChat===true)
+    ? ('<button type="button" class="fb-save">'+ICON_NOTE+' 存为笔记</button>') : '';
   fb.innerHTML='<span class="fb-q">这条回答对你有帮助吗？</span>'
     +'<button type="button" class="fb-up">'+up+' 有用</button>'
     +'<button type="button" class="fb-down">'+down+' 有问题</button>'
     +'<button type="button" class="fb-copy">复制</button>'
-    +'<button type="button" class="fb-save">'+ICON_NOTE+' 存为笔记</button>'
+    +noteBtn
     +'<div class="fb-note"><input placeholder="哪里不对？可留空，用于 badcase 复盘"><button type="button" class="btn sm fb-send">提交</button></div>';
   body.querySelector('.ans-card').appendChild(fb);
   var saveBtn=fb.querySelector('.fb-save');
@@ -815,7 +818,7 @@ async function openNoteDialog(query,d){
 async function saveNoteDialog(){
   if(!ND.ready) return;
   var btn=document.getElementById('ndSave'); btn.disabled=true;
-  var body=Object.assign({},ND.payload,{commit:true});
+  var body=Object.assign({},ND.payload,{commit:true,from:'chat'});
   body.hint=Object.assign({},ND.payload.hint,{
     title:document.getElementById('ndTitle').value.trim(),
     kind:document.getElementById('ndKind').value,
@@ -874,6 +877,12 @@ KB_CSS = """
 .kb-status.err{color:var(--bad);font-weight:500;}
 
 .tips{font-size:12px;color:var(--muted);line-height:1.75;}
+.tips[open]{padding-bottom:12px;}
+.tips summary{cursor:pointer;list-style:none;display:flex;align-items:center;}
+.tips summary::-webkit-details-marker{display:none;}
+.tips summary::after{content:"展开";margin-left:auto;font-size:11px;color:var(--brand);font-weight:600;}
+.tips[open] summary::after{content:"收起";}
+.tips summary.side-title{margin-bottom:0;}
 .tips div{display:flex;gap:7px;padding:4px 0;}
 .tips i{flex:none;width:4px;height:4px;border-radius:50%;background:#c3ccdd;margin-top:8px;}
 
@@ -1074,12 +1083,12 @@ KB_BODY = """
         <div class="kb-status" id="kbMsg"></div>
       </section>
 
-      <section class="card tips">
-        <div class="side-title">说明</div>
+      <details class="card tips">
+        <summary class="side-title">说明</summary>
         <div><i></i><span>审批通过后切分并重建索引；本机管理员直通时立即生效。</span></div>
         <div><i></i><span>清单 / 标签类条目命中后本地直出，不调用模型。</span></div>
         <div><i></i><span>PDF / Word / Excel / CSV 服务端转 Markdown；扫描件需先 OCR。</span></div>
-      </section>
+      </details>
     </div>
 
     <section class="card kb-list">

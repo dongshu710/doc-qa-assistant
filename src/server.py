@@ -51,19 +51,25 @@ import gzip
 import hashlib
 import json
 import os
+import pathlib
+import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import traceback
+import urllib.error
+import urllib.request
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import casegen, evaluator, ingest, jsonl, kbstore, suggest
+from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, suggest
 from .auth import ApiKeyStore
-from .config import load_settings
+from .config import api_key, load_settings
 from .guards import Guards
 from .metrics import summarize
 from .metrics_exporter import Metrics
@@ -150,11 +156,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
     guards = Guards(pipe.settings, log_dir)
     api_keys = ApiKeyStore(pipe.settings.api_keys)
     try:
-        note_service: NoteService | None = NoteService()
-        note_init_error = None
+        note_ref: dict = {"service": NoteService(), "error": None}
     except OSError as exc:  # 目录不可写等情况：接口回 503，问答照常
-        note_service = None
-        note_init_error = f"{type(exc).__name__}: {exc}"
+        note_ref = {"service": None, "error": f"{type(exc).__name__}: {exc}"}
 
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
@@ -194,6 +198,110 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         if before is not None:
             out["added_chunks"] = None if building else len(pipe.chunks) - before
         return out
+
+    def _reopen_notes() -> dict:
+        """存储位置变了就重建笔记服务：旧实例的路径与缓存都指向老目录，不能复用。"""
+        try:
+            note_ref["service"] = NoteService()
+            note_ref["error"] = None
+            return {"ok": True, "home": str(note_ref["service"].store.home)}
+        except OSError as exc:
+            note_ref["error"] = f"{type(exc).__name__}: {exc}"
+            return {"ok": False, "message": note_ref["error"]}
+
+    def _repo_url() -> str:
+        """从 .git/config 读 origin，换 fork 也不用改代码；读不到就给个能点的默认值。"""
+        try:
+            text = (pathlib.Path(project_root) / ".git" / "config").read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        found = re.search(r"url\s*=\s*(\S+)", text)
+        if not found:
+            return ""
+        url = found.group(1)
+        match = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?$", url)
+        return f"https://github.com/{match.group(1)}/{match.group(2)}" if match else ""
+
+    def _mcp_config() -> dict:
+        """生成 MCP 客户端配置：命令用当前解释器绝对路径，不依赖对方 PATH。"""
+        service = note_ref["service"]
+        home = str(service.store.home) if service else str(pathlib.Path.home() / "agent-notes")
+        return {
+            "mcpServers": {
+                "agent-notes": {
+                    "command": sys.executable,
+                    "args": ["-m", "src.notes.mcp_server"],
+                    "env": {"PYTHONPATH": project_root, "NOTE_HOME": home},
+                }
+            }
+        }
+
+    def _probe_llm(cfg: dict) -> dict:
+        """真打一次 minimum 请求验证配置。用户点「测试」时要的是结论，不是重试次数，所以只打一次。"""
+        base = str(cfg.get("base_url") or "").rstrip("/")
+        model = str(cfg.get("model") or "")
+        key = str(cfg.get("api_key") or "")
+        if not key:
+            return {"ok": False, "error": "no_key", "message": "还没填密钥"}
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "stream": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(base + "/chat/completions", data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {key}")
+        started = time.time()
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp.read()
+            return {"ok": True, "latency_ms": int((time.time() - started) * 1000)}
+        except urllib.error.HTTPError as exc:
+            hint = {401: "密钥无效或没有权限", 403: "密钥无权访问该模型",
+                    404: "地址不对：应填到 /v1 这一层，不要带 /chat/completions",
+                    429: "触发限流，稍后再试或换 Key"}.get(exc.code, "接口返回错误")
+            return {"ok": False, "error": f"http_{exc.code}",
+                    "message": f"{hint}（HTTP {exc.code}）"}
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            return {"ok": False, "error": "network",
+                    "message": f"连不上 {base}：{reason}（超时 15 秒）"}
+
+    def _settings_payload() -> dict:
+        live = load_settings()
+        view = appconfig.view()
+        service = note_ref["service"]
+        return {
+            "ok": True,
+            "llm": {
+                **view["llm"],
+                "effective_base_url": live.api_base,
+                "effective_model": live.model,
+                "key_ready": bool(api_key()),
+            },
+            "notes": {
+                **view["notes"],
+                "home_effective": str(service.store.home) if service else "",
+                "home_default": str(pathlib.Path.home() / "agent-notes"),
+                "available": service is not None,
+                "error": note_ref["error"],
+            },
+            "mcp": _mcp_config(),
+            "repo_url": _repo_url(),
+            "config_path": view["config_path"],
+            "updated_at": view["updated_at"],
+        }
+
+    def _claude_config_path() -> pathlib.Path | None:
+        appdata = os.environ.get("APPDATA")
+        if os.name == "nt" and appdata:
+            return pathlib.Path(appdata) / "Claude" / "claude_desktop_config.json"
+        if sys.platform == "darwin":
+            return pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        if sys.platform.startswith("linux"):
+            return pathlib.Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        return None
 
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
@@ -353,12 +461,20 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if denied:
                 self._json(denied, 401, {**cors, "WWW-Authenticate": 'Bearer realm="notes"'})
                 return
-            if note_service is None:
+            if note_ref["service"] is None:
                 self._json({"ok": False, "error": "notes_unavailable",
-                            "message": f"笔记存储不可用：{note_init_error}"}, 503, cors)
+                            "message": f"笔记存储不可用：{note_ref['error']}"}, 503, cors)
+                return
+            # 「储存对话内容」只约束问答页自动/手动沉淀的那条路子：
+            # 智能体经 MCP/API 显式 save_note 是它自己的意图，不该被这个开关连坐。
+            if (method == "POST" and path.rstrip("/") == "/api/notes"
+                    and isinstance(body, dict) and body.get("from") == "chat"
+                    and not appconfig.store_chat()):
+                self._json({"ok": False, "error": "store_chat_off",
+                            "message": "已关闭「储存对话内容」，可在设置里打开后再保存"}, 403, cors)
                 return
             try:
-                status, payload, extra = notes_dispatch(note_service, method, path, query, body)
+                status, payload, extra = notes_dispatch(note_ref["service"], method, path, query, body)
             except ApiError as exc:
                 if method != "GET":
                     guards.audit.write(f"notes.{method.lower()}.rejected", client=self._client(),
@@ -376,6 +492,112 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 guards.audit.write(f"notes.{method.lower()}", client=self._client(),
                                    id=payload.get("id"), duplicate_of=payload.get("duplicate_of"))
             self._json(payload, status, {**cors, **extra})
+
+        def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:
+            """设置面板的全部后端动作：读、改、测连接、导出/写入插件配置、打开目录。
+
+            只允许本机或持有 ADMIN_TOKEN 的调用方修改：这里的 API Key 是明文凭据，
+            不能让同一局域网里的任何人替机主决定连哪个模型。
+            """
+            cors = self._cors_headers()
+            if method == "OPTIONS":
+                self.send_response(204)
+                for key, value in {**cors, "Allow": "GET, POST, OPTIONS"}.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            local = self._client() in ("127.0.0.1", "::1", "localhost")
+            if method != "GET" and not local:
+                token = (self.headers.get("X-Admin-Token") or "").strip()
+                if not (pipe.settings.admin_token and token == pipe.settings.admin_token):
+                    self._json({"ok": False, "error": "forbidden",
+                                "message": "设置只能在运行服务的这台电脑上修改"}, 403, cors)
+                    return
+            try:
+                if path == "/api/settings":
+                    if method == "GET":
+                        self._json(_settings_payload(), 200, cors)
+                        return
+                    if method == "POST":
+                        appconfig.update(body or {})
+                        reopened = _reopen_notes()
+                        payload = _settings_payload()
+                        payload["notes_reloaded"] = reopened
+                        guards.audit.write("settings.update", client=self._client(),
+                                           model=payload["llm"]["effective_model"],
+                                           notes_home=payload["notes"]["home_effective"],
+                                           store_chat=payload["notes"]["store_chat"])
+                        self._json(payload, 200, cors)
+                        return
+                if path == "/api/settings/test" and method == "POST":
+                    live = load_settings()
+                    sent = body or {}
+                    cfg = {
+                        "base_url": str(sent.get("base_url") or live.api_base),
+                        "model": str(sent.get("model") or live.model),
+                        # 页面回显的是掩码；留空表示「用已保存的那把钥匙」
+                        "api_key": str(sent.get("api_key") or api_key()),
+                    }
+                    self._json(_probe_llm(cfg), 200, cors)
+                    return
+                if path == "/api/settings/mcp":
+                    target = _claude_config_path()
+                    self._json({"ok": True, "config": _mcp_config(),
+                                "target": str(target) if target else ""}, 200, cors)
+                    return
+                if path == "/api/settings/mcp/install" and method == "POST":
+                    target = _claude_config_path()
+                    if target is None:
+                        self._json({"ok": False, "error": "unsupported",
+                                    "message": "这个系统没有已知的 Claude Desktop 配置路径，请手动复制 JSON"}, 400, cors)
+                        return
+                    data: dict = {}
+                    if target.exists():
+                        try:
+                            data = json.loads(target.read_text(encoding="utf-8"))
+                        except (OSError, json.JSONDecodeError) as exc:
+                            # 不覆盖坏文件：对方自己改坏了，替它兜底会掩盖问题
+                            self._json({"ok": False, "error": "bad_config",
+                                        "message": f"现有配置不是合法 JSON，未改动：{exc}"}, 400, cors)
+                            return
+                        backup = target.with_name(target.name + f".bak-{time.strftime('%Y%m%d%H%M%S')}")
+                        shutil.copy2(target, backup)
+                    if not isinstance(data, dict):
+                        data = {}
+                    data.setdefault("mcpServers", {})["agent-notes"] = _mcp_config()["mcpServers"]["agent-notes"]
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    guards.audit.write("settings.mcp_install", client=self._client(), target=str(target))
+                    self._json({"ok": True, "target": str(target),
+                                "message": "已写入。重启 Claude Desktop 后生效"}, 200, cors)
+                    return
+                if path == "/api/settings/open" and method == "POST":
+                    service = note_ref["service"]
+                    if service is None:
+                        self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
+                        return
+                    folder = str(service.store.home)
+                    try:
+                        if os.name == "nt":
+                            os.startfile(folder)  # noqa: S606
+                        elif sys.platform == "darwin":
+                            subprocess.Popen(["open", folder])
+                        else:
+                            subprocess.Popen(["xdg-open", folder])
+                    except OSError as exc:
+                        self._json({"ok": False, "error": "open_failed",
+                                    "message": f"打不开文件管理器：{exc}", "path": folder}, 500, cors)
+                        return
+                    self._json({"ok": True, "path": folder}, 200, cors)
+                    return
+                self._json({"ok": False, "error": "not_found"}, 404, cors)
+            except ValueError as exc:
+                self._json({"ok": False, "error": "invalid_argument", "message": str(exc)}, 400, cors)
+            except Exception as exc:  # noqa: BLE001 —— 设置面板报错也要能看见原因
+                traceback.print_exc()
+                self._json({"ok": False, "error": "internal_error",
+                            "message": f"服务端异常：{type(exc).__name__}: {exc}"}, 500, cors)
 
         def _ask_preflight(self, payload: dict):
             """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
@@ -515,6 +737,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/settings" or parsed.path.startswith("/api/settings/"):
+                self._settings("OPTIONS", parsed.path, parse_qs(parsed.query), None)
+                return
             if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
                 self._json({"error": "not found"}, 404)
                 return
@@ -531,6 +756,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 return
             if path == "/api/notes" or path.startswith("/api/notes/"):
                 self._notes("GET", path, qs, None)
+                return
+            if path == "/api/settings" or path.startswith("/api/settings/"):
+                self._settings("GET", path, qs, None)
                 return
             if path in ("/", "/index.html", "/insights", "/dashboard", "/report"):
                 # 只留问答与知识库两页，旧入口统一回落到问答页，收藏夹不会 404
@@ -756,6 +984,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
+            if path == "/api/settings" or path.startswith("/api/settings/"):
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+                self._settings("POST", path, parse_qs(urlparse(self.path).query), body)
+                return
             if path == "/api/notes" or path.startswith("/api/notes/"):
                 body, err = self._read_note_body()
                 if err:

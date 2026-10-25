@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .. import appconfig
+
 from . import index as index_mod
 from .model import Note
 
@@ -57,7 +59,12 @@ class SaveResult:
 
 class NoteStore:
     def __init__(self, home: str | Path | None = None, keep_raw: bool | None = None):
-        raw_home = str(home) if home else os.environ.get("NOTE_HOME") or DEFAULT_HOME
+        # 优先级：显式参数 > 界面里选的存储位置 > NOTE_HOME > ~/agent-notes。
+        # 界面排在环境变量前面，否则用户在设置里换了位置却发现没生效。
+        raw_home = (str(home) if home
+                    else appconfig.get("notes.home")
+                    or os.environ.get("NOTE_HOME")
+                    or DEFAULT_HOME)
         self.home = Path(raw_home).expanduser().resolve()
         self.keep_raw = keep_raw if keep_raw is not None else _env_flag("NOTE_KEEP_RAW", False)
         self._cache: dict[str, dict] | None = None

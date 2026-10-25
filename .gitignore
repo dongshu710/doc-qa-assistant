@@ -2,16 +2,22 @@
 .env
 .env.local
 .gh_token
+# 设置面板写的运行时配置：含模型密钥明文，绝不入库
+data/app.json
+data/app.test.json
 
 # 运行时产物
 logs/
 dist/
 data/kb/
 data/index/
+data/notes-test/
+data/notes-alt/
 tests/report_doc_cases.json
 tests/eval_cases_docs.jsonl
 tests/e2e-server.log
 tests/e2e-notes-server.log
+tests/e2e-settings-server.log
 __pycache__/
 *.py[cod]
 .pytest_cache/
