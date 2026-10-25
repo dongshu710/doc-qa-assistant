@@ -1314,6 +1314,9 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 为什么不是 Agent、链路时序、组件职责、失败处理矩阵 |
 | [docs/EVALUATION.md](docs/EVALUATION.md) | 数据集构成、L1/L3/召回口径、实测结果与局限 |
 | [docs/SECURITY.md](docs/SECURITY.md) | 密钥处理、输入防护、威胁模型与已知缺口 |
+| [docs/PLUGIN.md](docs/PLUGIN.md) | 设置里的实体控件清单、MCP 插件集成方式、依赖与适用场景 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 改进优先级（P0–P3）、工作量与不推荐做的事 |
+| [docs/AUDIT.md](docs/AUDIT.md) | 两轮代码审查：问题、证据、修复与实测数据 |
 | [docs/RELEASE.md](docs/RELEASE.md) | 版本号、打包、解压验证、Release 流程 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 本地开发、提交前自检、PR 约定 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更记录 |
