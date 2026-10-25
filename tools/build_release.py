@@ -7,6 +7,7 @@
 产物：
     dist/zhiyuan-app-<version>.zip       完整服务，解压双击 start 脚本即用
     dist/zhiyuan-plugin-<version>.zip    只含 src/notes，挂到任意 MCP 客户端
+    dist/zhiyuan-skill-<version>.zip     zhiyuan-files 技能，解压进 ~/.workbuddy/skills/
     dist/SHA256SUMS.txt                  两个包的 sha256
 
 设计取舍：只打源码包，不做 PyInstaller 单文件。运行时零第三方依赖，
@@ -25,6 +26,8 @@ DIST = ROOT / "dist"
 
 APP_PREFIX = "zhiyuan-app"
 PLUGIN_PREFIX = "zhiyuan-plugin"
+SKILL_PREFIX = "zhiyuan-skill"
+SKILL_DIR = ROOT / "skills" / "zhiyuan-files"
 
 INCLUDE_DIRS = ("src", "data", "docs", "tests", "tools", "deploy")
 INCLUDE_FILES = (
@@ -100,8 +103,20 @@ def iter_plugin_payload() -> list[Path]:
     return files
 
 
+def iter_skill_payload() -> list[Path]:
+    """技能包：整个 skills/zhiyuan-files 目录，4 个文件，解压到技能目录即可用。"""
+    if not SKILL_DIR.is_dir():
+        raise FileNotFoundError(f"缺少技能目录: {SKILL_DIR}")
+    files = [path for path in sorted(SKILL_DIR.rglob("*"))
+             if path.is_file() and "__pycache__" not in path.parts
+             and path.suffix not in EXCLUDE_SUFFIXES]
+    if not files:
+        raise FileNotFoundError("技能目录是空的")
+    return files
+
+
 def write_zip(out: Path, root_name: str, payload: list[Path],
-              readme_from_docs: bool = False) -> Path:
+              readme_from_docs: bool = False, base: Path = ROOT) -> Path:
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in payload:
             # 插件包的 README 来自 docs/，放进包里改叫 README.md，解压后能直接看。
@@ -109,7 +124,7 @@ def write_zip(out: Path, root_name: str, payload: list[Path],
             if readme_from_docs and path.name == "PLUGIN_PACKAGE.md":
                 arcname = f"{root_name}/README.md"
             else:
-                arcname = f"{root_name}/{path.relative_to(ROOT).as_posix()}"
+                arcname = f"{root_name}/{path.relative_to(base).as_posix()}"
             info = zipfile.ZipInfo.from_file(path, arcname)
             info.compress_type = zipfile.ZIP_DEFLATED
             # 让解压后的 start.sh 直接可执行（zip 保存 Unix 权限位）
@@ -123,13 +138,19 @@ def build() -> list[Path]:
     ver = version()
     DIST.mkdir(parents=True, exist_ok=True)
     jobs = [
-        (DIST / f"{APP_PREFIX}-{ver}.zip", f"{APP_PREFIX}-{ver}", iter_payload(), False),
-        (DIST / f"{PLUGIN_PREFIX}-{ver}.zip", f"{PLUGIN_PREFIX}-{ver}", iter_plugin_payload(), True),
+        {"out": DIST / f"{APP_PREFIX}-{ver}.zip", "root": f"{APP_PREFIX}-{ver}",
+         "files": iter_payload(), "readme": False, "base": ROOT},
+        {"out": DIST / f"{PLUGIN_PREFIX}-{ver}.zip", "root": f"{PLUGIN_PREFIX}-{ver}",
+         "files": iter_plugin_payload(), "readme": True, "base": ROOT},
+        # 技能包的根目录必须叫 zhiyuan-files（不带版本号），解压进 skills/ 才能直接被识别
+        {"out": DIST / f"{SKILL_PREFIX}-{ver}.zip", "root": SKILL_DIR.name,
+         "files": iter_skill_payload(), "readme": False, "base": SKILL_DIR},
     ]
     made: list[Path] = []
     lines: list[str] = []
-    for out, root_name, payload, readme_from_docs in jobs:
-        write_zip(out, root_name, payload, readme_from_docs)
+    for job in jobs:
+        out, root_name, payload = job["out"], job["root"], job["files"]
+        write_zip(out, root_name, payload, job["readme"], job["base"])
         digest = hashlib.sha256(out.read_bytes()).hexdigest()
         lines.append(f"{digest}  {out.name}")
         made.append(out)

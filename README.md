@@ -13,21 +13,24 @@
 
 ## 下载
 
-两个包，**选一个就够**。都在同一页：**[Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)**（同页附 `SHA256SUMS.txt`）
+三种包，按需要选一个。都在同一页：**[Releases](https://github.com/dongshu710/doc-qa-assistant/releases/latest)**（同页附 `SHA256SUMS.txt`）
 
 | 包 | 里面有什么 | 适合谁 | 文件 |
 |---|---|---|---|
 | **应用包** | 问答 + 知识库 + 笔记 + 两页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `zhiyuan-app-<版本>.zip` |
 | **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `zhiyuan-plugin-<版本>.zip` |
+| **技能包** | `zhiyuan-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `zhiyuan-skill-<版本>.zip` |
 
 解压即用，运行时零第三方依赖（Python 3.11+）。应用包双击 `start.bat` / `sh start.sh`；
-插件包按 `README.md` 里的三段 JSON 挂进客户端。
+插件包按包内 `README.md` 的三段 JSON 挂进客户端；
+技能包解压到 `~/.workbuddy/skills/`，或用 `python tools/install_skill.py` 一条命令装（见 [docs/SKILL.md](docs/SKILL.md)）。
 
 **关于「实体按钮」**：WorkBuddy、Claude Desktop 这类客户端的工具栏不开放自定义按钮，
 插件也放不进去。所以入口分两边——
 
-- **人看的**：页面右上角「文件」（或直接打开 `http://127.0.0.1:8011/files`，可收藏）；
-- **智能体用的**：连接器（MCP），配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)。
+- **人看的**：页面右上角「文件」（或直接打开 `http://127.0.0.1:8000/files`，可收藏）；
+- **智能体用的**：连接器（MCP，配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)），
+  或上面那个技能包（让智能体直接调 `zy.py`，不必接 MCP）。
 
 | 问答（带引用） | 文件（`/files`，可收藏的固定地址） |
 |---|---|
@@ -1346,6 +1349,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 | [docs/SECURITY.md](docs/SECURITY.md) | 密钥处理、输入防护、威胁模型与已知缺口 |
 | [docs/PLUGIN.md](docs/PLUGIN.md) | 设置里的实体控件清单、MCP 插件集成方式、依赖与适用场景 |
 | [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md) | 插件包说明：三段 JSON、7 个工具、常见问题 |
+| [docs/SKILL.md](docs/SKILL.md) | 技能包说明：触发方式、参数、安装/卸载、目录结构与验证 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 改进优先级（P0–P3）、工作量与不推荐做的事 |
 | [docs/AUDIT.md](docs/AUDIT.md) | 两轮代码审查：问题、证据、修复与实测数据 |
 | [docs/RELEASE.md](docs/RELEASE.md) | 版本号、打包、解压验证、Release 流程 |

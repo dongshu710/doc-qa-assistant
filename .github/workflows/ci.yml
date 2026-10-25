@@ -160,6 +160,7 @@ jobs:
           path: |
             dist/zhiyuan-app-*.zip
             dist/zhiyuan-plugin-*.zip
+            dist/zhiyuan-skill-*.zip
             dist/SHA256SUMS.txt
           if-no-files-found: error
 

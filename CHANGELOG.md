@@ -2,6 +2,34 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.16.0] - 2026-10-25
+
+把「文件入口」封装成可安装的技能：能读能写，服务没起也能读。
+
+### 新增
+
+- **技能 `zhiyuan-files`**（`skills/zhiyuan-files/`，4 个文件）：`doctor` 自检、
+  `list` 列表、`search` 搜索（多词=全部命中）、`get` 全文、`save` 存对话、
+  `export` 导出、`open` 打开页面；`--json` 放在子命令前后都可用。
+- **安装器 `tools/install_skill.py`**：`--check` / 安装（覆盖前备份）/ `--uninstall`，
+  默认装到 `~/.workbuddy/skills/`，装完自动跑一次自检。
+- 发布第三个包 `zhiyuan-skill-<版本>.zip`：解压进 `~/.workbuddy/skills/` 即装。
+- 文档 [docs/SKILL.md](docs/SKILL.md)：触发方式、参数、安装/卸载、目录结构、配置示例、验证清单。
+
+### 设计取舍
+
+- **读走本地文件，写走 HTTP**：笔记是普通 Markdown，服务只是索引与生成器，
+  关掉服务也应该能翻笔记；写必须过服务（切分、去重、摘要都在服务里）。
+- **POST 不重试**：保存不是幂等操作，超时重试可能写出两篇。GET 允许重试一次。
+- **5xx 一律当「服务不可用」**：本机代理会把「连接被拒」包装成 502，不能当成功响应。
+- **保存的两级降级**：服务没起且给了 `zhiyuan_home` → 退回 `python -m src.notes save`；
+  两条路都没有就报错并给启动命令，不假装成功。
+
+### 测试
+
+- 新增 `tests/test_skill.py` 31 项：结构与 frontmatter、离线读路径、搜索语义、
+  找不到的退出码、保存的两级降级、导出失败、安装器的装/查/卸全流程。
+
 ## [1.15.1] - 2026-10-25
 
 启动脚本补上改名。
