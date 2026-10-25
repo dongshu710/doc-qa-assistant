@@ -630,8 +630,8 @@ SETTINGS_JS = """
   var state={loaded:false, view:null};
 
   function $(id){ return document.getElementById(id); }
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  // 转义统一用 JS_UTIL 里的那份：两处各写一套，改漏一处就是 XSS 缺口
+  var esc=window.esc;
   function note(id,msg,bad){
     var el=$(id); if(!el) return;
     el.textContent=msg||'';

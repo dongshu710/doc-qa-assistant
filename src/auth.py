@@ -16,6 +16,17 @@ import hashlib
 import hmac
 
 
+def safe_equal(left: str, right: str) -> bool:
+    """常量时间比较两个字符串。
+
+    长度不同时也完整走一遍 digest（先各自哈希），不让调用方从耗时里读出「前缀对了几个字符」。
+    统一走这里，避免有的地方用 == 有的地方用 compare_digest。
+    """
+    def digest(text: str) -> bytes:
+        return hashlib.sha256(str(text or "").encode("utf-8")).digest()
+    return hmac.compare_digest(digest(left), digest(right))
+
+
 class ApiKeyStore:
     def __init__(self, raw: str = ""):
         self.keys: dict[str, str] = {}

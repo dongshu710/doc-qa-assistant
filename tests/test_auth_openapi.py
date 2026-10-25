@@ -111,6 +111,14 @@ def main() -> None:
         print(f"OpenAPI OK：{len(spec['paths'])} 个路径，鉴权方案 "
               f"{list(spec['components']['securitySchemes'])}")
 
+        # 统一常量时间比较：长度不同也不能按前缀提前返回
+        from src.auth import safe_equal
+        assert safe_equal("sk-abc", "sk-abc")
+        assert not safe_equal("sk-abc", "sk-abd")
+        assert not safe_equal("sk-abc", "sk-abcd")
+        assert safe_equal("", "")
+        print("safe_equal 常量时间比较 OK")
+
         print("AUTH & OPENAPI TESTS PASSED")
     finally:
         httpd.shutdown()

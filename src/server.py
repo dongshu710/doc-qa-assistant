@@ -69,7 +69,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, suggest
-from .auth import ApiKeyStore
+from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
 from .guards import Guards
 from .metrics import summarize
@@ -465,7 +465,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def _is_admin(self) -> bool:
             token = pipe.settings.admin_token
             if token:
-                return self.headers.get("X-Admin-Token", "") == token
+                return safe_equal(self.headers.get("X-Admin-Token", ""), token)
             return self._client() in ("127.0.0.1", "::1")
 
         def _auto_approve(self) -> bool:
@@ -599,7 +599,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             local = self._client() in ("127.0.0.1", "::1", "localhost")
             if method != "GET" and not local:
                 token = (self.headers.get("X-Admin-Token") or "").strip()
-                if not (pipe.settings.admin_token and token == pipe.settings.admin_token):
+                if not (pipe.settings.admin_token and safe_equal(token, pipe.settings.admin_token)):
                     self._json({"ok": False, "error": "forbidden",
                                 "message": "设置只能在运行服务的这台电脑上修改"}, 403, cors)
                     return

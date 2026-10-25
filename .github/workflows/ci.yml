@@ -189,3 +189,6 @@ jobs:
 
       - name: 笔记 E2E（分区切换 / 编辑 / 409 / 导出 / 存为笔记）
         run: node tests/e2e_notes.mjs
+
+      - name: 设置 E2E（抽屉 / 五分区 / 存储切换与迁移 / 开关语义）
+        run: node tests/e2e_settings.mjs
