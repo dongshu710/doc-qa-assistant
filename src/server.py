@@ -68,7 +68,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, suggest
+from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, settings_ops, suggest
 from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
 from .guards import Guards
@@ -224,50 +224,14 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         return f"https://github.com/{match.group(1)}/{match.group(2)}" if match else ""
 
     def _mcp_config() -> dict:
-        """生成 MCP 客户端配置：命令用当前解释器绝对路径，不依赖对方 PATH。"""
+        """生成 MCP 客户端配置；实现放在 settings_ops，这里只负责取当前实际路径。"""
         service = note_ref["service"]
         home = str(service.store.home) if service else str(pathlib.Path.home() / "agent-notes")
-        return {
-            "mcpServers": {
-                "agent-notes": {
-                    "command": sys.executable,
-                    "args": ["-m", "src.notes.mcp_server"],
-                    "env": {"PYTHONPATH": project_root, "NOTE_HOME": home},
-                }
-            }
-        }
+        return settings_ops.mcp_config(sys.executable, project_root, home)
 
     def _probe_llm(cfg: dict) -> dict:
-        """真打一次 minimum 请求验证配置。用户点「测试」时要的是结论，不是重试次数，所以只打一次。"""
-        base = str(cfg.get("base_url") or "").rstrip("/")
-        model = str(cfg.get("model") or "")
-        key = str(cfg.get("api_key") or "")
-        if not key:
-            return {"ok": False, "error": "no_key", "message": "还没填密钥"}
-        payload = json.dumps({
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 1,
-            "stream": False,
-        }).encode("utf-8")
-        req = urllib.request.Request(base + "/chat/completions", data=payload, method="POST")
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Authorization", f"Bearer {key}")
-        started = time.time()
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                resp.read()
-            return {"ok": True, "latency_ms": int((time.time() - started) * 1000)}
-        except urllib.error.HTTPError as exc:
-            hint = {401: "密钥无效或没有权限", 403: "密钥无权访问该模型",
-                    404: "地址不对：应填到 /v1 这一层，不要带 /chat/completions",
-                    429: "触发限流，稍后再试或换 Key"}.get(exc.code, "接口返回错误")
-            return {"ok": False, "error": f"http_{exc.code}",
-                    "message": f"{hint}（HTTP {exc.code}）"}
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            reason = getattr(exc, "reason", exc)
-            return {"ok": False, "error": "network",
-                    "message": f"连不上 {base}：{reason}（超时 15 秒）"}
+        """真打一次 minimal 请求验证配置。实现见 settings_ops.probe_llm（可单测）。"""
+        return settings_ops.probe_llm(cfg.get("base_url"), cfg.get("model"), cfg.get("api_key"))
 
     def _settings_payload() -> dict:
         live = load_settings()
@@ -366,31 +330,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             pick_lock.release()
 
     def _count_notes(home: str) -> int:
-        root = pathlib.Path(home) / "notes"
-        if not home or not root.is_dir():
-            return 0
-        return sum(1 for _ in root.rglob("*.md"))
+        return settings_ops.count_notes(home)
 
     def _copy_notes(src: str, dst: str) -> dict:
-        """把旧位置的笔记复到新位置。同名文件一律跳过，绝不覆盖用户手改过的内容。"""
-        src_root = pathlib.Path(src).expanduser().resolve() / "notes"
-        dst_root = pathlib.Path(dst).expanduser().resolve() / "notes"
-        copied = skipped = 0
-        failed: list[str] = []
-        for path in src_root.rglob("*.md"):
-            rel = path.relative_to(src_root)
-            target = dst_root / rel
-            if target.exists():
-                skipped += 1
-                continue
-            try:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, target)
-                copied += 1
-            except OSError as exc:
-                if len(failed) < 5:
-                    failed.append(f"{rel}: {exc}")
-        return {"copied": copied, "skipped": skipped, "failed": failed}
+        return settings_ops.copy_notes(src, dst)
 
     class Handler(BaseHTTPRequestHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
@@ -1708,7 +1651,21 @@ def main() -> None:
     if args.model:
         os.environ["LLM_MODEL"] = args.model
 
-    httpd, pipe = create_server(args.host, args.port)
+    try:
+        httpd, pipe = create_server(args.host, args.port)
+    except OSError as exc:
+        # 端口占用是个人使用最常见的一次性故障，报错误码等于没说。
+        # Windows 上 http.server 带 SO_REUSEADDR，冲突时抛的是 10013（errno 13）
+        # 而不是直觉里的 10048，两个都要认，否则提示形同虚设。
+        text = str(exc).lower()
+        busy = (getattr(exc, "errno", None) in (13, 48, 98, 10013, 10048)
+                or "already in use" in text or "10013" in text or "10048" in text)
+        if busy:
+            print(f"端口 {args.port} 已被占用。可能已经开着一个实例："
+                  f"先关掉它，或换个端口 python -m src.server --port {args.port + 1}",
+                  file=sys.stderr)
+            return 1
+        raise
     print(f"serving http://{args.host}:{args.port}  model={pipe.settings.model} base={pipe.settings.api_base}")
     try:
         httpd.serve_forever()

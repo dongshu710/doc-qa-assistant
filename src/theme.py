@@ -597,6 +597,7 @@ SETTINGS_HTML = (
     '<section class="set-pane" data-pane="save">'
     '<div class="set-row"><span class="set-note" id="setNotesCount"></span>'
     '<span class="spacer"></span>'
+    '<button class="btn ghost sm" id="setNotesExport" type="button">导出全部</button>'
     '<button class="btn ghost sm" id="setNotesRefresh" type="button">刷新</button></div>'
     '<div class="set-notes" id="setNotesList"></div>'
     "</section>"
@@ -867,6 +868,26 @@ SETTINGS_JS = """
     });
   }
   if($('setNotesRefresh')) $('setNotesRefresh').addEventListener('click',loadNotes);
+
+  // 个人使用最怕的是「东西没了」。导出走浏览器直接下载，服务端不落文件。
+  if($('setNotesExport')) $('setNotesExport').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='导出中…';
+    fetch('/api/notes/export?format=json')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d||!d.ok){ note('setNotesCount',(d&&d.message)||'导出失败',true); return; }
+        var blob=new Blob([d.content],{type:d.mime||'application/json;charset=utf-8'});
+        var url=URL.createObjectURL(blob);
+        var a=document.createElement('a');
+        a.href=url; a.download=d.filename||'notes.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+        note('setNotesCount','已导出 '+(d.count||0)+' 篇：'+(d.filename||''),false);
+      })
+      .catch(function(e){ note('setNotesCount','导出失败：'+((e&&e.message)||e),true); })
+      .finally(function(){ btn.disabled=false; btn.textContent=label; });
+  });
   if($('setNotesList')) $('setNotesList').addEventListener('click',function(e){
     var card=e.target.closest('.set-note-item'); if(!card) return;
     var body=card.querySelector('.set-note-view'); if(!body) return;

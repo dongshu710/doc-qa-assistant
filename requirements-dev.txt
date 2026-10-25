@@ -1,0 +1,14 @@
+# 开发与测试期依赖（运行时仍然零第三方依赖，这些都不进部署包）
+#
+# 装法：
+#   python -m pip install -r requirements-dev.txt
+#
+# E2E 另需 Node 与 playwright，见 package.json：
+#   npm install && npx playwright install chromium
+
+# 静态检查：拦未使用变量、未定义名、明显的异常处理问题
+ruff>=0.6,<1.0
+
+# 可选：真 embedding 索引（与 requirements.txt 里的说明一致）
+# numpy==2.3.3
+# faiss-cpu==1.12.0

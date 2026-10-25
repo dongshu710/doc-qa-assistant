@@ -1,0 +1,11 @@
+{
+  "name": "doc-qa-assistant-e2e",
+  "private": true,
+  "description": "端到端测试的开发期依赖；应用运行时不依赖 Node",
+  "scripts": {
+    "test:e2e": "node tests/e2e_pages.mjs && node tests/e2e_notes.mjs && node tests/e2e_settings.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

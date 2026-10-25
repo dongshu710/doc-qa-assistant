@@ -1,0 +1,24 @@
+refactor: 按个人单机场景重定级，撤掉不必要的限制
+
+威胁模型从「外部攻击者」改为「自己误操作 + 数据丢失」后，几条结论要改：
+
+- 撤销 base_url 私网限制。本地模型（ollama / vLLM）就监听 127.0.0.1，
+  按初版建议加白名单等于废掉最常用的一种配置。只保留 http(s) 形态校验。
+- 撤销「多实例状态一致性」这条。明确只支持单实例，不再为对外部署预留心智负担。
+- 撤销 P0-4（前端 XSS）。复核发现是误报：f.name 虽未单独转义，
+  但整串在 esc(files.concat(dels).join(...)) 里已转义，fmtAnswer 也是先 esc 再套样式。
+  37 处 innerHTML 逐处核对，无可利用注入点。教训写进报告。
+
+真正该补的是个人场景的三件事：
+
+- 数据可带走：设置「已存」加「导出全部」，走 JSON bundle 直接下载。
+- 错误自解释：端口占用给可操作提示并退出码 1。实测 Windows 抛 WinError 10013
+  （http.server 带 SO_REUSEADDR），不是直觉里的 10048，两个码都要认。
+- 结构减重：probe_llm / count_notes / copy_notes / mcp_config 抽到 settings_ops，
+  server.py 减约 80 行；新增 19 项单元测试（假模型服务覆盖 200/401/404/连不上）。
+
+另外补 requirements-dev.txt 与 package.json（playwright 版本 + npm run test:e2e），
+.env.example 顶部标注「个人使用只改三行」，后半段注明对外部署才需要。
+
+验证：test_settings_ops 19、test_settings 37、e2e_settings 37、
+test_server / test_notes_api / test_auth_openapi 全过。

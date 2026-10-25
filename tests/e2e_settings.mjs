@@ -230,6 +230,7 @@ try {
   await page.click('[data-tab="save"]');
   await page.waitForSelector('.set-note-item', { timeout: 8000 }).catch(() => {});
   check('已存列表出现笔记', (await page.locator('.set-note-item').count()) >= 1);
+  check('已存分区有导出入口', await page.isVisible('#setNotesExport'));
   await page.locator('.set-note-item').first().click();
   // 展开是异步取全文：等到不是「加载中…」才算数，否则断言打在占位文案上
   await page.waitForFunction(
