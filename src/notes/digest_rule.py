@@ -154,13 +154,16 @@ def _summary(points: list[str], decisions: list[str], todos: list[str], text: st
 
 def _title(messages: list[Msg], hint: dict) -> str:
     raw = str(hint.get("title") or "").strip()
+    # 调用方显式给的标题按 schema 的 120 字上限保留，只有自动取名才压到 24 字。
+    # 网页的标题输入框写的是 maxlength=120、PATCH 也放行 120，创建时却截到 24 会是同一个字段两套规则。
+    explicit = bool(raw)
     if not raw:
         first = next((msg.text for msg in messages if msg.role == "user"), messages[0].text)
         first = re.split(r"[。！？!?\n]", first.strip(), maxsplit=1)[0]
         raw = first
     raw = re.sub(r"^[#\s]+", "", raw)
     raw = re.sub(r"\s+", " ", raw).strip("《》「」“”\"'` ")
-    return _short(raw, 24) or "未命名笔记"
+    return _short(raw, 120 if explicit else 24) or "未命名笔记"
 
 
 def _tags(raw) -> list[str]:

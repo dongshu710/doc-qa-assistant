@@ -105,7 +105,11 @@ def check_case(service: NoteService, name: str, payload: dict) -> str:
     markdown = result["markdown"]
     assert markdown.startswith("---\n"), name
     note = Note.from_markdown(markdown, fallback_id="x")
-    assert note.title and len(note.title) <= 25, (name, note.title)
+    # 显式标题按 120 保留，自动取名的压到 24；两种上限不同，断言必须跟着分叉
+    hint = payload.get("hint") or {}
+    explicit = bool(str(hint.get("title") or "").strip())
+    limit = 121 if explicit else 25
+    assert note.title and len(note.title) <= limit, (name, note.title)
     summary = note.section("摘要")
     assert summary.strip(), (name, "摘要为空")
     assert len(note.tags) <= 8, (name, note.tags)
@@ -135,6 +139,18 @@ def main() -> None:
     # 边界里的「超长内容」必须被截断
     long_result = service.save(BOUNDARY[1][1], commit=False)
     assert long_result["truncated"] is True, "超长内容未标记截断"
+
+    # 显式标题不该被压成 24 字：网页输入框写的是 120，PATCH 也放行 120
+    total += 1
+    long_title = "把这一轮关于 MCP 安装与依赖边界的结论按可执行步骤整理成清单"
+    kept = service.save({"messages": [{"role": "user", "text": "内容"}],
+                         "hint": {"title": long_title}}, commit=False)
+    kept_title = Note.from_markdown(kept["markdown"], fallback_id="x").title
+    if kept_title == long_title:
+        print(f"PASS  显式标题保留完整 · {kept_title}")
+    else:
+        failures.append(f"显式标题被截断: {kept_title}")
+        print(f"FAIL  显式标题被截断: {kept_title}")
 
     # 非法输入：报错要能直接读
     for payload, override, keyword in ERRORS:
