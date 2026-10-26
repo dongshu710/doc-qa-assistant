@@ -33,6 +33,9 @@
 - `GET /api/settings` 不再单独数一遍笔记：篇数直接取存储统计里的 `notes.files`，
   同一棵树不再走两遍，也用不上两套口径。
 - CI 增加前端自检与 `test_frontend`，并补上此前漏跑的设置 / 存储 / 技能 / 更新四组测试。
+- `tools/push_via_api.py`：`github.com:443` 被代理掐断时的推送兜底（Git Data API），
+  与远端树逐 blob 比对，只传变化的文件。
+- Release 附件补齐 `SHA256SUMS.txt`：README 一直写着「同页附」，此前并没真的上传。
 
 ### 修复
 

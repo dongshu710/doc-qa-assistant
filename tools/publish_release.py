@@ -108,10 +108,15 @@ def changelog_body(version: str) -> str:
 
 
 def asset_paths(version: str) -> list[Path]:
-    """三个包一起发：应用包、插件包、技能包。"""
+    """三个包 + 校验清单一起发。
+
+    SHA256SUMS.txt 必须单独上传：README 里写了「同页附 SHA256SUMS.txt」，
+    只放在 dist/ 里对用户不可见，等于承诺了但没兑现。
+    """
     return [DIST / f"jiyi-app-{version}.zip",
             DIST / f"jiyi-plugin-{version}.zip",
-            DIST / f"jiyi-skill-{version}.zip"]
+            DIST / f"jiyi-skill-{version}.zip",
+            DIST / "SHA256SUMS.txt"]
 
 
 def sha256_of(path: Path) -> str:
@@ -181,7 +186,8 @@ def delete_asset(slug: str, asset_id: int) -> bool:
 def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool = False) -> bool:
     version = tag.lstrip("v")
     paths = [p for p in asset_paths(version) if p.exists()]
-    digests = {p.name: sha256_of(p) for p in paths}
+    # 清单文件本身不进哈希块，免得「清单里有清单的哈希」
+    digests = {p.name: sha256_of(p) for p in paths if p.suffix == ".zip"}
     body = build_body(version, slug, digests)
     existing = find_release(slug, tag)
 

@@ -21,7 +21,8 @@ python tools/build_release.py
 ```
 dist/jiyi-app-<version>.zip      应用包（问答 + 笔记）
 dist/jiyi-plugin-<version>.zip   插件包（只有笔记）
-dist/SHA256SUMS.txt                 两个包的 sha256
+dist/jiyi-skill-<version>.zip    技能包（jiyi-files）
+dist/SHA256SUMS.txt              三个包的 sha256
 ```
 
 包含：`src/`、`data/`（演示知识库与原始 PDF）、`docs/`、`tests/`、`tools/`、README、LICENSE、CHANGELOG、启动脚本、`.env.example`。
@@ -97,7 +98,8 @@ python tools/publish_release.py --tag v1.12.0 --dry-run   # 只看要做什么�
 python tools/publish_release.py --tag v1.12.0 --no-asset  # 只同步正文
 ```
 
-脚本行为：Release 正文取自 `CHANGELOG.md` 对应版本段落，附件是该版本 zip，正文末尾附
+脚本行为：Release 正文取自 `CHANGELOG.md` 对应版本段落，附件是该版本三个包 + `SHA256SUMS.txt`
+（README 承诺了「同页附 SHA256SUMS.txt」，不传就等于没兑现），正文末尾附
 sha256 与下载直链；重复执行只同步正文、跳过已存在的附件，幂等；发布后自动把版本号最高的
 Release 标为 latest（GitHub 默认把 latest 给最后创建的那个，批量补历史版本时会把新版挤下去，
 导致 `/releases/latest/download/` 404）。
@@ -105,6 +107,24 @@ Release 标为 latest（GitHub 默认把 latest 给最后创建的那个，批�
 凭据：优先读 `GITHUB_TOKEN` / `GH_TOKEN`，没有就复用 git 凭据管理器里推代码的那份，不必另配。
 只有两个接口：`POST /repos/{owner}/{repo}/releases` 建 release，
 `POST https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=<file>` 传资产。
+
+### `git push` 被代理掐断时
+
+这台机器上 `github.com:443` 时常不通（`schannel: server closed abruptly`），
+但 `api.github.com` 一直可用。于是把「推代码」拆成 REST 调用：
+
+```bash
+python tools/push_via_api.py --dry-run     # 先看会传哪些文件
+python tools/push_via_api.py               # 提交信息默认取本地 HEAD
+python tools/push_via_api.py -m "..."      # 或指定
+```
+
+它做的事：对比本地 `git ls-tree -r HEAD` 与远端树的 blob sha → 上传变化的 blob →
+建 tree（`base_tree` 为远端树）→ 建 commit → 移动 `refs/heads/main`。
+
+代价写在脚本头部：**远端 SHA 与本地不同**（GitHub 把 `+08:00` 规范成 `Z`），
+所以推完要 `git fetch origin && git reset --hard origin/main` 才能继续正常 push。
+网络上取不到对象时也可以直接接着用这个脚本——它每次都跟远端树比，不依赖本地 remote ref。
 
 ## 5. 发布后检查
 
