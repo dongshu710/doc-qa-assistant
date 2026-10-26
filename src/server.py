@@ -246,6 +246,27 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         """真打一次 minimal 请求验证配置。实现见 settings_ops.probe_llm（可单测）。"""
         return settings_ops.probe_llm(cfg.get("base_url"), cfg.get("model"), cfg.get("api_key"))
 
+    def _storage_report() -> dict:
+        service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        index_dir = settings.embedding_index_dir
+        if index_dir and not os.path.isabs(index_dir):
+            index_dir = os.path.join(project_root, index_dir)
+        return settings_ops.storage_report(
+            notes_home=home,
+            kb_root=str(store.root) if store is not None else "",
+            index_dir=index_dir,
+            config_path=str(appconfig.path()),
+            keep_versions=appconfig.keep_versions(),
+        )
+
+    def _clear_index(home: str) -> int:
+        return settings_ops.clear_index(home) if home else 0
+
+    def _total_bytes(report: dict) -> int:
+        return sum(int((report.get(key) or {}).get("bytes") or 0)
+                   for key in ("notes", "index", "kb", "config", "embedding"))
+
     def _settings_payload() -> dict:
         live = load_settings()
         view = appconfig.view()
@@ -272,6 +293,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             "mcp": _mcp_config(),
             "repo_url": _repo_url(),
             "downloads": _downloads(),
+            "storage": _storage_report(),
             "config_path": view["config_path"],
             "config_error": view.get("config_error") or "",
             "config_backup": view.get("config_backup") or "",
@@ -621,6 +643,32 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                        from_path=src, to_path=dst, copied=result["copied"],
                                        skipped=result["skipped"], failed=len(result["failed"]))
                     self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
+                    return
+                if path == "/api/settings/storage/clean" and method == "POST":
+                    sent = body or {}
+                    keep = appconfig.keep_versions()
+                    if "keep" in sent:
+                        try:
+                            keep = max(0, int(sent.get("keep")))
+                        except (TypeError, ValueError):
+                            self._json({"ok": False, "error": "invalid_argument",
+                                        "message": "保留版本数要是 0 或正整数"}, 400, cors)
+                            return
+                    # 先把选择存下来：用户点的是「按 30 版保留」，下次开机也该按 30 版
+                    appconfig.update({"storage": {"keep_versions": str(keep)}})
+                    service = note_ref["service"]
+                    home = str(service.store.home) if service else ""
+                    before = _storage_report()
+                    removed = store.prune_versions(keep) if store is not None else []
+                    # 不在这里重建索引：重建会立刻把刚删的缓存写回来，用户看到的「释放 0 B」
+                    # 就是这个原因。下一次读笔记（列表或问答）时自然重建。
+                    freed_index = _clear_index(home)
+                    after = _storage_report()
+                    freed = max(0, _total_bytes(before) - _total_bytes(after)) + freed_index
+                    guards.audit.write("settings.storage_clean", client=self._client(),
+                                       keep=keep, removed=len(removed), freed_bytes=freed)
+                    self._json({"ok": True, "keep": keep, "removed": removed,
+                                "freed_bytes": freed, "storage": after}, 200, cors)
                     return
                 if path == "/api/settings/test" and method == "POST":
                     live = load_settings()

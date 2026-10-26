@@ -27,6 +27,9 @@ SCHEMA = {
     "llm.api_key": {"env": "LLM_API_KEY", "type": "str", "required": False},
     "notes.home": {"env": "NOTE_HOME", "type": "path", "required": False},
     "notes.store_chat": {"env": "STORE_CHAT", "type": "bool", "required": False},
+    # 存储页的「保留最近 N 个知识库版本」：写成字符串再转 int，
+    # 因为这里的 type 只认 str / path / bool，加一种类型会牵动读取与回显两条路径。
+    "storage.keep_versions": {"env": "KB_KEEP_VERSIONS", "type": "str", "required": False},
 }
 
 DEFAULTS = {
@@ -35,6 +38,7 @@ DEFAULTS = {
     "llm.api_key": "",
     "notes.home": "",
     "notes.store_chat": False,
+    "storage.keep_versions": "30",
 }
 
 _cache: dict | None = None
@@ -231,6 +235,21 @@ def store_chat() -> bool:
 BACKUP_STALE_DAYS = 30
 
 
+def keep_versions() -> int:
+    """知识库保留版本数：界面配置 > 环境变量 > 30。
+
+    读的时候宽容（手改成「三十」就回默认值），写的时候严格（update 里报错）——
+    读路径报错会让整个设置面板打不开，代价远大于收益。
+    """
+    raw = _dig(_read(), "storage.keep_versions")
+    if raw in (None, ""):
+        raw = os.environ.get("KB_KEEP_VERSIONS", "30")
+    try:
+        return max(0, int(str(raw).strip()))
+    except (TypeError, ValueError):
+        return 30
+
+
 def mark_exported() -> None:
     """记一次成功导出。
 
@@ -329,6 +348,7 @@ def update(patch: dict) -> dict:
         raise ValueError("请求体必须是 JSON 对象")
     llm = patch.get("llm") or {}
     notes = patch.get("notes") or {}
+    storage = patch.get("storage") or {}
 
     global _cache, _cache_stat
     with _write_lock:
@@ -348,6 +368,12 @@ def update(patch: dict) -> dict:
             incoming["notes.home"] = _check_home(str(notes["home"]))
         if "store_chat" in notes:
             incoming["notes.store_chat"] = _as_bool(notes["store_chat"], strict=True)
+        if "keep_versions" in storage:
+            raw = str(storage["keep_versions"]).strip()
+            # 0 是合法值（不清理），所以不能用真值判断，必须显式比对字符串
+            if not raw.isdigit():
+                raise ValueError("保留版本数要填 0 或正整数（0 表示不清理）")
+            incoming["storage.keep_versions"] = raw
 
         for dotted, value in incoming.items():
             _put(data, dotted, value)
@@ -390,6 +416,9 @@ def view() -> dict:
             # 否则 STORE_CHAT=on 时开关显示为关，而保存却被放行，自相矛盾
             "store_chat": store_chat(),
         },
+        # 存储页要回显「现在按多少版保留」，不能只给默认值：环境变量设过的时候
+        # 面板必须显示真实生效的那个数字，否则用户改完发现没变化。
+        "storage": {"keep_versions": keep_versions(), "keep_versions_default": 30},
         "config_path": str(path()),
         "config_error": _parse_error,
         "config_backup": _last_backup,

@@ -274,6 +274,24 @@ class KnowledgeStore:
             removed.append(name)
         return removed
 
+    def prune_versions(self, keep: int | None = None) -> list[str]:
+        """按需清理旧版本，返回被删掉的版本号。
+
+        设置页的「清理」要能立刻看到效果，所以这里给一个公开入口：
+        直接把 `_prune` 的保留策略复用一遍，避免出现「面板说保留了 30 版、
+        实际按另一个数字删」这种两套规则。活动版本与待审批基线仍然永不删除。
+        """
+        with _FileLock(self.lock_path):
+            if keep is not None:
+                self.keep_versions = max(0, int(keep))
+            if self.keep_versions <= 0:
+                return []
+            state = self._state()
+            removed = self._prune(state)
+            if removed:
+                self._write_state(state)
+            return removed
+
     def _read_manifest(self, version: str) -> dict:
         path = os.path.join(self.version_dir(version), "manifest.json")
         if not os.path.exists(path):

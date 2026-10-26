@@ -17,7 +17,7 @@
 
 | 包 | 里面有什么 | 适合谁 | 文件 |
 |---|---|---|---|
-| **应用包** | 问答 + 知识库 + 笔记 + 两页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
+| **应用包** | 问答 + 知识库 + 笔记 + 三页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
 | **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `jiyi-plugin-<版本>.zip` |
 | **技能包** | `jiyi-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `jiyi-skill-<版本>.zip` |
 
@@ -28,15 +28,18 @@
 **关于「实体按钮」**：WorkBuddy、Claude Desktop 这类客户端的工具栏不开放自定义按钮，
 插件也放不进去。所以入口分两边——
 
-- **人看的**：页面右上角「文件」（或直接打开 `http://127.0.0.1:8000/files`，可收藏）；
+- **人看的**：左侧常驻栏的「文件」（或直接打开 `http://127.0.0.1:8000/files`，可收藏）；
 - **智能体用的**：连接器（MCP，配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)），
   或上面那个技能包（让智能体直接调 `jy.py`，不必接 MCP）。
 
-| 问答（带引用） | 文件（`/files`，可收藏的固定地址） |
+| 问答（左栏 + 对话 + 输入框） | 知识库（文档上传） |
 |---|---|
-| ![](docs/screenshots/ask.png) | ![](docs/screenshots/files.png) |
-| **知识库（文档上传）** | **知识库 · 笔记分区（可改可导出）** |
-| ![](docs/screenshots/kb.png) | ![](docs/screenshots/kb-notes.png) |
+| ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
+| **文件（`/files`，可收藏的固定地址）** | **设置 → 存储（占用与清理）** |
+| ![](docs/screenshots/files.png) | ![](docs/screenshots/settings.png) |
+
+界面的结构、API 接入流程与存储设计见 [docs/LAYOUT.md](docs/LAYOUT.md)：
+左栏常驻会话、中间单列对话、底部大圆角输入框，参照 DeepSeek 网页版的分层方式。
 
 > 页面只有问答与知识库两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
 > 截图使用演示知识库与离线抽取模式，示例笔记见 [docs/examples/note-example.md](docs/examples/note-example.md)。
@@ -1350,6 +1353,7 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 | [docs/PLUGIN.md](docs/PLUGIN.md) | 设置里的实体控件清单、MCP 插件集成方式、依赖与适用场景 |
 | [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md) | 插件包说明：三段 JSON、7 个工具、常见问题 |
 | [docs/SKILL.md](docs/SKILL.md) | 技能包说明：触发方式、参数、安装/卸载、目录结构与验证 |
+| [docs/LAYOUT.md](docs/LAYOUT.md) | 界面排版方案：结构对照、API 接入流程、存储设计、开源项目取舍 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | 改进优先级（P0–P3）、工作量与不推荐做的事 |
 | [docs/AUDIT.md](docs/AUDIT.md) | 两轮代码审查：问题、证据、修复与实测数据 |
 | [docs/RELEASE.md](docs/RELEASE.md) | 版本号、打包、解压验证、Release 流程 |

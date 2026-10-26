@@ -6,55 +6,103 @@
 设计系统在 theme.py；本文件只放各页面的结构与交互。全部为内联 HTML/CSS/JS，
 不依赖 CDN、字体文件或前端框架，断网也能完整打开。
 """
-from .theme import BRAND, JS_UTIL, shell
+from .theme import BRAND, JS_UTIL, MARK, shell
 
 ASK_CSS = """
-.ask-wrap{max-width:860px;}
-/* 去卡片化：一页只有「对话」和「输入框」两层，靠留白分区分组，不用边框圈起来 */
-.chat-shell{background:transparent;border:0;box-shadow:none;border-radius:0;
-  display:flex;flex-direction:column;height:min(calc(100vh - var(--nav-h) - 72px),860px);min-height:520px;overflow:hidden;}
+/* ============ 对话页 ============
+   一列到底：标题栏、对话流、输入框。中间列宽 768px，和 DeepSeek 一致，
+   窗口再宽也不再拉长行宽——长行难读，留白比放大更有用。 */
+.stage-ask{display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.ask-main{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;padding:0 20px;}
+.hero{flex:1;display:flex;align-items:center;justify-content:center;width:100%;padding:4vh 0 20px;}
+.hero-inner{width:100%;max-width:720px;text-align:center;}
+.hero-mark{width:48px;height:48px;border-radius:15px;background:var(--brand);color:#fff;
+  display:flex;align-items:center;justify-content:center;margin:0 auto 18px;}
+.hero-mark .mark{width:48px;height:48px;border-radius:15px;background:transparent;box-shadow:none;}
+.hero-mark .mark svg{width:26px;height:26px;}
+.hero h1{font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--ink);}
+.hero-sub{margin-top:10px;font-size:13px;color:var(--muted);}
 
-.chat-list{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:16px;}
+.chat-list{flex:1;min-height:0;overflow-y:auto;width:100%;max-width:768px;padding:8px 0 18px;
+  display:flex;flex-direction:column;gap:26px;}
+.chat-list:empty{display:none;}
 .chat-list::-webkit-scrollbar{width:8px;}
-.chat-list::-webkit-scrollbar-thumb{background:#e3e8f2;border-radius:8px;}
+.chat-list::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px;}
 .chat-list::-webkit-scrollbar-track{background:transparent;}
 
-.empty-chat{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px 20px 34px;}
-.empty-chat .art{width:88px;height:88px;border-radius:24px;background:linear-gradient(160deg,#eef3ff,#f9fbff);
-  border:1px solid #e2e9fd;display:flex;align-items:center;justify-content:center;color:var(--brand);
-  box-shadow:inset 0 1px 0 #fff,0 18px 34px -26px rgba(47,92,246,.6);}
-.ex-wrap{margin-top:24px;width:100%;max-width:600px;}
-.ex-label{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);}
-.ex-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;}
-.ex-card{text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer;
-  font-size:12.5px;color:#475467;line-height:1.55;transition:border .15s,box-shadow .15s,transform .15s;font-family:inherit;}
-.ex-card:hover{border-color:#c3d0f8;box-shadow:0 8px 20px -14px rgba(47,92,246,.7);transform:translateY(-1px);}
+.ex-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px;}
+.ex-card{text-align:left;padding:11px 13px;border:1px solid var(--line);border-radius:12px;
+  background:var(--surface);cursor:pointer;font-size:12.8px;color:var(--text);line-height:1.6;
+  font-family:inherit;transition:background .14s,border-color .14s;}
+.ex-card:hover{border-color:var(--line-2);background:var(--surface-2);}
+@media (max-width:560px){.ex-cards{grid-template-columns:1fr;}}
 
-.msg{display:flex;gap:10px;max-width:100%;animation:rise .24s ease both;}
-@keyframes rise{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+/* 消息：用户右侧浅灰气泡，助手不分卡片、直接排正文——这样长答案不会被框切碎 */
+.msg{display:flex;max-width:100%;animation:rise .2s ease both;}
+@keyframes rise{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
 .msg.user{justify-content:flex-end;}
-.bubble{background:linear-gradient(140deg,#3a66ff,#2f5cf6);color:#fff;padding:10px 14px;border-radius:16px 16px 5px 16px;
-  max-width:76%;font-size:13.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;
-  box-shadow:0 10px 24px -18px rgba(47,92,246,.95);}
-.avatar{width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(150deg,#eef2ff,#e4ebff);color:var(--brand);border:1px solid #dde5ff;}
-.msg-body{flex:1;min-width:0;max-width:calc(100% - 40px);}
-.ans-card{background:#fff;border:1px solid var(--line);border-radius:4px 14px 14px 14px;padding:15px 17px;box-shadow:var(--sh-1);}
-.ans-label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--faint);letter-spacing:.1em;
-  text-transform:uppercase;font-weight:700;margin-bottom:7px;}
-.answer{font-size:13.8px;line-height:1.85;white-space:pre-wrap;word-break:break-word;color:#233044;}
+.bubble{background:#f2f3f5;color:var(--ink);padding:9px 14px;border-radius:18px;
+  max-width:78%;font-size:14px;line-height:1.75;white-space:pre-wrap;word-break:break-word;}
+.msg.bot .avatar{display:none;}
+.msg-body{flex:1;min-width:0;}
+.ans-card{background:transparent;border:0;border-radius:0;padding:0;box-shadow:none;}
+.ans-label{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--faint);
+  font-weight:500;margin-bottom:8px;}
+.answer{font-size:14.5px;line-height:1.9;white-space:pre-wrap;word-break:break-word;color:var(--text);}
+.answer.streaming::after{content:"";display:inline-block;width:6px;height:15px;margin-left:3px;
+  vertical-align:-2px;background:var(--brand);border-radius:1px;animation:blink 1s steps(2) infinite;}
+@keyframes blink{50%{opacity:0;}}
 .kw-hit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 9px;}
-.kw-hit-t{font-size:12px;color:var(--faint);letter-spacing:.06em;}
-.kw-term{font-size:12px;color:var(--brand-600);background:var(--brand-soft);border:1px solid #e1e8fd;
+.kw-hit-t{font-size:12px;color:var(--faint);}
+.kw-term{font-size:12px;color:var(--brand);background:var(--brand-soft);border:1px solid var(--line);
   border-radius:999px;padding:2px 8px;line-height:1.5;}
-.answer strong{font-weight:650;color:#0a1020;}
+.answer strong{font-weight:600;color:var(--ink);}
 .answer .cite-n{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;
-  border-radius:4px;background:var(--brand-soft);color:#2a49c8;font-size:12px;font-weight:700;padding:0 3px;
-  vertical-align:1px;margin:0 1px;}
-.refs{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;}
-.ref{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--brand-tint);border:1px solid #e4eafd;
-  color:#34457a;padding:3px 9px 3px 4px;border-radius:8px;line-height:1.5;cursor:pointer;font-family:inherit;transition:all .14s;}
-.ref:hover{border-color:#c3d0f8;background:var(--brand-soft);color:var(--brand-600);}
+  border-radius:4px;background:var(--brand-soft);color:var(--brand-600);font-size:11.5px;font-weight:600;
+  padding:0 3px;vertical-align:1px;margin:0 1px;}
+.refs{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.ref{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--surface);
+  border:1px solid var(--line);color:var(--muted);padding:3px 9px 3px 4px;border-radius:8px;
+  line-height:1.5;cursor:pointer;font-family:inherit;transition:all .14s;}
+.ref:hover{border-color:var(--brand);background:var(--brand-tint);color:var(--brand);}
+
+/* 输入框：DeepSeek 的做法是一个大圆角浮层，工具项收在框内底部一行 */
+.composer{flex:none;width:100%;max-width:768px;padding:4px 0 14px;}
+.composer-box{border:1px solid var(--line-2);border-radius:22px;padding:10px 10px 8px 16px;
+  background:var(--surface);transition:border-color .15s,box-shadow .15s;}
+.composer-box:focus-within{border-color:#cfd3dc;box-shadow:0 2px 12px -8px rgba(17,18,22,.35);}
+.composer textarea{width:100%;min-height:26px;max-height:160px;border:0;outline:none;resize:none;
+  background:transparent;font:14.5px/1.7 var(--font);color:var(--text);padding:2px 0;display:block;}
+.composer textarea::placeholder{color:var(--faint);}
+.composer-bar{display:flex;align-items:center;gap:6px;margin-top:6px;}
+.composer-bar .spacer{flex:1;}
+.chip{height:28px;padding:0 10px;border:1px solid var(--line);border-radius:14px;background:var(--surface);
+  color:var(--muted);font-size:12px;font-family:inherit;cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:background .14s,border-color .14s;}
+.chip:hover{background:var(--surface-2);color:var(--ink);}
+.chip .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:none;}
+.chip.warn .dot{background:#e0a100;}
+.chip.on{border-color:#c9d3ff;background:var(--brand-tint);color:var(--brand-600);}
+.send{flex:none;width:32px;height:32px;border:0;border-radius:50%;background:var(--brand);color:#fff;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;transition:background .14s;}
+.send:hover{background:var(--brand-600);}
+.send:disabled{background:#e6e8ec;cursor:not-allowed;}
+.send.stop{background:var(--ink);}
+.composer-hint{display:flex;justify-content:center;gap:12px;margin-top:8px;font-size:11.5px;color:var(--faint);}
+.composer-hint span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.keybar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;padding:8px 12px;
+  border:1px solid var(--line);border-radius:12px;background:var(--surface-2);font-size:12px;color:var(--muted);}
+.keybar input{flex:1;min-width:140px;height:28px;padding:0 9px;border:1px solid var(--line-2);
+  border-radius:7px;font-size:12.5px;background:var(--surface);color:var(--text);}
+.key-note{color:var(--faint);}
+@media (max-width:900px){
+  .stage-ask{overflow:auto;}
+  .ask-main{padding:0 12px;min-height:calc(100vh - 52px);}
+  .hero{padding:8vh 0 16px;}
+  .chat-list{overflow:visible;}
+  .composer{position:sticky;bottom:0;background:var(--surface);padding-bottom:10px;}
+}
+
 .src-mask{position:fixed;inset:0;background:rgba(10,16,32,.34);z-index:80;}
 .src-drawer{position:fixed;top:0;right:0;height:100%;width:min(540px,94vw);background:#fff;z-index:81;
   box-shadow:-24px 0 60px -30px rgba(10,16,32,.55);display:flex;flex-direction:column;
@@ -112,51 +160,8 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 .sk{height:9px;border-radius:6px;background:linear-gradient(90deg,#f2f5fb 0%,#e8edf8 40%,#f2f5fb 80%);
   background-size:220% 100%;animation:shimmer 1.5s infinite linear;}
 @keyframes shimmer{from{background-position:120% 0;}to{background-position:-120% 0;}}
-
-.composer{padding:10px 0 6px;border-top:0;background:transparent;}
-.keybar{display:flex;align-items:center;gap:8px;margin-bottom:9px;padding:8px 10px;border-radius:9px;
-  border:1px solid #f0dfc0;background:var(--warn-soft);color:var(--warn);font-size:12.5px;}
-.keybar[hidden]{display:none;}
-.keybar input{flex:1;min-width:0;padding:7px 9px;border:1px solid var(--line-2);border-radius:7px;
-  background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;outline:none;}
-.keybar input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,92,246,.12);}
-.keybar .key-note{color:var(--faint);font-size:12px;}
-.composer-box{display:flex;align-items:flex-end;gap:8px;border:1px solid var(--line-2);border-radius:18px;
-  padding:8px 8px 8px 16px;background:var(--surface);box-shadow:var(--sh-2);
-  transition:border-color .15s,box-shadow .15s;}
-.composer-box:focus-within{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
-.composer textarea{flex:1;border:none;outline:none;resize:none;font-size:14px;line-height:1.6;max-height:124px;
-  min-height:24px;padding:5px 0;font-family:inherit;color:var(--text);background:transparent;}
-.composer textarea::placeholder{color:#a9b3c6;}
-.send{width:38px;height:38px;border-radius:10px;border:none;background:linear-gradient(180deg,#3a66ff,#2f5cf6);color:#fff;
-  display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;
-  box-shadow:0 6px 16px -10px rgba(47,92,246,.95);transition:filter .15s,transform .12s;}
-.send:hover{filter:brightness(1.05);}
-.send.stop{background:#d92d20;box-shadow:0 6px 16px -10px rgba(217,45,32,.8);}
-.send:active{transform:translateY(1px);}
-.send[disabled]{opacity:.5;cursor:not-allowed;}
-.composer-hint{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;color:var(--faint);margin-top:7px;padding:0 2px;}
-.composer-hint kbd{font-family:var(--mono);font-size:12px;background:#f3f5fa;border:1px solid var(--line);border-radius:4px;padding:1px 4px;color:#667085;}
-.clear-link{border:none;background:none;padding:0;font-size:12px;color:var(--faint);cursor:pointer;font-family:inherit;}
-.clear-link:hover{color:var(--brand-600);text-decoration:underline;}
-.foot-tools{display:flex;gap:12px;align-items:center;}
-
-@media (max-width:960px){
-  .chat-shell{height:calc(100vh - var(--nav-h) - 88px);max-height:none;min-height:520px;}
-}
-@media (max-width:640px){
-  .ask-wrap{padding:14px 12px 40px;}
-  .chat-shell{height:calc(100vh - 150px);max-height:none;min-height:480px;}
-  .chat-list{padding:14px;gap:14px;}
-  .bubble{max-width:86%;}
-  .composer{padding:9px 12px 11px;}
-  .composer textarea{font-size:16px;}
-  .composer-hint{justify-content:flex-end;}
-  .composer-hint .kbd-hint{display:none;}
-  .ex-cards{grid-template-columns:1fr;}
-  .msg-body{max-width:calc(100% - 36px);}
-}
 """
+
 
 _ASK_ART = (
     '<svg width="50" height="50" viewBox="0 0 48 48" fill="none" aria-hidden="true">'
@@ -194,21 +199,10 @@ ASK_CSS += """
 }
 """
 
-# 早期组件把蓝色/灰阶写死在规则里，改令牌改不动它们。
-# 这里统一回收成令牌，顺带把气泡、示例卡、引用标签的「渐变+投影」压平成单一层级。
+# 旧组件里的写死色统一回收成令牌；只保留真正需要覆盖的几条
 ASK_CSS += """
-.bubble{background:var(--brand);color:#fff;border-radius:14px 14px 4px 14px;padding:10px 14px;font-size:13.5px;}
-.chat-list::-webkit-scrollbar-thumb{background:var(--line-2);}
-.empty-chat .art{background:var(--brand-soft);border-color:var(--line);border-radius:18px;color:var(--brand);}
-.empty-chat .art svg [fill="#f9fbff"]{fill:var(--surface);}
-.ex-card{border-color:var(--line);background:var(--surface);color:var(--muted);box-shadow:none;}
-.ex-card:hover{border-color:var(--brand);background:var(--brand-tint);color:var(--ink);box-shadow:none;transform:none;}
-.answer{color:var(--text);font-size:14px;line-height:1.8;}
-.answer strong{color:var(--ink);font-weight:600;}
-.kw-term{color:var(--brand);background:var(--brand-soft);border-color:var(--line);}
-.ref{background:var(--surface);border-color:var(--line);color:var(--muted);}
-.ref:hover{border-color:var(--brand);background:var(--brand-tint);color:var(--brand);}
-.ans-foot,details.src{border-top-color:var(--line);}
+.ans-foot{border-top-color:var(--line);}
+details.src{border-top-color:var(--line);}
 .src-row{color:var(--muted);border-bottom-color:var(--line);}
 .src-close{background:var(--surface-2);}
 .src-close:hover{background:var(--line);}
@@ -216,35 +210,56 @@ ASK_CSS += """
 .fb button:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-tint);}
 .fb button.on{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);}
 .nd-field input:focus,.nd-field select:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
+.sk{background:linear-gradient(90deg,var(--surface-2),var(--line),var(--surface-2));}
+[data-theme="dark"] .bubble{background:#2a2b31;color:var(--ink);}
+[data-theme="dark"] .composer-box{background:var(--surface);}
 """
 
 
 ASK_BODY = """
-<main class="wrap ask-wrap">
-  <section class="chat-shell">
-    <div id="list" class="chat-list" aria-live="polite"></div>
-    <div class="composer">
-      <div class="keybar" id="keyBar" hidden>
-        <span>接口已启用 API Key</span>
-        <input id="apiKey" type="password" placeholder="粘贴 Key 后回车" autocomplete="off">
-        <button class="btn sm" id="keySave" type="button">保存</button>
-        <span class="key-note" id="keyNote"></span>
-      </div>
-      <div class="composer-box">
-        <textarea id="q" rows="1" placeholder="输入问题…" autocomplete="off"></textarea>
-        <button class="send" id="send" type="button" aria-label="发送">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>
-        </button>
-      </div>
-      <div class="composer-hint">
-        <span class="kbd-hint">Enter 发送 · Shift + Enter 换行</span>
-        <span class="foot-tools">
-          <button class="clear-link" id="exportMd" type="button">导出 Markdown</button>
-          <button class="clear-link" id="clear" type="button">清空对话</button>
-        </span>
-      </div>
+<header class="topbar">
+  <div class="tb-title" id="tbTitle">新对话</div>
+  <span class="tb-sub" id="tbSub"></span>
+  <div class="tb-actions">
+    <button class="tb-link" id="exportMd" type="button" title="把当前对话导成 Markdown">导出</button>
+    <button class="tb-link" id="clear" type="button" title="清空当前对话">清空</button>
+  </div>
+</header>
+<main class="ask-main">
+  <section class="hero" id="hero">
+    <div class="hero-inner">
+      <div class="hero-mark" aria-hidden="true">__MARK__</div>
+      <h1>有什么可以帮你？</h1>
+      <p class="hero-sub">只依据知识库作答，每条都给出来源。可以这样问：</p>
+      <div class="ex-cards" id="exCards"></div>
     </div>
   </section>
+  <div id="list" class="chat-list" aria-live="polite"></div>
+  <div class="composer" id="composer">
+    <div class="keybar" id="keyBar" hidden>
+      <span>接口已启用 API Key</span>
+      <input id="apiKey" type="password" placeholder="粘贴 Key 后回车" autocomplete="off">
+      <button class="btn sm" id="keySave" type="button">保存</button>
+      <span class="key-note" id="keyNote"></span>
+    </div>
+    <div class="composer-box">
+      <textarea id="q" rows="1" placeholder="给记忆文档发送消息…" autocomplete="off"></textarea>
+      <div class="composer-bar">
+        <button class="chip" id="kbChip" type="button" title="查看知识库版本与文档">
+          <span class="dot"></span><span id="kbChipText">知识库</span></button>
+        <button class="chip warn" id="apiChip" type="button" title="配置模型接口">
+          <span class="dot"></span><span id="apiChipText">离线抽取</span></button>
+        <span class="spacer"></span>
+        <button class="send" id="send" type="button" aria-label="发送">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="composer-hint">
+      <span id="kbdHint">Enter 发送 · Shift + Enter 换行</span>
+      <span id="composerNote"></span>
+    </div>
+  </div>
   <div class="src-mask" id="srcMask" hidden></div>
   <aside class="src-drawer" id="srcDrawer" hidden aria-label="引用原文">
     <div class="src-head">
@@ -275,9 +290,9 @@ ASK_BODY = """
     </div>
   </div>
 </main>
-"""
+""".replace("__MARK__", MARK)
 
-ASK_SCRIPT = JS_UTIL + """
+ASK_SCRIPT = """
 var qEl=document.getElementById('q'), sendBtn=document.getElementById('send'), list=document.getElementById('list');
 var busy=false, LLM_READY=null;
 var SESSION_KEY='rag_session_id';
@@ -323,24 +338,24 @@ var ART='""" + _ASK_ART.replace("'", "\\'") + """';
 function scrollBottom(){ list.scrollTop=list.scrollHeight; }
 function autoGrow(){ qEl.style.height='auto'; qEl.style.height=Math.min(qEl.scrollHeight,124)+'px'; }
 
+var heroEl=document.getElementById('hero'), exLoaded=false;
 function renderEmpty(){
-  list.innerHTML='<div class="empty-chat"><div class="art">'+ART+'</div>'
-    +'<div class="ex-wrap"><div class="ex-label">可以这样问</div>'
-    +'<div class="ex-cards" id="exCards"></div></div></div>';
-  loadExamples();
+  if(heroEl) heroEl.hidden=false;
+  if(!exLoaded) loadExamples();
 }
 async function loadExamples(){
   var box=document.getElementById('exCards');
-  if(!box) return;
+  if(!box||exLoaded) return;
+  exLoaded=true;
   try{
     var r=await (await fetch('/api/examples?n=4')).json();
-    (r.items||[]).forEach(function(t){
+    (r.items||[]).slice(0,4).forEach(function(t){
       var b=document.createElement('button'); b.type='button'; b.className='ex-card';
       b.textContent=t;
       b.onclick=function(){ qEl.value=t; autoGrow(); ask(); };
       box.appendChild(b);
     });
-  }catch(e){}
+  }catch(e){ exLoaded=false; }
 }
 
 /* ---------- 渲染 ---------- */
@@ -417,10 +432,14 @@ function similarHTML(items){
 function answerHTML(d){
   var local=d.path==='keyword';
   var head=d.behavior==='no_answer'?'未找到答案':(d.behavior==='refuse'?'拒答':(d.behavior==='ask_clarify'?'需要澄清':(local?'本地直出':'回答')));
-  var h='<div class="ans-card"><div class="ans-label"><span>'+head+'</span>'
-    +(d.behavior&&BEHAVIOR[d.behavior]?'<span class="pill '+BEHAVIOR[d.behavior][1]+'">'+BEHAVIOR[d.behavior][0]+'</span>':'')
-    +(d.turn>1?'<span class="pill">第 '+d.turn+' 轮</span>':'')
-    +'</div>';
+  // 正常作答时不加标题：用户已经知道这是回答，「回答/作答」两个标签只是噪音。
+  // 未找到、拒答、澄清这类需要区分的结果才露一行。
+  var label='';
+  if(d.behavior!=='answer'&&d.behavior&&BEHAVIOR[d.behavior]){
+    label='<span class="pill '+BEHAVIOR[d.behavior][1]+'">'+BEHAVIOR[d.behavior][0]+'</span>';
+  }
+  if(d.turn>1) label+='<span class="pill">第 '+d.turn+' 轮</span>';
+  var h='<div class="ans-card">'+(label?'<div class="ans-label">'+label+'</div>':'')+'<div class="ans-label-sr" hidden>'+head+'</div>';
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
       +d.keyword_terms.map(function(t){ return '<span class="kw-term">'+esc(t)+'</span>'; }).join('')+'</div>';
@@ -501,17 +520,6 @@ function downloadText(name,text,mime){
    页面上的对话是本地记录，和服务端 3 轮上下文是两件事：
    前者为了「回看/导出」，后者为了「追问改写」。所以 history 存 localStorage，
    只保留渲染需要的字段，并对长答案截断，避免把 localStorage 写满。 */
-var HIST_KEY='rag_history_v1', HIST_MAX=40;
-function loadHistory(){
-  try{
-    var raw=localStorage.getItem(HIST_KEY);
-    var rows=raw?JSON.parse(raw):[];
-    return Array.isArray(rows)?rows:[];
-  }catch(e){ return []; }
-}
-function saveHistory(rows){
-  try{ localStorage.setItem(HIST_KEY,JSON.stringify(rows.slice(-HIST_MAX))); }catch(e){}
-}
 function cutText(v,n){
   var t=String(v==null?'':v);
   return t.length>n?(t.slice(0,n)+'…'):t;
@@ -535,26 +543,40 @@ function slimTurn(q,d){
     }
   };
 }
+function threadTurns(){
+  var t=window.JY?JY.currentThread():null;
+  return (t&&Array.isArray(t.turns))?t.turns:[];
+}
+function setTitle(t){
+  var name=(t&&t.title)?t.title:'新对话';
+  var el=document.getElementById('tbTitle'); if(el) el.textContent=name;
+  var sub=document.getElementById('tbSub');
+  var n=(t&&t.turns)?t.turns.length:0;
+  if(sub) sub.textContent=n?(n+' 轮 · 只依据知识库作答'):'';
+}
+function renderThread(){
+  var t=window.JY?JY.currentThread():null;
+  var turns=(t&&t.turns)||[];
+  list.innerHTML='';
+  if(!turns.length){ setTitle(t); renderEmpty(); return; }
+  if(heroEl) heroEl.hidden=true;
+  turns.slice(-12).forEach(function(x){
+    if(!x||!x.d) return;
+    addUser(x.q);
+    var body=addBot();
+    body.innerHTML=answerHTML(x.d);
+    if(x.d.behavior==='answer'){ bindFeedback(body,x.d,x.q); }
+    else if(x.d.behavior==='no_answer'){ bindMissFeedback(body,x.d,x.q); }
+  });
+  setTitle(t);
+  scrollBottom();
+}
 function rememberTurn(q,d){
   if(!d||!d.behavior||d.behavior==='ask_clarify') return;
-  var rows=loadHistory();
-  rows.push(slimTurn(q,d));
-  saveHistory(rows);
-}
-function restoreHistory(){
-  var rows=loadHistory();
-  if(!rows.length) return false;
-  var keep=rows.slice(-12);
-  list.innerHTML='';
-  keep.forEach(function(t){
-    addUser(t.q);
-    var body=addBot();
-    body.innerHTML=answerHTML(t.d);
-    if(t.d.behavior==='answer'){ bindFeedback(body,t.d,t.q); }
-    else if(t.d.behavior==='no_answer'){ bindMissFeedback(body,t.d,t.q); }
-  });
-  scrollBottom();
-  return true;
+  if(!window.JY) return;
+  JY.append(slimTurn(q,d));
+  if(d.session_id) JY.touch({sid:d.session_id});
+  setTitle(JY.currentThread());
 }
 function stamp(){
   var d=new Date();
@@ -562,7 +584,7 @@ function stamp(){
   return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes());
 }
 function exportMarkdown(){
-  var rows=loadHistory();
+  var rows=threadTurns();
   if(!rows.length){ toast('还没有对话可以导出',true); return; }
   var out=['# 问答记录','','导出时间：'+new Date().toLocaleString(),'轮次：'+rows.length,''];
   rows.forEach(function(t,i){
@@ -694,7 +716,7 @@ async function ask(){
   if(busy) return;
   setBusy(true);
   controller=new AbortController();
-  var empty=list.querySelector('.empty-chat'); if(empty) list.innerHTML='';
+  if(heroEl) heroEl.hidden=true;
 
   addUser(query);
   var body=addBot();
@@ -785,7 +807,7 @@ document.getElementById('clear').onclick=function(){
   SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
   fetch('/api/session/clear',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({session_id:old})}).catch(function(){});
-  saveHistory([]);
+  if(window.JY) JY.clearCurrent();
   list.innerHTML=''; renderEmpty(); toast('已清空对话');
 };
 document.getElementById('exportMd').onclick=exportMarkdown;
@@ -869,8 +891,64 @@ document.getElementById('noteMask').onclick=closeNoteDialog;
 document.getElementById('ndSave').onclick=saveNoteDialog;
 document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeNoteDialog(); });
 
-if(!restoreHistory()){ renderEmpty(); }
+/* ---------- 顶栏、工具条与会话切换 ---------- */
+function bindChips(){
+  var kb=document.getElementById('kbChip'), api=document.getElementById('apiChip');
+  if(kb) kb.onclick=function(){ location.href='/kb'; };
+  if(api) api.onclick=function(){
+    if(window.__openSettings) window.__openSettings('api');
+    else location.href='/kb';
+  };
+  fetch('/api/health').then(function(r){ return r.json(); }).then(function(h){
+    LLM_READY=!!h.llm_ready;
+    var kbv=(h.kb&&(h.kb.active||h.kb.version))||'';
+    var kt=document.getElementById('kbChipText');
+    if(kt) kt.textContent=kbv?('知识库 '+kbv):'知识库';
+    if(kb&&kbv) kb.classList.add('on');
+    var at=document.getElementById('apiChipText');
+    if(at) at.textContent=h.llm_ready?('模型 '+(h.model||'已就绪')):'离线抽取';
+    if(api) api.classList.toggle('warn',!h.llm_ready);
+  }).catch(function(){});
+}
+function startNewChat(){
+  if(busy){ toast('正在生成，稍等一下',true); return; }
+  if(window.JY) JY.create();
+  // 新对话要有自己的服务端上下文：沿用旧 session_id 会让模型记得上一段
+  SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
+  qEl.value=''; autoGrow();
+  list.innerHTML=''; renderThread(); qEl.focus();
+  if(window.innerWidth<=900) document.body.classList.remove('side-open');
+}
+function openThreadById(id){
+  if(busy){ toast('正在生成，稍等一下再切换',true); return; }
+  var t=window.JY?JY.open(id):null; if(!t) return;
+  SESSION_ID=t.sid||newSessionId(); saveSessionId(SESSION_ID);
+  renderThread();
+  if(window.innerWidth<=900) document.body.classList.remove('side-open');
+}
+function bindThreadEvents(){
+  var nb=document.getElementById('newChat');
+  if(nb) nb.onclick=startNewChat;
+  document.addEventListener('jy:thread',function(e){ openThreadById(e.detail); });
+  document.addEventListener('jy:removed',function(){
+    if(window.JY&&!JY.currentThread()){ list.innerHTML=''; renderEmpty(); setTitle(null); }
+  });
+  var params=new URLSearchParams(location.search);
+  var want=params.get('t');
+  if(want&&window.JY&&JY.open(want)){
+    var t=JY.currentThread();
+    if(t&&t.sid){ SESSION_ID=t.sid; saveSessionId(SESSION_ID); }
+  }else if(params.get('new')==='1'&&window.JY){
+    JY.create();
+    // 建完就把参数抹掉：刷新页面不该又多出一条空会话
+    try{ history.replaceState(null,'','/ask'); }catch(e){}
+  }
+  renderThread();
+  if(window.innerWidth<=900) document.body.classList.remove('side-open');
+}
 bindKeyBar();
+bindChips();
+bindThreadEvents();
 var pre=new URLSearchParams(location.search).get('q');
 if(pre){ qEl.value=pre; autoGrow(); ask(); }
 """
@@ -887,7 +965,7 @@ KB_CSS = """
 .kb-head h1{font-size:22px;letter-spacing:-.02em;}
 .kb-head .actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 .kb-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start;}
-.kb-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:calc(var(--nav-h) + 16px);}
+.kb-side{display:flex;flex-direction:column;gap:12px;position:sticky;top:16px;}
 .kb-side .card{padding:16px;}
 .kb-side .side-title{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--faint);margin-bottom:10px;}
 
@@ -1013,7 +1091,7 @@ KB_CSS += """
 /* ---------- 笔记分区 ---------- */
 .notes-layout{display:grid;grid-template-columns:330px minmax(0,1fr);gap:16px;align-items:start;}
 .notes-side{padding:14px;display:flex;flex-direction:column;gap:9px;
-  position:sticky;top:calc(var(--nav-h) + 16px);}
+  position:sticky;top:16px;}
 .notes-tools{display:flex;gap:6px;flex-wrap:wrap;}
 .notes-tools .search{flex:1 1 130px;}
 .notes-tools .kb-sort{flex:1 1 96px;min-width:0;}
@@ -1209,7 +1287,7 @@ KB_BODY = """
 </main>
 """
 
-KB_SCRIPT = JS_UTIL + """
+KB_SCRIPT = """
 function $(id){ return document.getElementById(id); }
 var KB={files:[],total_chunks:0}, FILTER='all', SORT='name', Q='', BUSY=false;
 

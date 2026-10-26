@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 import urllib.error
@@ -99,3 +100,83 @@ def mcp_config(python: str, project_root: str, notes_home: str) -> dict:
             }
         }
     }
+
+
+# ---------- 存储占用 ----------
+# 设置页要回答的是「我的东西有多大、还能放多少」，所以这里只数磁盘上的真实字节，
+# 不去估算「每篇约多少 KB」——估出来的数字一旦和资源管理器对不上，用户就不信了。
+
+
+def _size_of(root: Path) -> dict:
+    """目录总字节与文件数。权限不足或正在被删的条目直接跳过，不让统计把面板打成 500。"""
+    total = 0
+    files = 0
+    if not root.exists():
+        return {"bytes": 0, "files": 0}
+    if root.is_file():
+        try:
+            return {"bytes": root.stat().st_size, "files": 1}
+        except OSError:
+            return {"bytes": 0, "files": 0}
+    for path in root.rglob("*"):
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+                files += 1
+        except OSError:
+            continue
+    return {"bytes": total, "files": files}
+
+
+def _disk_of(target: Path) -> dict:
+    probe = target
+    # 目录可能还没建（自定义位置刚填），往上找到第一个存在的祖先再问磁盘
+    for _ in range(8):
+        try:
+            usage = shutil.disk_usage(str(probe))
+            break
+        except OSError:
+            if probe.parent == probe:
+                return {"total": 0, "free": 0, "root": ""}
+            probe = probe.parent
+    else:
+        return {"total": 0, "free": 0, "root": ""}
+    return {"total": usage.total, "free": usage.free, "root": str(probe)}
+
+
+def storage_report(notes_home: str, kb_root: str, index_dir: str,
+                   config_path: str, keep_versions: int) -> dict:
+    home = Path(notes_home).expanduser() if notes_home else Path.home() / "agent-notes"
+    notes = _size_of(home / "notes")
+    index = _size_of(home / "index")
+    kb = _size_of(Path(kb_root)) if kb_root else {"bytes": 0, "files": 0}
+    config = _size_of(Path(config_path)) if config_path else {"bytes": 0, "files": 0}
+    versions = 0
+    if kb_root:
+        try:
+            versions = sum(1 for name in os.listdir(Path(kb_root) / "versions")
+                           if name.startswith("v"))
+        except OSError:
+            versions = 0
+    return {
+        "notes": {**notes, "path": str(home / "notes")},
+        "index": {**index, "path": str(home / "index")},
+        "kb": {**kb, "path": str(kb_root or ""), "versions": versions},
+        "config": {**config, "path": str(config_path or "")},
+        "embedding": _size_of(Path(index_dir)) if index_dir else {"bytes": 0, "files": 0},
+        "disk": _disk_of(home),
+        "keep_versions": int(keep_versions or 0),
+    }
+
+
+def clear_index(home: str) -> int:
+    """删掉笔记索引缓存，返回释放的字节数。
+
+    索引只是缓存（`notes.jsonl`），删掉会在下次读取时重建；
+    这也是面板上唯一一个「删了不会丢数据」的按钮，所以文案必须说清是缓存。
+    """
+    target = Path(home).expanduser() / "index"
+    freed = _size_of(target)["bytes"]
+    shutil.rmtree(target, ignore_errors=True)
+    return freed
+

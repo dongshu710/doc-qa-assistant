@@ -194,3 +194,6 @@ jobs:
 
       - name: 设置 E2E（抽屉 / 五分区 / 存储切换与迁移 / 开关语义）
         run: node tests/e2e_settings.mjs
+
+      - name: e2e · 布局与会话
+        run: node tests/e2e_layout.mjs

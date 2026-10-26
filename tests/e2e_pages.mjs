@@ -166,8 +166,9 @@ try {
     const title = await page.title();
     check(`${spec.name} 标题非空`, title.length > 0 && title.includes(spec.titleHint), title);
 
-    const navCount = await page.locator('header.nav nav a').count();
-    check(`${spec.name} 导航 2 项`, navCount === 2, `nav=${navCount}`);
+    // 布局改成左侧常驻栏后，入口从顶部导航移到底部：文件 / 知识库 / 设置
+    const navCount = await page.locator('.side .sb-item').count();
+    check(`${spec.name} 侧栏入口齐全`, navCount >= 3, `items=${navCount}`);
 
     const wide = await overflow(page);
     check(`${spec.name} 1280px 无横向溢出`, wide.scroll <= wide.inner + 1,
@@ -189,7 +190,8 @@ try {
   await page.click('#themeToggle');
   const dark = await page.evaluate(() => {
     const body = getComputedStyle(document.body);
-    const card = document.querySelector('.chat-shell');
+    // 对话页去掉了卡片容器，改看输入框表面：它和正文同一层，最能代表主区底色
+    const card = document.querySelector('.composer-box');
     const rgb = (s) => (s.match(/\d+/g) || []).slice(0, 3).map(Number);
     return {
       theme: document.documentElement.getAttribute('data-theme'),
