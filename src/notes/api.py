@@ -62,6 +62,8 @@ def dispatch(service: NoteService | None, method: str, path: str,
                 hit = next((item for item in note["sections"] if item["title"] == section), None)
                 return 200, {"ok": True, "id": note_id, "section": section,
                              "body": hit["body"] if hit else "", "rev": note["rev"]}, {}
+            # 页面要拿它调 /api/files/raw 直接改原文；导出走 service.get，不带这个字段
+            note["path"] = service.rel_path(note_id)
             return 200, {"ok": True, **note}, {}
         if method == "PATCH":
             return 200, _patch(service, note_id, body, query), {}

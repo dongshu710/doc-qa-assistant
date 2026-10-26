@@ -1,0 +1,31 @@
+/* ============ 首次运行：建存储区 ============
+   层级 300：比设置（120）、智能体（110）、文件（100）都高，
+   因为这件事没做完之前，别的开关都没有意义（内容还无处可存）。 */
+.setup-mask{position:fixed;inset:0;z-index:300;background:rgba(28,26,22,.45);backdrop-filter:blur(3px);}
+.setup-card{position:fixed;z-index:301;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;
+  padding:30px 30px 22px;border-radius:20px;background:var(--surface);
+  border:1px solid var(--line);box-shadow:0 32px 64px -32px rgba(32,28,20,.4);}
+.setup-kicker{margin:0 0 8px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--brand);}
+.setup-card h1{margin:0 0 12px;font-family:var(--display);font-size:27px;line-height:1.25;
+  letter-spacing:-.01em;color:var(--ink);font-weight:600;}
+.setup-lead{margin:0 0 16px;font-size:13.5px;line-height:1.85;color:var(--muted);}
+.setup-points{margin:0 0 20px;padding:0;list-style:none;display:flex;flex-direction:column;gap:7px;}
+.setup-points li{position:relative;padding-left:18px;font-size:12.5px;line-height:1.75;color:var(--muted);}
+.setup-points li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;
+  border-radius:50%;background:var(--brand);opacity:.55;}
+.setup-points b{color:var(--ink);font-weight:600;}
+.setup-field{display:block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:6px;}
+.setup-path{display:flex;gap:6px;}
+.setup-path input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line-2);border-radius:10px;
+  font:12.5px/1.5 var(--mono);color:var(--ink);background:var(--surface-2);outline:none;}
+.setup-path input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);background:var(--surface);}
+.setup-hint{margin:8px 0 0;font-size:11.5px;line-height:1.7;color:var(--faint);}
+.setup-msg{margin:8px 0 0;font-size:12px;line-height:1.6;color:var(--bad);min-height:18px;}
+.setup-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;
+  padding-top:16px;border-top:1px solid var(--line);}
+@media (max-width:560px){
+  .setup-card{left:0;top:auto;bottom:0;transform:none;width:100vw;max-height:88vh;
+    border-radius:20px 20px 0 0;padding:24px 20px 18px;}
+}
+[data-theme="dark"] .setup-card{box-shadow:0 32px 64px -32px rgba(0,0,0,.7);}

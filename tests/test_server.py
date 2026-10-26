@@ -35,7 +35,7 @@ try:
     print("examples:", examples)
 
     pages = {}
-    for page, needle in (("/ask", "可以这样问"), ("/kb", "拖拽或点击上传"),
+    for page, needle in (("/ask", "今天想记住什么"), ("/kb", "拖拽或点击上传"),
                          ("/files", "pf-grid")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             pages[page] = resp.read().decode("utf-8")

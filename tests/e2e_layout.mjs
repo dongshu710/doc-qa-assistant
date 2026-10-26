@@ -85,6 +85,7 @@ try {
   const py = process.env.PYTHON || 'python';
   const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT,
                 NOTE_HOME: path.join(tmp, 'notes'), APP_CONFIG: path.join(tmp, 'app.json'),
+                SETUP_DONE: '1',
                 SETTINGS_PICKER: 'off' };
   delete env.LLM_API_KEY;
   delete env.DEEPSEEK_API_KEY;
@@ -186,14 +187,16 @@ try {
   await page.click('[data-tab="store"]');
   await page.waitForTimeout(400);
   const st = await page.evaluate(() => ({
-    kb: (document.getElementById('stKb') || {}).textContent,
+    home: (document.getElementById('stHome') || {}).textContent,
+    threads: (document.getElementById('stThreads') || {}).textContent,
     notes: (document.getElementById('stNotes') || {}).textContent,
     index: (document.getElementById('stIndex') || {}).textContent,
     free: (document.getElementById('stFree') || {}).textContent,
     keep: (document.getElementById('stKeep') || {}).value,
   }));
-  check('知识库占用有数字', !!st.kb && st.kb !== '—', st.kb);
-  check('笔记占用有数字', !!st.notes && st.notes !== '—', st.notes);
+  check('存储区路径可读', !!st.home && st.home !== '—', st.home);
+  check('文档占用有数字', !!st.notes && st.notes !== '—', st.notes);
+  check('会话占用有数字', !!st.threads && st.threads !== '—', st.threads);
   check('磁盘剩余有数字', !!st.free && st.free !== '—', st.free);
   check('保留版本可配置', st.keep === '30', st.keep);
 

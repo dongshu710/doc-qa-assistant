@@ -636,6 +636,14 @@ function bindThreadEvents(){
   var nb=document.getElementById('newChat');
   if(nb) nb.onclick=startNewChat;
   document.addEventListener('jy:thread',function(e){ openThreadById(e.detail); });
+  // 会话正文是异步取回来的（列表只有元数据），取到后要重画一次
+  document.addEventListener('jy:loaded',function(e){
+    if(window.JY&&e.detail===JY.currentId()){
+      var t=JY.currentThread();
+      if(t&&t.sid&&t.sid!==SESSION_ID){ SESSION_ID=t.sid; saveSessionId(SESSION_ID); }
+      renderThread();
+    }
+  });
   document.addEventListener('jy:removed',function(){
     if(window.JY&&!JY.currentThread()){ list.innerHTML=''; renderEmpty(); setTitle(null); }
   });
@@ -652,8 +660,13 @@ function bindThreadEvents(){
   renderThread();
   if(window.innerWidth<=900) document.body.classList.remove('side-open');
 }
+// 会话列表在服务端，首屏要等它取回来再决定显示哪条；
+// 同时不能等太久：取不到也照样能提问（只是看不到历史）。
+function boot(){
+  bindThreadEvents();
+  var pre=new URLSearchParams(location.search).get('q');
+  if(pre){ qEl.value=pre; autoGrow(); ask(); }
+}
 bindKeyBar();
 bindChips();
-bindThreadEvents();
-var pre=new URLSearchParams(location.search).get('q');
-if(pre){ qEl.value=pre; autoGrow(); ask(); }
+if(window.JY&&JY.ready) JY.ready.then(boot); else boot();

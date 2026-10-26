@@ -84,6 +84,7 @@ try {
   const py = process.env.PYTHON || 'python';
   const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector',
                 NOTE_HOME: path.join(tmp, 'notes'), APP_CONFIG: path.join(tmp, 'app.json'),
+                SETUP_DONE: '1',
                 // 原生目录框会真的弹窗并卡住无头测试；关掉后走「返回可读提示」分支
                 SETTINGS_PICKER: 'off' };
   delete env.LLM_API_KEY;
@@ -146,8 +147,8 @@ try {
 
   await page.click('[data-tab="store"]');
   check('切到存储分区', await page.isVisible('[data-pane="store"]'));
-  await page.click('[data-home="custom"]');
-  check('选自定义后出现目录输入框', await page.isVisible('#setHomeWrap'));
+  await page.click('#stToggleHome');
+  check('点「更换」后出现目录输入框', await page.isVisible('#setHomeWrap'));
   check('目录旁有原生选择按钮', await page.isVisible('#setPick'));
 
   const pickRes = await (await fetch(`${base}/api/settings/pick-folder`, {
@@ -164,8 +165,9 @@ try {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'rag-notes-'));
   await page.fill('#setHome', target);
   await page.click('#setHomeSave');
+  // 路径现在只显示在一个地方（#stHome），不再用提示行回显，避免同一句话出现两遍
   await page.waitForFunction(
-    (t) => (document.getElementById('setHomeNote')?.textContent || '').includes(t.slice(-8)),
+    (t) => (document.getElementById('stHome')?.textContent || '').includes(t.slice(-8)),
     target, { timeout: 8000 },
   );
   check('切换存储位置有反馈', true);

@@ -88,6 +88,7 @@ try {
     const py = process.env.PYTHON || 'python';
     const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector',
                   NOTE_HOME: path.join(noteHome, 'notes'),
+                  SETUP_DONE: '1',
                   // 配置也要隔离：否则「存为笔记」按钮取决于本机 data/app.json 的开关，
                   // 干净环境（CI）默认关闭 → 按钮不渲染 → 整条用例超时
                   APP_CONFIG: path.join(noteHome, 'app.json'),

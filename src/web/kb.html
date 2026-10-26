@@ -3,6 +3,7 @@
   <div class="kb-head">
     <div>
       <h1>知识库</h1>
+      <p class="kb-sub">问答时检索的只读语料。你自己的记忆写在「笔记」里，由智能体或你落盘。</p>
     </div>
     <div class="actions">
       <span class="pill" id="kbVersion">—</span>
@@ -17,6 +18,18 @@
   </div>
 
   <div id="panelDocs">
+  <section class="agent-gate">
+    <div class="ag-copy">
+      <p class="ag-kicker">推荐接法</p>
+      <b>让智能体来整理文档</b>
+      <span>把材料交给任意智能体，让它按约定调 <code>POST /api/notes</code> 写进存储区。
+        下面的上传框只用于「让本机问答多一份只读语料」。</span>
+    </div>
+    <div class="ag-actions">
+      <button class="btn sm" id="agOpen" type="button">接入配置</button>
+      <a class="btn ghost sm" href="/files" target="_blank" rel="noopener">看已存记忆</a>
+    </div>
+  </section>
   <div class="kb-layout">
     <div class="kb-side">
       <section class="card">

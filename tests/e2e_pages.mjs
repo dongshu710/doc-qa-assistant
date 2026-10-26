@@ -130,7 +130,8 @@ try {
     const port = await freePort();
     base = `http://127.0.0.1:${port}`;
     const py = process.env.PYTHON || 'python';
-    const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector' };
+    const env = { ...process.env, PYTHONUTF8: '1', PYTHONPATH: ROOT, RETRIEVAL: 'vector',
+                SETUP_DONE: '1' };
     delete env.LLM_API_KEY;
     delete env.DEEPSEEK_API_KEY;
     const logPath = path.join(ROOT, 'tests', 'e2e-server.log');

@@ -568,3 +568,12 @@ Array.prototype.forEach.call(document.querySelectorAll('.kb-tabs button'),functi
 if(location.hash==='#notes'){ setTab('notes'); }
 
 loadKb();
+
+// 「接入配置」直接打开智能体面板：文档里写十遍不如点一下看到能粘的东西
+(function(){
+  var btn=document.getElementById('agOpen');
+  if(!btn) return;
+  btn.addEventListener('click',function(){
+    if(window.__openAgent) window.__openAgent();
+  });
+})();

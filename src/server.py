@@ -77,13 +77,25 @@ from .metrics import summarize
 from .metrics_exporter import Metrics
 from .notes.api import ApiError
 from .notes.api import dispatch as notes_dispatch
+from . import fileops
 from .notes.service import NoteService
 from .notes.tools import tools_payload as notes_tools_payload
 from .openapi import build_spec
 from .pipeline import RAGPipeline
 from .version import __version__
 from .theme import FILES_PAGE
+from .threadstore import ThreadError, ThreadStore
 from .web_pages import ASK_HTML, KB_HTML
+
+def _open_folder(folder: str) -> None:
+    """用系统文件管理器打开目录。三个平台各一条命令，失败抛 OSError 让调用方回结构化错误。"""
+    if os.name == "nt":
+        os.startfile(folder)  # noqa: S606 —— 打开的是用户自己的存储区
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
+
 
 MAX_BODY_BYTES = 8192
 NOTES_MAX_BYTES = 2 * 1024 * 1024        # 一段对话可能很长：笔记接口单独放宽
@@ -303,6 +315,68 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             "config_backup": view.get("config_backup") or "",
             "updated_at": view["updated_at"],
         }
+
+    def _setup_state() -> dict:
+        """首次运行引导的状态：没建过存储区就要提示，建过就不再打扰。"""
+        service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        count = _count_notes(home) if home else 0
+        # 老用户升级上来时目录里已经有笔记：默认值给现有位置，别让人「重新建一个空库」
+        suggested = home if count else str(pathlib.Path.home() / "记忆文档")
+        return {
+            "ok": True,
+            "needed": not appconfig.setup_done(),
+            "home": home,
+            "default_home": suggested,
+            "notes": count,
+            "exists": bool(suggested) and os.path.isdir(suggested),
+            "platform": sys.platform,
+        }
+
+    def _apply_setup(home: str, client: str = "") -> tuple[dict, int]:
+        """建存储区：目录、说明文件、配置一次写全，然后重建笔记服务。
+
+        失败必须说清是哪一步失败的（不可写 / 是文件 / 建目录失败），
+        否则用户只会看到「设置失败」四个字，不知道去改什么。
+        """
+        text = appconfig.clean_path(home)
+        if not text:
+            return {"ok": False, "error": "invalid_argument", "message": "先选一个存放位置"}, 400
+        target = pathlib.Path(text).expanduser()
+        if not target.is_absolute():
+            return {"ok": False, "error": "invalid_argument",
+                    "message": "填绝对路径，例如 D:////记忆文档"}, 400
+        if target.exists() and not target.is_dir():
+            return {"ok": False, "error": "invalid_argument",
+                    "message": f"{target} 是个文件，不能当存储区"}, 400
+        created = []
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            for name in ("notes", "threads", "index", "exports", "assets"):
+                path = target / name
+                if not path.exists():
+                    path.mkdir(parents=True, exist_ok=True)
+                    created.append(name)
+            probe = target / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            return {"ok": False, "error": "io_error",
+                    "message": f"这个位置不可写：{exc}"}, 400
+        try:
+            appconfig.update({"notes": {"home": str(target)},
+                              "setup": {"done": True}})
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_argument", "message": str(exc)}, 400
+        reopened = _reopen_notes()
+        if not reopened.get("ok"):
+            # 目录建好了但服务没起来：配置保留，报错让人能重试，不要假装成功
+            return {"ok": False, "error": "notes_unavailable",
+                    "message": f"目录已建好，但笔记服务启动失败：{reopened.get('message')}",
+                    "home": str(target)}, 500
+        guards.audit.write("setup.done", client=client, home=str(target), created=created)
+        return {"ok": True, "home": str(target), "created": created,
+                "notes": _count_notes(str(target))}, 200
 
     def _claude_config_path() -> pathlib.Path | None:
         appdata = os.environ.get("APPDATA")
@@ -575,6 +649,123 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 appconfig.mark_exported()
             self._json(payload, status, {**cors, **extra})
 
+        def _home(self) -> str:
+            """存储区根目录：笔记、会话、导出都在它下面，换位置只需改一处。"""
+            service = note_ref["service"]
+            return str(service.store.home) if service else ""
+
+        def _threads(self, method: str, path: str, query: dict, body: dict | None) -> None:
+            """会话记录改存服务端（v1.19.0）。
+
+            以前放 localStorage：换浏览器就没了，智能体也读不到。
+            现在一条会话一个 JSON 文件放在 `<home>/threads/` 下，人和智能体看的是同一份。
+            """
+            cors = self._cors_headers()
+            if method == "OPTIONS":
+                self.send_response(204)
+                for key, value in {**cors, "Allow": "GET, PUT, DELETE, OPTIONS"}.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            guard = self._notes_guard()
+            if guard:
+                self._json(guard, 401, {**cors, "WWW-Authenticate": 'Bearer realm="notes"'})
+                return
+            home = self._home()
+            if not home:
+                self._json({"ok": False, "error": "storage_unavailable",
+                            "message": f"存储区不可用：{note_ref['error']}"}, 503, cors)
+                return
+            store = ThreadStore(home)
+            parts = [p for p in path.strip("/").split("/") if p]  # ["api","threads",id?]
+            thread_id = parts[2] if len(parts) > 2 else ""
+            try:
+                if method == "GET" and not thread_id:
+                    limit = int((query.get("limit") or ["60"])[0])
+                    items = store.list(limit=max(1, min(200, limit)))
+                    self._json({"ok": True, "items": items, "count": len(items)}, 200, cors)
+                    return
+                if method == "GET":
+                    self._json({"ok": True, "thread": store.get(thread_id)}, 200, cors)
+                    return
+                if method == "PUT" and thread_id:
+                    meta = store.put(thread_id, body or {})
+                    # 刚写的会话要立刻反映到「存储占用」里，否则用户看到的是上一次的数
+                    settings_ops.invalidate_storage()
+                    self._json({"ok": True, "thread": meta}, 200, cors)
+                    return
+                if method == "PUT" and not thread_id:
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "缺少会话 id"}, 400, cors)
+                    return
+                if method == "POST" and thread_id == "import":
+                    copied = store.import_many((body or {}).get("threads"))
+                    self._json({"ok": True, "imported": copied}, 200, cors)
+                    return
+                if method == "DELETE" and thread_id:
+                    store.delete(thread_id)
+                    settings_ops.invalidate_storage()
+                    self._json({"ok": True}, 200, cors)
+                    return
+            except ThreadError as exc:
+                self._json({"ok": False, "error": "invalid_argument", "message": str(exc)}, 400, cors)
+                return
+            except KeyError:
+                self._json({"ok": False, "error": "not_found",
+                            "message": "这条会话不在了（可能已被删除或改名）"}, 404, cors)
+                return
+            except OSError as exc:
+                self._json({"ok": False, "error": "storage_error",
+                            "message": f"存储区读写失败：{exc}"}, 500, cors)
+                return
+            self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
+
+        def _files(self, method: str, path: str, query: dict, body: dict | None) -> None:
+            """存储区里的原文读写：让「文件支持自由修改」落在页面上，而不是只写在文档里。"""
+            cors = self._cors_headers()
+            if method == "OPTIONS":
+                self.send_response(204)
+                for key, value in {**cors, "Allow": "GET, PUT, POST, OPTIONS"}.items():
+                    self.send_header(key, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            guard = self._notes_guard()
+            if guard:
+                self._json(guard, 401, {**cors, "WWW-Authenticate": 'Bearer realm="notes"'})
+                return
+            home = self._home()
+            if not home:
+                self._json({"ok": False, "error": "storage_unavailable",
+                            "message": "存储区不可用"}, 503, cors)
+                return
+            action = path.rstrip("/").rsplit("/", 1)[-1]
+            try:
+                if method == "GET" and action == "raw":
+                    rel = (query.get("path") or [""])[0]
+                    self._json({"ok": True, **fileops.read(home, rel)}, 200, cors)
+                    return
+                if method == "PUT" and action == "raw":
+                    data = body or {}
+                    result = fileops.write(home, data.get("path"), data.get("content", ""),
+                                           str(data.get("base_rev") or ""))
+                    self._json({"ok": True, **result}, 200, cors)
+                    return
+                if method == "POST" and action == "open":
+                    target = fileops.open_external(home, (body or {}).get("path"))
+                    self._json({"ok": True, "opened": target}, 200, cors)
+                    return
+                if method == "POST" and action == "open-folder":
+                    _open_folder(home)
+                    self._json({"ok": True, "path": home}, 200, cors)
+                    return
+            except fileops.FileError as exc:
+                self._json({"ok": False, "error": "file_error", "message": str(exc)},
+                           exc.status, cors)
+                return
+            self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
+
         def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:
             """设置面板的全部后端动作：读、改、测连接、导出/写入插件配置、打开目录。
 
@@ -597,6 +788,15 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                 "message": "设置只能在运行服务的这台电脑上修改"}, 403, cors)
                     return
             try:
+                if path == "/api/settings/setup":
+                    if method == "GET":
+                        self._json(_setup_state(), 200, cors)
+                        return
+                    if method == "POST":
+                        payload, status = _apply_setup(str((body or {}).get("home") or ""),
+                                                       self._client())
+                        self._json(payload, status, cors)
+                        return
                 if path == "/api/settings":
                     if method == "GET":
                         self._json(_settings_payload(), 200, cors)
@@ -726,12 +926,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                         return
                     folder = str(service.store.home)
                     try:
-                        if os.name == "nt":
-                            os.startfile(folder)  # noqa: S606
-                        elif sys.platform == "darwin":
-                            subprocess.Popen(["open", folder])
-                        else:
-                            subprocess.Popen(["xdg-open", folder])
+                        _open_folder(folder)
                     except OSError as exc:
                         self._json({"ok": False, "error": "open_failed",
                                     "message": f"打不开文件管理器：{exc}", "path": folder}, 500, cors)
@@ -854,20 +1049,49 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 api_key=pre.get("api_key"),
             )
 
-        def do_PATCH(self) -> None:  # noqa: N802
+        def _api_target(self, parsed) -> str:
+            """把路径归到哪一组接口：notes / threads / files / settings，其余空串。"""
+            path = parsed.path
+            if path == "/api/notes" or path.startswith("/api/notes/"):
+                return "notes"
+            if path == "/api/threads" or path.startswith("/api/threads/"):
+                return "threads"
+            if path.startswith("/api/files/"):
+                return "files"
+            if path == "/api/settings" or path.startswith("/api/settings/"):
+                return "settings"
+            return ""
+
+        def do_PUT(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+            target = self._api_target(parsed)
+            if target not in ("threads", "files"):
                 self._json({"error": "not found"}, 404)
                 return
             body, err = self._read_note_body()
             if err:
                 self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-            self._notes("PATCH", parsed.path, parse_qs(parsed.query), body)
+            handler = self._threads if target == "threads" else self._files
+            handler("PUT", parsed.path, parse_qs(parsed.query), body)
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            target = self._api_target(parsed)
+            if target not in ("notes", "threads"):
+                self._json({"error": "not found"}, 404)
+                return
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                return
+            handler = self._notes if target == "notes" else self._threads
+            handler("PATCH", parsed.path, parse_qs(parsed.query), body)
 
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+            target = self._api_target(parsed)
+            if target not in ("notes", "threads"):
                 self._json({"error": "not found"}, 404)
                 return
             body = None
@@ -880,17 +1104,18 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 if err:
                     self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                     return
-            self._notes("DELETE", parsed.path, parse_qs(parsed.query), body)
+            handler = self._notes if target == "notes" else self._threads
+            handler("DELETE", parsed.path, parse_qs(parsed.query), body)
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path == "/api/settings" or parsed.path.startswith("/api/settings/"):
-                self._settings("OPTIONS", parsed.path, parse_qs(parsed.query), None)
-                return
-            if not (parsed.path == "/api/notes" or parsed.path.startswith("/api/notes/")):
+            target = self._api_target(parsed)
+            if not target:
                 self._json({"error": "not found"}, 404)
                 return
-            self._notes("OPTIONS", parsed.path, parse_qs(parsed.query), None)
+            handler = {"notes": self._notes, "threads": self._threads,
+                       "files": self._files, "settings": self._settings}[target]
+            handler("OPTIONS", parsed.path, parse_qs(parsed.query), None)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -909,6 +1134,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 return
             if path == "/api/notes" or path.startswith("/api/notes/"):
                 self._notes("GET", path, qs, None)
+                return
+            if path == "/api/threads" or path.startswith("/api/threads/"):
+                self._threads("GET", path, qs, None)
+                return
+            if path.startswith("/api/files/"):
+                self._files("GET", path, qs, None)
                 return
             if path == "/api/settings" or path.startswith("/api/settings/"):
                 self._settings("GET", path, qs, None)
@@ -1153,6 +1384,20 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                     return
                 self._notes("POST", path, parse_qs(urlparse(self.path).query), body)
+                return
+            if path == "/api/threads" or path.startswith("/api/threads/"):
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+                self._threads("POST", path, parse_qs(urlparse(self.path).query), body)
+                return
+            if path.startswith("/api/files/"):
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+                self._files("POST", path, parse_qs(urlparse(self.path).query), body)
                 return
             if path not in ("/api/ask", "/api/ask/stream", "/api/feedback", "/api/reload",
                             "/api/cases/from_feedback",

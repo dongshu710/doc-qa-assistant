@@ -229,6 +229,10 @@ class NoteService:
             "markdown": note.to_markdown(),
         }
 
+    def rel_path(self, note_id: str) -> str:
+        """相对存储区的路径。只给界面用（页内改原文），不参与导出。"""
+        return self.store.rel_path(note_id)
+
     def list(self, **filters) -> list[dict]:
         return self.store.list(**filters)
 

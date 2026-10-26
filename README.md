@@ -1,8 +1,14 @@
-# 记忆文档 · 文档问答 + 智能体笔记
+# 记忆文档 · 可接入智能体的文档记忆应用
+
+一句话定位：**它是一份由你掌控、能被不同智能体读写的文档记忆**。
 
 把制度、手册、产品说明或任意文档变成**可追溯**的问答：只依据资料作答，逐条标注出处；
-资料不足时明确说不知道，并给出相似问题。再把对话里值得留下的部分整理成**结构化笔记**，
-落到你自己的目录——人能离线看改，下一个智能体直接读同一份文件。
+资料不足时明确说不知道，并给出相似问题。值得留下的回答存成**结构化笔记**，
+会话记录也一并落盘——都在你自己选的存储区里，全是普通文件。
+
+- **数据不在浏览器里**：笔记是 Markdown，会话是 JSON，`~/记忆文档/` 整个目录拷走就是完整备份；
+- **接入方式以智能体为主**：任意 MCP 客户端或 HTTP 调用 `POST /api/notes` 就能整理并写入；
+- **文件可自由修改**：页面里能改原文（带版本冲突保护），也能交给系统里顺手的编辑器。
 
 不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。
 
@@ -38,8 +44,11 @@
 | **文件（`/files`，可收藏的固定地址）** | **设置 → 存储（占用与清理）** |
 | ![](docs/screenshots/files.png) | ![](docs/screenshots/settings.png) |
 
-界面的结构、API 接入流程与存储设计见 [docs/LAYOUT.md](docs/LAYOUT.md)：
-左栏常驻会话、中间单列对话、底部大圆角输入框，参照 DeepSeek 网页版的分层方式。
+首次启动会让你**建一个专用存储区**（目录不存在会自动创建 `notes/ threads/ index/`），
+之后不论换浏览器、换端口、重装应用，记忆都还在那个目录里。
+
+界面与交互见 [docs/LAYOUT.md](docs/LAYOUT.md)；为什么长这样、跟同类开源项目学了什么，
+见 [docs/COMPARISON.md](docs/COMPARISON.md)（AnythingLLM / RAGFlow / Reor / Khoj / Mem0 / Logseq 逐个拆）。
 
 > 页面只有问答与知识库两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
 > 截图使用演示知识库与离线抽取模式，示例笔记见 [docs/examples/note-example.md](docs/examples/note-example.md)。
@@ -147,6 +156,8 @@ doc-qa-assistant/
 │  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点
 │  ├─ web_pages.py             # 两页装配（占位符替换 + shell()）
 │  ├─ webassets.py             # src/web/ 的读取与缓存
+│  ├─ threadstore.py           # 会话落盘：<存储区>/threads/<id>.json，一条一个文件
+│  ├─ fileops.py               # 存储区内的原文读写（路径越界、2 MB 上限、乐观锁）
 │  ├─ web/                     # 前端资源：6 份 css + 9 份 js + 6 份 html 片段
 │  │                            # 改样式改脚本在这里改，跑 tools/check_frontend.py 验语法
 │  ├─ notes/                   # 智能体笔记：存储 / 摘要 / CLI / HTTP / MCP / 导出（零依赖）
@@ -1197,6 +1208,56 @@ src/web/   base.css  settings.css  files.css  agent.css  ask.css  kb.css
 实扫降到约 5 ms；结果按「索引文件 + 各根目录的 mtime/size」验指纹缓存 30 秒，
 存一篇笔记立刻失效，重复打开约 0.05 ms。面板上会写清这次是「实扫用时 x ms」还是「沿用 30 秒内的统计」。
 
+
+## 4.15 存储区、智能体接入与文件自由修改（v1.19.0）
+
+### 一条原则：内容不在浏览器里
+
+| 数据 | 老位置 | 现在 | 形态 |
+|---|---|---|---|
+| 会话记录 | `localStorage.jy_threads_v1` | `<存储区>/threads/<id>.json` | 一条一个 JSON，缩进过，能直接读 |
+| 笔记 / 文档 | 磁盘（本来就是） | `<存储区>/notes/YYYY/MM/<id>.md` | Markdown + front matter |
+| 索引缓存 | `<存储区>/index/` | 不变 | 删了自动重建 |
+| 只读语料 | `<存储区>/../data/kb` | 不变 | 知识库版本库 |
+
+老数据不会丢：第一次加载时若存储区里没有会话，页面会把 `localStorage` 里的记录一次性
+`POST /api/threads/import` 搬进来，然后删掉浏览器里那份，并提示「已搬 N 条」。
+
+浏览器里只剩两个界面状态：`jy_current_v1`（上次打开哪条）、`jy_side_mini`（侧栏收没收）。
+
+### 首次运行：先建存储区
+
+```
+GET  /api/settings/setup   -> {needed, default_home, notes, ...}
+POST /api/settings/setup   -> 建目录 + 写 notes.home + setup.done=true
+```
+
+弹窗里写清三件事：文档是 Markdown、会话是 JSON、智能体读同一个目录。
+目录不存在会自动创建 `notes/ threads/ index/ exports/ assets/`。
+老用户升级时如果旧目录里已有笔记，默认值直接给旧目录，不会让他「新建一个空库」。
+
+### 接入方式：智能体调 API 是主路径
+
+知识库页顶部有一条「让智能体来整理文档」的引导（按钮直接打开智能体面板，能看到可复制的
+`mcpServers` 配置与工具数量）。上传框降级为「让本机问答多一份只读语料」——
+因为「整理并写进记忆」这件事，交给智能体比让用户手写 Markdown 更合理。
+
+### 文件可以自由修改
+
+```
+GET  /api/files/raw?path=notes/2026/10/xxx.md   -> {content, rev, size}
+PUT  /api/files/raw {path, content, base_rev}   -> 409 表示这段时间被别处改过
+POST /api/files/open {path}                     -> 交给系统默认编辑器
+```
+
+路径先 `resolve` 再比前缀，出不了存储区；只允许文本后缀；单文件 2 MB 上限。
+页面上「编辑原文」是行内 textarea + 保存，「用系统编辑器打开」直接调系统程序。
+
+### 界面：不再照搬聊天工具
+
+配色从蓝白换成**墨绿 + 米纸**，标题用衬线；首屏文案从「有什么可以帮你」换成「今天想记住什么」；
+存储面板从「面积条 + 五段图例」压成**四个数字**（文档 / 会话 / 缓存 / 磁盘剩余）。
+为什么不照搬 DeepSeek、跟同类开源项目各借了什么，见 [docs/COMPARISON.md](docs/COMPARISON.md)。
 
 ## 5. 评测
 

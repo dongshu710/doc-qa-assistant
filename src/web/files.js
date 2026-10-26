@@ -51,7 +51,12 @@
   // 正文渲染只写一份：抽屉和 /files 页共用，两处各写一套迟早长歪
   function detailHtml(d){
     var meta=[fmt(d.created), d.kind||'', (d.tags||[]).join(' · ')].filter(Boolean).join(' · ');
-    var html='<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
+    // 文件是用户的，那就得能改：给两条路——页内改原文，或交给系统里顺手的编辑器
+    var tools='<div class="files-tools">'
+      +'<button class="btn ghost sm" type="button" data-edit="'+esc(d.id||'')+'" data-path="'+esc(d.path||'')+'">编辑原文</button>'
+      +'<button class="btn ghost sm" type="button" data-openfile="'+esc(d.path||'')+'">用系统编辑器打开</button>'
+      +'</div>';
+    var html=tools+'<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
     var secs=(d.sections||[]).filter(function(s){ return s.body&&String(s.body).trim(); });
     if(!secs.length) html+='<p class="files-empty">这篇还没有正文。</p>';
     secs.forEach(function(s){
@@ -61,6 +66,80 @@
   }
   window.__notesDetailHtml=detailHtml;
   window.__notesFetch=req;
+
+  // ---- 页内编辑原文 ----
+  function headers(extra){
+    var h={'Accept':'application/json'};
+    if(extra) h['Content-Type']='application/json';
+    return window.apiHeaders?window.apiHeaders(h):h;
+  }
+  function openEditor(btn){
+    var path=btn.getAttribute('data-path')||'';
+    var host=btn.closest('.files-detail, .pf-detail');
+    if(!path||!host){ if(window.toast) window.toast('这篇没有对应的磁盘路径',true); return; }
+    host.innerHTML='<p class="files-empty">读取中…</p>';
+    fetch('/api/files/raw?path='+encodeURIComponent(path),{headers:headers()}).then(function(r){
+      return r.json();
+    }).then(function(d){
+      if(!d||!d.ok){ host.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      host.innerHTML='<div class="files-editor">'
+        +'<div class="fe-head"><span class="fe-path">'+esc(d.path)+'</span><span class="fe-rev">rev '+esc(d.rev)+'</span></div>'
+        +'<p class="fe-tip">这是磁盘上的原文，含 front matter。删掉头部也能用，但标签、状态、摘要这些字段会丢。</p>'
+        +'<textarea class="fe-area" spellcheck="false"></textarea>'
+        +'<div class="fe-foot"><span class="fe-msg"></span>'
+        +'<button class="btn ghost sm" type="button" data-cancel>取消</button>'
+        +'<button class="btn sm" type="button" data-save>保存</button></div></div>';
+      var area=host.querySelector('.fe-area');
+      area.value=d.content;
+      // 打开时停在文件开头：默认滚到中段会让人以为头部丢了
+      area.scrollTop=0;
+      try{ area.setSelectionRange(0,0); }catch(e){}
+      var msg=host.querySelector('.fe-msg');
+      function say(t,bad){ msg.textContent=t||''; msg.className='fe-msg'+(bad?' err':''); }
+      host.querySelector('[data-cancel]').onclick=function(){
+        var item=document.querySelector('.file-item.on');
+        if(item) item.click();
+        else if(window.location.pathname==='/files') location.reload();
+      };
+      host.querySelector('[data-save]').onclick=function(){
+        var btnSave=this; btnSave.disabled=true; say('保存中…');
+        fetch('/api/files/raw',{method:'PUT',headers:headers(),body:JSON.stringify({
+          path:d.path, content:area.value, base_rev:d.rev})}).then(function(r){
+          return r.json().then(function(body){ return {status:r.status, body:body}; });
+        }).then(function(res){
+          var body=res.body||{};
+          if(res.status===409){
+            say('文件在你编辑期间被改过（可能是智能体），已拒绝覆盖。复制内容后点取消再看最新版。',true);
+            return;
+          }
+          if(!body.ok){ say(body.message||'保存失败',true); return; }
+          say('已保存 '+body.rev);
+          if(window.toast) window.toast('已保存到存储区');
+          var item=document.querySelector('.file-item.on');
+          if(item) setTimeout(function(){ item.click(); }, 260);
+        }).catch(function(e){ say('保存失败：'+((e&&e.message)||e),true); })
+          .finally(function(){ btnSave.disabled=false; });
+      };
+      area.focus();
+    }).catch(function(){
+      host.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
+    });
+  }
+
+  document.addEventListener('click',function(e){
+    var edit=e.target.closest('[data-edit]');
+    if(edit){ e.preventDefault(); openEditor(edit); return; }
+    var open=e.target.closest('[data-openfile]');
+    if(open){
+      e.preventDefault();
+      var path=open.getAttribute('data-openfile')||'';
+      if(!path) return;
+      fetch('/api/files/open',{method:'POST',headers:headers(),body:JSON.stringify({path:path})})
+        .then(function(r){ return r.json(); }).then(function(d){
+          if(!d||!d.ok){ if(window.toast) window.toast((d&&d.message)||'打不开',true); }
+        }).catch(function(){ if(window.toast) window.toast('打不开系统编辑器',true); });
+    }
+  });
 
   function show(id, btn){
     [].forEach.call(panel.querySelectorAll('.file-item'), function(x){

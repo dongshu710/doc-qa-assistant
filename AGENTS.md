@@ -44,6 +44,32 @@ GET    /api/notes/stats
 `GET /tools.json` 直接给出 7 个 OpenAI function calling 声明，塞进 `tools` 数组即可。
 服务端配了 `API_KEYS` 时，记得带 `Authorization: Bearer <key>`。
 
+### 直接改文件（v1.19.0）
+
+笔记之外，存储区里的文本文件也能读写——这是「文件可自由修改」的接口面：
+
+```bash
+GET  /api/files/raw?path=notes/2026/10/xxx.md      # -> content / rev / size
+PUT  /api/files/raw {path, content, base_rev}      # 冲突 409：先 GET 拿新 rev 再改
+POST /api/files/open {path}                        # 交给用户的系统编辑器
+```
+
+- 路径是**相对存储区**的；绝对路径、`..`、符号链接逃逸都会被拒；
+- 只允许 `.md .markdown .txt .json .jsonl .csv .yaml .yml`，单文件 ≤ 2 MB；
+- `base_rev` 是内容哈希：别人（人或智能体）在这期间改过就拒绝覆盖，避免静默丢改动。
+
+### 会话记录（v1.19.0）
+
+```bash
+GET    /api/threads              # 列表（只有元数据，最近 60 条）
+GET    /api/threads/{id}         # 正文
+PUT    /api/threads/{id}         # 整条 upsert：{title, created, sid, turns}
+DELETE /api/threads/{id}
+```
+
+会话存在 `<存储区>/threads/<id>.json`，和笔记同一个根目录。
+**它记的是过程，不是结论**：值得留下的结论仍应通过 `save_conversation` 写成笔记。
+
 ## 三、命令行（只能执行命令的智能体）
 
 ```bash
@@ -60,7 +86,7 @@ python -m src.notes export --out exports/all.html
 `NOTE_HOME`（默认 `~/agent-notes`）下 `notes/YYYY/MM/<id>.md` 就是全部内容，
 格式见 `notes://schema` 或 `src/notes/schema_doc.py`。索引删了会自动重建。
 
-**位置可能被界面改过**：用户在页面「设置 → 存储」里选的自定义目录写在 `data/app.json`，
+**位置可能被界面改过**：用户在首启引导或「设置 → 存储」里选的目录写在 `data/app.json`，
 优先级高于 `NOTE_HOME`。不确定当前用哪个目录时，先看 `data/app.json` 的 `notes.home`，
 或调 `GET /api/settings` 读 `notes.home_effective`，不要假设还是默认值。
 

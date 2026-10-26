@@ -264,7 +264,7 @@ def main() -> int:
             chain = parser.found.get(panel_id, [])
             check(f"{label}{panel_id} 挂在 body 下", chain and chain[-1] == "body", str(chain))
         check(f"{label}含储存开关", 'id="setStoreChat"' in html)
-        check(f"{label}含存储位置控件", 'id="setHomeSeg"' in html)
+        check(f"{label}含存储位置控件", 'id="setHomeWrap"' in html and 'id="stToggleHome"' in html)
         check(f"{label}含接口控件", 'id="setBase"' in html)
         check(f"{label}设置脚本已注入", "setMcpInstall" in html)
         check(f"{label}文件脚本已注入", "filesExport" in html)

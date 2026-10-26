@@ -30,6 +30,8 @@ SCHEMA = {
     # 存储页的「保留最近 N 个知识库版本」：写成字符串再转 int，
     # 因为这里的 type 只认 str / path / bool，加一种类型会牵动读取与回显两条路径。
     "storage.keep_versions": {"env": "KB_KEEP_VERSIONS", "type": "str", "required": False},
+    # 首次运行引导是否走完：没走完就要提示用户「先建一个专用存储区」
+    "setup.done": {"env": "SETUP_DONE", "type": "bool", "required": False},
 }
 
 DEFAULTS = {
@@ -39,6 +41,7 @@ DEFAULTS = {
     "notes.home": "",
     "notes.store_chat": False,
     "storage.keep_versions": "30",
+    "setup.done": False,
 }
 
 _cache: dict | None = None
@@ -232,6 +235,14 @@ def store_chat() -> bool:
     return _as_bool(value)
 
 
+def setup_done() -> bool:
+    """首次运行引导是否完成。默认 False —— 新下载的项目要提示用户先建存储区。"""
+    value = _dig(_read(), "setup.done")
+    if value is None:
+        return _as_bool(os.environ.get("SETUP_DONE", ""))
+    return _as_bool(value)
+
+
 BACKUP_STALE_DAYS = 30
 
 
@@ -368,6 +379,8 @@ def update(patch: dict) -> dict:
             incoming["notes.home"] = _check_home(str(notes["home"]))
         if "store_chat" in notes:
             incoming["notes.store_chat"] = _as_bool(notes["store_chat"], strict=True)
+        if "done" in (patch.get("setup") or {}):
+            incoming["setup.done"] = _as_bool(patch["setup"]["done"], strict=True)
         if "keep_versions" in storage:
             raw = str(storage["keep_versions"]).strip()
             # 0 是合法值（不清理），所以不能用真值判断，必须显式比对字符串

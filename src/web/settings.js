@@ -72,10 +72,11 @@
     openPanel(); selectTab('install');
   });
 
-  function segHome(which){
-    var seg=$('setHomeSeg'); if(!seg) return;
-    [].forEach.call(seg.children,function(b){ b.classList.toggle('on',b.getAttribute('data-home')===which); });
-    var wrap=$('setHomeWrap'); if(wrap) wrap.hidden=(which!=='custom');
+  // 存储区位置默认只显示路径，点「更换」才展开输入框：日常不需要看这一堆
+  function showHomeEditor(show){
+    var wrap=$('setHomeWrap'); if(!wrap) return;
+    wrap.hidden=!show;
+    if(show&&$('setHome')){ $('setHome').focus(); try{ $('setHome').select(); }catch(e){} }
   }
 
   function renderBackup(bk){
@@ -122,11 +123,11 @@
       $('setApiNote').className = 'set-note' + (d.llm.key_ready ? ' ok' : '');
     }
 
-    segHome(d.notes.home?'custom':'default');
+    showHomeEditor(false);
+    if($('stHome')) $('stHome').textContent=d.notes.home_effective||'—';
     if($('setHome')) $('setHome').value=d.notes.home||'';
-    note('setHomeNote', d.notes.home_effective
-      ? ('当前生效：'+d.notes.home_effective)
-      : '当前生效：默认位置', !!d.notes.error);
+    // 路径已经在上面那行显示过了，这里只在出错时说话，避免同一句写两遍
+    note('setHomeNote', d.notes.error ? ('存储区不可用：'+d.notes.error) : '', !!d.notes.error);
 
     var mig=$('setMigrate');
     if(mig){
@@ -178,17 +179,13 @@
   }
   function renderStorage(st){
     st=st||{};
-    var kb=(st.kb||{}), notes=(st.notes||{}), idx=(st.index||{});
-    var total=(kb.bytes||0)+(notes.bytes||0)+(idx.bytes||0);
-    if($('stKb')) $('stKb').textContent=sizeText(kb.bytes)+(kb.versions?(' · '+kb.versions+' 版'):'');
+    var notes=(st.notes||{}), idx=(st.index||{}), threads=(st.threads||{});
+    // 只报四件事：文档多大、会话多大、缓存多大、磁盘还剩多少。
+    // 面积条不画了——三个数字并排比「占比」更好读，也不用解释颜色。
     if($('stNotes')) $('stNotes').textContent=sizeText(notes.bytes)+(notes.files?(' · '+notes.files+' 篇'):'');
-    if($('stIndex')) $('stIndex').textContent=sizeText(idx.bytes);
+    if($('stThreads')) $('stThreads').textContent=sizeText(threads.bytes)+(threads.files?(' · '+threads.files+' 条'):'');
+    if($('stIndex')) $('stIndex').textContent=sizeText(Number(idx.bytes||0)+Number((st.embedding||{}).bytes||0));
     if($('stFree')) $('stFree').textContent=sizeText((st.disk||{}).free);
-    if($('stTotal')) $('stTotal').textContent=sizeText((st.disk||{}).total);
-    function pct(v){ return total>0?Math.max(v>0?2:0,Math.round(v/total*100)):0; }
-    if($('stSegKb')) $('stSegKb').style.width=pct(kb.bytes||0)+'%';
-    if($('stSegNotes')) $('stSegNotes').style.width=pct(notes.bytes||0)+'%';
-    if($('stSegIndex')) $('stSegIndex').style.width=pct(idx.bytes||0)+'%';
     if($('stKeep')) $('stKeep').value=String(st.keep_versions==null?30:st.keep_versions);
     var cost=$('stCost');
     if(cost){
@@ -274,10 +271,13 @@
     }).finally(function(){ btn.disabled=false; btn.textContent=label; });
   });
 
-  if($('setHomeSeg')) $('setHomeSeg').addEventListener('click',function(e){
-    var btn=e.target.closest('button[data-home]'); if(!btn) return;
-    segHome(btn.getAttribute('data-home'));
-    if(btn.getAttribute('data-home')==='custom'&&$('setHome')) $('setHome').focus();
+  if($('stToggleHome')) $('stToggleHome').addEventListener('click',function(){
+    var wrap=$('setHomeWrap');
+    showHomeEditor(!!(wrap&&wrap.hidden));
+  });
+  if($('setHomeReset')) $('setHomeReset').addEventListener('click',function(){
+    if($('setHome')) $('setHome').value='';
+    applyHome('');
   });
 
   function applyHome(home){
@@ -292,10 +292,8 @@
   }
 
   if($('setHomeSave')) $('setHomeSave').addEventListener('click',function(){
-    var seg=$('setHomeSeg').querySelector('button.on');
-    var custom=seg&&seg.getAttribute('data-home')==='custom';
-    var home=custom?$('setHome').value.trim():'';
-    if(custom&&!home){ note('setHomeNote','先填一个目录，或用「默认位置」',true); return; }
+    var home=$('setHome').value.trim();
+    if(!home){ note('setHomeNote','先填一个目录，或用「用默认位置」',true); return; }
     applyHome(home);
   });
 

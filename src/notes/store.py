@@ -199,6 +199,17 @@ class NoteStore:
 
     # ---- 读 ----
 
+    def rel_path(self, note_id: str) -> str:
+        """笔记文件相对存储区的路径；找不到就返回空串（页面据此隐藏编辑入口）。"""
+        try:
+            path = self._resolve(note_id)
+        except (KeyError, OSError):
+            return ""
+        try:
+            return str(path.relative_to(self.home)).replace(os.sep, "/")
+        except ValueError:
+            return ""
+
     def get(self, note_id: str) -> Note:
         return _read_note(self._resolve(note_id))
 

@@ -87,6 +87,10 @@ FILES_PAGE_JS = load("files_page.js")
 AGENT_CSS = load("agent.css")
 AGENT_HTML = load("agent.html")
 AGENT_JS = load("agent.js")
+# 首次运行：先把存储区建起来，后面的文档与会话才有地方落
+SETUP_CSS = load("setup.css")
+SETUP_HTML = load("setup.html")
+SETUP_JS = load("setup.js")
 THEME_HEAD = load("theme_head.html")  # 首屏防闪白：在 <head> 里就把主题定下来
 SETTINGS_JS = load("settings.js")
 THEME_JS = load("theme.js")
@@ -167,7 +171,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{THEME_HEAD}"
         f'<meta name="color-scheme" content="light dark">'
         '<link rel="icon" href="data:,">'
-        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{AGENT_CSS}{css}</style></head>"
+        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{AGENT_CSS}{SETUP_CSS}{css}</style></head>"
         f'<body class="page-{active}">'
         '<div class="app">'
         f"{nav(active)}"
@@ -176,7 +180,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{icon('panel', 17)}</button>"
         f'<div class="stage stage-{active}">{body}</div>'
         "</div></div>"
-        f"{FILES_HTML}{AGENT_HTML}{SETTINGS_HTML}"
+        f"{FILES_HTML}{AGENT_HTML}{SETTINGS_HTML}{SETUP_HTML}"
         f'<div id="toasts"></div>'
         # 公共脚本先注入一次：侧栏与设置都要用 esc/toast，页面脚本不再各自复制一份
         f"<script>{JS_UTIL}</script>"
@@ -184,7 +188,8 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"<script>{script}</script>"
         f"<script>{FILES_JS}</script>"
         f"<script>{AGENT_JS}</script>"
-        f"<script>{SETTINGS_JS}</script><script>{THEME_JS}</script></body></html>"
+        f"<script>{SETTINGS_JS}</script><script>{SETUP_JS}</script>"
+        f"<script>{THEME_JS}</script></body></html>"
     )
 
 
