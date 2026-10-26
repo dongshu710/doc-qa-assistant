@@ -175,3 +175,9 @@
   .kb-side,.notes-side{position:static;}
   .notes-list{max-height:240px;}
 }
+@media (max-width:560px){
+  /* 标题/类型/状态/标签四列在 390px 上并排会把编辑器挤破，宁可纵向排 */
+  .ne-row label{flex:1 1 100%;min-width:0;}
+  .ne-hint{overflow-wrap:anywhere;}
+  .notes-tools .search,.notes-tools .kb-sort{flex:1 1 100%;min-width:0;}
+}

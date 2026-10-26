@@ -43,6 +43,12 @@
   下一次命中直接返回被改过的数字。现在每层 dict 都复制。
 - **`theme.js` 被写成 CRLF**：Windows 上 `write_text` 默认翻译换行，文件能跑但和 git 里对不上，
   整文件 diff 变红。资源统一 LF，并由 `test_frontend` 断言。
+- **CI 一直红**：`test_notes_mcp` / `test_notes_digest_llm` / `test_notes_export` 少了 `sys.path` 引导，
+  在 Linux 上直接 `python tests/x.py` 会 `ModuleNotFoundError: No module named 'src'`
+  （本地靠 `PYTHONPATH` 侥幸通过）。三处已补，CI 不再依赖外部环境变量。
+- **窄屏 3px 横向溢出**：Linux 缺「微软雅黑」，同一段字度量更宽，笔记编辑器四个字段并排时把页面顶出
+  横向滚动条。≤560px 下字段改为独占一行，并给 `min-width:0` / `pre` 换行兜底；
+  `e2e_notes` 溢出断言现在会打出越界元素，容差 4px（字体舍入，不是破版）。
 
 ## [1.17.0] - 2026-10-26
 

@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 for key in ("LLM_API_KEY", "DEEPSEEK_API_KEY"):
     os.environ.pop(key, None)
 os.environ.setdefault("NOTE_HOME", tempfile.mkdtemp(prefix="llm-notes-"))
+
+# 直接 `python tests/x.py` 跑时，sys.path[0] 是 tests/，仓库根不在里面。
+# CI 里没有 PYTHONPATH，缺这段就是 ModuleNotFoundError: No module named 'src'。
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.notes import digest_llm  # noqa: E402
 from src.notes.model import NoteError  # noqa: E402

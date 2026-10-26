@@ -8,9 +8,17 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import tempfile
+from pathlib import Path
 
 os.environ.setdefault("NOTE_HOME", tempfile.mkdtemp(prefix="mcp-notes-"))
+
+# 直接 `python tests/x.py` 跑时，sys.path[0] 是 tests/，仓库根不在里面。
+# CI 里没有 PYTHONPATH，缺这段就是 ModuleNotFoundError: No module named 'src'。
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.notes import mcp_server as mcp  # noqa: E402
 from src.notes.service import NoteService  # noqa: E402

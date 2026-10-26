@@ -46,6 +46,13 @@ main{flex:1 0 auto;}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;}
 @media (max-width:860px){ .grid2,.grid3,.grid4{grid-template-columns:1fr;} }
+/* 窄屏兜底：flex/grid 子项默认 min-width:auto，长单词或宽表格会把页面顶出几像素。
+   Linux 上没有「微软雅黑」，同一段字比 Windows 更宽——CI 的 3px 溢出就是这么来的。 */
+@media (max-width:560px){
+  .app,.main,.stage,.kb-wrap,.kb-layout,.notes-layout,.notes-side,.notes-main{min-width:0;}
+  pre,table,img,svg{max-width:100%;}
+  pre{overflow-wrap:anywhere;}
+}
 .stack{display:flex;flex-direction:column;gap:16px;}
 .row{display:flex;align-items:center;gap:10px;}
 .spacer{flex:1;}
