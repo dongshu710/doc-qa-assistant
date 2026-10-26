@@ -1,0 +1,52 @@
+/* ============ 连接智能体 ============
+   和设置抽屉同一套视觉，但层级更低（110）：
+   先看智能体接线，再进设置改具体参数，不会互相盖住。
+   注意别用 .note-* 那套类名——那是问答页私有的，/kb 和 /files 上没有。 */
+.agent-mask{position:fixed;inset:0;background:rgba(12,16,28,.38);z-index:110;backdrop-filter:blur(2px);}
+.agent-dlg{position:fixed;z-index:111;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:min(600px,calc(100vw - 32px));max-height:min(720px,calc(100vh - 48px));
+  display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);
+  border-radius:16px;box-shadow:var(--sh-3);overflow:hidden;}
+.agent-hd{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+  border-bottom:1px solid var(--line);font-size:14px;}
+.agent-hd b{font-size:14px;}
+.agent-x{border:none;background:none;font-size:20px;line-height:1;color:var(--faint);
+  cursor:pointer;padding:0 4px;border-radius:6px;}
+.agent-x:hover{color:var(--ink);background:var(--hover);}
+.agent-body{padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:12px;}
+
+.agent-state{display:flex;gap:10px;align-items:flex-start;padding:11px 12px;border-radius:10px;
+  background:var(--surface-2);border:1px solid var(--line);}
+.agent-state .led{width:8px;height:8px;border-radius:50%;background:var(--faint);
+  margin-top:6px;flex:none;}
+.agent-state.on .led{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft);}
+.agent-state b{display:block;font-size:13px;color:var(--ink);}
+.agent-state i{display:block;font-size:12px;color:var(--muted);font-style:normal;margin-top:2px;
+  line-height:1.6;}
+
+.agent-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;
+  font-size:12.5px;color:var(--muted);line-height:1.7;}
+.agent-list b{color:var(--ink);font-weight:600;}
+.agent-list code{font-family:var(--mono);font-size:11.5px;}
+
+.agent-pre{margin:0;padding:12px;border:1px solid var(--line);border-radius:10px;
+  background:var(--surface-2);font:12px/1.7 var(--mono);color:var(--text);
+  white-space:pre-wrap;word-break:break-all;max-height:240px;overflow:auto;}
+.agent-note{margin:0;font-size:11.5px;color:var(--faint);line-height:1.7;}
+.agent-note.err{color:var(--bad);}
+.agent-foot{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;
+  padding:12px 16px;border-top:1px solid var(--line);background:var(--surface-2);}
+.agent-foot a{display:inline-flex;align-items:center;}
+
+@media (max-width:560px){
+  .agent-dlg{width:100vw;max-height:84vh;left:0;top:auto;bottom:0;transform:none;
+    border-radius:16px 16px 0 0;}
+}
+[data-theme="dark"] .agent-state{background:#24262c;border-color:#2e3037;}
+[data-theme="dark"] .agent-foot{background:#1d1f24;}
+[data-theme="dark"] .agent-pre{background:#1d1f24;}
+
+/* 侧栏「智能体」按钮上的状态点：接出工具后点亮。
+   放在这里而不是 base.css，是因为它属于这一块功能，删功能时一起删。 */
+.sb-item .agent-led{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none;}
+body.side-mini .sb-item .agent-led{display:none;}

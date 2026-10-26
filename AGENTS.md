@@ -76,3 +76,14 @@ python -m src.notes export --out exports/all.html
 
 - 三个入口（MCP / HTTP / CLI）都只调 `src/notes/service.py`，不要在协议层写业务分支。
 - 任何新字段先加到 `model.py` 常量与 `schema_doc.py`，再改 `contract.py` / `tools.py`，否则契约会漂。
+
+## 前端资源的规矩（v1.18.0 起）
+
+- **不要往 Python 里写 CSS/JS/HTML 字符串**。它们全在 `src/web/`：`base|settings|files|agent|ask|kb.css`、
+  `side|settings|files|files_page|agent|ask|kb|theme|util.js`、对应 `.html` 片段与 `art.txt`。
+  `theme.py` 只做资源装载与骨架拼接，`web_pages.py` 只做占位符替换。
+- 改完跑 `python tools/check_frontend.py`：每个 `.js` 过 `node --check`，CSS 查括号与外部引用，
+  拼装后的整页再逐段复检。`tests/test_frontend.py` 会拦住「又内联回去」（`theme.py` ≤ 260 行 / 20 KB）。
+- 写资源文件必须 `newline=""`：Windows 上默认翻译换行，会把文件写成 CRLF，和 git 里对不上。
+- 资源仍然内联进 HTML、不新增静态路由，所以**改完要重启进程**才生效；这不是缓存问题，别去清浏览器。
+

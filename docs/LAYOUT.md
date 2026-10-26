@@ -1,4 +1,4 @@
-# 界面排版方案（v1.17.0）
+# 界面排版方案（v1.18.0）
 
 参照 DeepSeek 网页版的三段式结构重排全部页面：**左侧常驻栏 / 中间对话流 / 底部输入**。
 目标不是「做得像」，而是让第一次打开的人不需要读说明就知道从哪开始、东西存在哪、接口在哪配。
@@ -29,6 +29,7 @@
     搜索对话
     会话列表（按时间分组）
     文件（抽屉，带篇数角标与备份红点）
+    智能体（实体按钮：状态 + 可复制的 MCP 配置）
     知识库
     设置
     版本号 / 主题切换
@@ -45,6 +46,10 @@
 - `/ask`：对话页。空态是「问候 + 4 个示例问题」，首条提问后示例让位给对话流。
 - `/kb`：知识库。标题 + 文档 / 笔记两个分区；表格列宽按内容重排，隐藏「关键词」列。
 - `/files`：文件页。左列文件、右侧正文，作为加不进客户端工具栏时的固定地址。
+
+三页都有「连接智能体」（`#agentBtn`）：应用给人用，智能体走 MCP，两条路读的是同一批
+Markdown。面板里直接给出可复制的 `mcpServers` 配置、接出的工具数量和笔记目录，
+把「智能体也能读这些笔记」从文档里的一句话变成点得到的按钮。
 
 移动端（≤900px）侧栏变成抽屉：`#sideOpen` 滑出，点遮罩或按 `Esc` 收起；
 设置与文件抽屉的层级高于侧栏，打开时会自动收起侧栏，不会被挡在后面。
@@ -115,9 +120,14 @@
 
 | 文件 | 责任 |
 |---|---|
-| `src/theme.py` | 设计令牌、外壳与侧栏（`nav()`/`SIDE_JS`）、设置弹窗与存储面板、文件抽屉 |
-| `src/web_pages.py` | 对话页结构（`ASK_BODY`）、样式（`ASK_CSS`）、会话与标题逻辑（`ASK_SCRIPT`） |
-| `src/settings_ops.py` | `storage_report()`、`clear_index()` —— 纯函数，可单测 |
+| `src/theme.py` | 外壳、侧栏（`nav()`）、骨架拼接（`shell()`）、资源装载点 |
+| `src/web_pages.py` | 两个页面的装配：占位符替换 + `shell()` |
+| `src/webassets.py` | `src/web/` 的读取与缓存（`load()` / `names()`） |
+| `src/web/*.css` | `base` / `settings` / `files` / `agent` / `ask` / `kb` 六份样式 |
+| `src/web/*.js` | `side` / `settings` / `files` / `files_page` / `agent` / `ask` / `kb` / `theme` / `util` |
+| `src/web/*.html` | 设置弹窗、文件抽屉、文件页、智能体面板、首屏主题脚本、问答与知识库正文 |
+| `src/settings_ops.py` | `storage_report()`（并行扫描 + 30 秒缓存）、`clear_index()` —— 纯函数，可单测 |
+| `tools/check_frontend.py` | `node --check` 每个 JS、CSS 括号与离线校验、拼装后页面的内联脚本 |
 | `src/kbstore.py` | `prune_versions()`：与自动清理共用同一套保留策略 |
 | `src/appconfig.py` | `storage.keep_versions` 的读写与校验 |
 | `src/server.py` | `GET /api/settings` 增加 `storage`；`POST /api/settings/storage/clean` |
@@ -125,9 +135,11 @@
 ## 七、验证
 
 ```bash
-python tests/test_storage.py        # 26 项：目录统计、占用报表、版本清理、配置校验
+python tools/check_frontend.py      # 34 项：每个 JS 过 node --check、CSS 括号、页面内联脚本
+python tests/test_frontend.py       # 23 项：资源齐备、装配、Python 侧行数/体积护栏
+python tests/test_storage.py        # 37 项：目录统计、缓存命中与失效、版本清理、配置校验
 python tests/test_settings.py       # 71 项：面板结构、控件挂载
-PYTHON=<python> node tests/e2e_layout.mjs   # 32 项：侧栏、多会话、弹窗、存储、移动端
+PYTHON=<python> node tests/e2e_layout.mjs   # 41 项：侧栏、多会话、弹窗、存储、智能体、移动端
 ```
 
 `e2e_layout` 覆盖的关键行为：收起后能再展开、刷新后不重复建会话、切回旧会话正文还在、
@@ -136,6 +148,10 @@ PYTHON=<python> node tests/e2e_layout.mjs   # 32 项：侧栏、多会话、弹�
 ## 八、已知取舍
 
 - 会话记录存在浏览器 `localStorage`（最多 60 条），换浏览器就看不到；要长期保留请「存为笔记」。
-- 存储统计会遍历目录，笔记上千篇时约几十毫秒；只在打开设置时计算一次，未做缓存。
+- 存储统计仍然要遍历目录：`os.scandir` + 五个目录并行后，1000 篇约 5 ms（原 20 ms）；
+  30 秒内重复打开走缓存，约 0.05 ms。缓存按「索引文件 + 各根目录的 mtime/size」验指纹，
+  存一篇笔记就立刻失效；只有「用别的编辑器往目录里丢文件」这种绕过索引的动作最多滞后 30 秒。
+- 前端资源已搬到 `src/web/`，但仍然是内联进 HTML（不新增静态路由、不引入构建步骤），
+  所以改完样式或脚本要重启进程；`tools/check_frontend.py` 负责在提交前抓语法错误。
 - 清理按钮按当前选择执行，没有二次确认——删的是旧版本与缓存，活动版本永不受影响；
   但如果用户依赖某个旧版本回滚，删掉后就没了，这一点在面板文案里写明。

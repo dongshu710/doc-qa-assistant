@@ -77,6 +77,54 @@ def test_storage_report() -> None:
         check("路径是绝对路径", os.path.isabs(report["notes"]["path"]), report["notes"]["path"])
 
 
+def test_storage_cache() -> None:
+    """缓存不能给出过期数字，也不该把「没变」当成「变」。
+
+    面板每点一次齿轮都会取一遍报表，笔记上千篇时这是一次全盘遍历；
+    缓存要同时做到两件相反的事：命中时够快、目录一变就立刻作废。
+    """
+    print("统计缓存")
+    settings_ops.invalidate_storage()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        home = root / "agent-notes"
+        write(home / "notes" / "2026" / "a.md", "a" * 100)
+        write(home / "index" / "notes.jsonl", "{}\n")
+        args = (str(home), str(root / "kb"), "", "", 30)
+
+        first = settings_ops.storage_report(*args)
+        check("首次是实扫", first["cached"] is False, str(first["cached"]))
+        second = settings_ops.storage_report(*args)
+        check("第二次命中缓存", second["cached"] is True, str(second["cached"]))
+        check("命中不花时间", second["took_ms"] == 0, str(second["took_ms"]))
+        check("命中数字一致", first["notes"] == second["notes"], f"{first['notes']} vs {second['notes']}")
+        check("命中率被记录", settings_ops.storage_stats()["hits"] >= 1)
+
+        # 改返回的 dict 不能污染缓存（有人会往里面塞字段）
+        second["notes"]["bytes"] = -1
+        third = settings_ops.storage_report(*args)
+        check("返回值是副本", third["notes"]["bytes"] == 100, str(third["notes"]))
+
+        # 存一篇笔记 = 写文件 + 追加索引；索引 mtime 变，缓存必须立刻作废
+        write(home / "notes" / "2026" / "b.md", "b" * 50)
+        with open(home / "index" / "notes.jsonl", "a", encoding="utf-8") as handle:
+            handle.write('{"id":"b"}\n')
+        fresh = settings_ops.storage_report(*args)
+        check("新增笔记后不再是缓存", fresh["cached"] is False, str(fresh["cached"]))
+        check("新笔记被算进去", fresh["notes"]["files"] == 2 and fresh["notes"]["bytes"] == 150,
+              str(fresh["notes"]))
+
+        forced = settings_ops.storage_report(*args, fresh=True)
+        check("fresh=True 一定重扫", forced["cached"] is False)
+        settings_ops.invalidate_storage()
+        after = settings_ops.storage_report(*args)
+        check("显式作废后重扫", after["cached"] is False)
+
+        # 报告里的篇数要能当「笔记总数」用（设置面板就是这么复用的）
+        check("篇数与 count_notes 一致", settings_ops.count_notes(str(home)) == after["notes"]["files"],
+              f"{settings_ops.count_notes(str(home))} vs {after['notes']['files']}")
+
+
 def test_clear_index() -> None:
     print("清理索引缓存")
     with tempfile.TemporaryDirectory() as tmp:
@@ -142,6 +190,7 @@ def test_keep_versions_config() -> None:
 def main() -> int:
     test_size_of()
     test_storage_report()
+    test_storage_cache()
     test_clear_index()
     test_prune_versions()
     test_keep_versions_config()

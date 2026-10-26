@@ -246,7 +246,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         """真打一次 minimal 请求验证配置。实现见 settings_ops.probe_llm（可单测）。"""
         return settings_ops.probe_llm(cfg.get("base_url"), cfg.get("model"), cfg.get("api_key"))
 
-    def _storage_report() -> dict:
+    def _storage_report(fresh: bool = False) -> dict:
         service = note_ref["service"]
         home = str(service.store.home) if service else ""
         index_dir = settings.embedding_index_dir
@@ -258,6 +258,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             index_dir=index_dir,
             config_path=str(appconfig.path()),
             keep_versions=appconfig.keep_versions(),
+            fresh=fresh,
         )
 
     def _clear_index(home: str) -> int:
@@ -272,7 +273,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         view = appconfig.view()
         service = note_ref["service"]
         home = str(service.store.home) if service else ""
-        count = _count_notes(home)
+        # 笔记篇数直接取存储统计的结果：两边都数的是 notes/*.md，
+        # 分开数就是同一棵树走两遍（千篇时多花 10 ms 以上，且两次结果可能不一致）。
+        storage = _storage_report()
+        count = int((storage.get("notes") or {}).get("files") or 0)
         return {
             "ok": True,
             "llm": {
@@ -293,7 +297,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             "mcp": _mcp_config(),
             "repo_url": _repo_url(),
             "downloads": _downloads(),
-            "storage": _storage_report(),
+            "storage": storage,
             "config_path": view["config_path"],
             "config_error": view.get("config_error") or "",
             "config_backup": view.get("config_backup") or "",
@@ -639,6 +643,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                                     "message": "旧位置里没有 notes 目录，没东西可搬"}, 400, cors)
                         return
                     result = _copy_notes(src, dst)
+                    # 复制改的是深层子目录，指纹里的根目录 mtime 看不出变化，
+                    # 这里显式作废，切回去立刻看到新位置的数字
+                    settings_ops.invalidate_storage()
                     guards.audit.write("settings.notes_migrate", client=self._client(),
                                        from_path=src, to_path=dst, copied=result["copied"],
                                        skipped=result["skipped"], failed=len(result["failed"]))
@@ -658,12 +665,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     appconfig.update({"storage": {"keep_versions": str(keep)}})
                     service = note_ref["service"]
                     home = str(service.store.home) if service else ""
-                    before = _storage_report()
+                    before = _storage_report(fresh=True)
                     removed = store.prune_versions(keep) if store is not None else []
                     # 不在这里重建索引：重建会立刻把刚删的缓存写回来，用户看到的「释放 0 B」
                     # 就是这个原因。下一次读笔记（列表或问答）时自然重建。
                     freed_index = _clear_index(home)
-                    after = _storage_report()
+                    after = _storage_report(fresh=True)
                     freed = max(0, _total_bytes(before) - _total_bytes(after)) + freed_index
                     guards.audit.write("settings.storage_clean", client=self._client(),
                                        keep=keep, removed=len(removed), freed_bytes=freed)

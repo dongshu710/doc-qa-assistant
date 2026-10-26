@@ -2,6 +2,45 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.18.0] - 2026-10-26
+
+把前端从 Python 字符串里搬进 `src/web/`，给应用加一个通向智能体的实体按钮，
+并把「打开设置要等一下」这件事修掉。
+
+### 新增
+
+- **侧栏「智能体」按钮**（`#agentBtn` / `#agentPanel`）：实体接线口，不是说明文字。
+  面板里给接出工具数（读 `/tools.json` 的真实条数）、当前笔记目录、
+  填好绝对路径与 `PYTHONPATH` 的 `mcpServers` 配置、一键复制，以及跳「设置 → 安装」。
+  点遮罩、按 `Esc`、再点一次都能关；打开时自动收起移动端侧栏。
+- **`src/web/`**：前端资源改成真文件——6 份 `.css`、9 份 `.js`、6 份 `.html` 片段与 1 份 ASCII 图。
+- **`src/webassets.py`**：`load()`（读一次进内存，`newline=""` 保字节）与 `names()`。
+- **`tools/check_frontend.py`**：每个 JS 过 `node --check`、CSS 查括号与外部引用、
+  拼装后的整页逐段复检；找不到 node 时明确提示而不是静默跳过。
+- **`tests/test_frontend.py`**（23 项）：资源齐备、无 CRLF、占位符替换、
+  Python 侧行数与体积护栏（`theme.py` ≤ 260 行 / 20 KB）。
+- 存储面板增加一行「本次统计用时 x ms / 沿用 30 秒内的统计」，让优化可核对。
+
+### 改动
+
+- `theme.py` 1860 → 约 200 行、`web_pages.py` 1862 → 约 30 行：只剩外壳、导航与占位符替换。
+  资源仍是内联进 HTML，不新增静态路由、不引入构建步骤。
+- **存储统计**：`os.scandir` 逐层遍历（Windows 上目录项自带 size，省掉每条一次 stat），
+  笔记 / 索引 / 知识库 / 配置 / 向量索引五个根目录并行扫；1000 篇从 20 ms 降到约 5 ms。
+- **统计缓存**：按「`index/notes.jsonl` + 各根目录的 mtime/size」验指纹，TTL 30 秒。
+  存一篇笔记（索引追加）立刻失效，重复打开约 0.05 ms；`fresh=True` 供清理前后强制重扫，
+  迁移完成后显式 `invalidate_storage()`。
+- `GET /api/settings` 不再单独数一遍笔记：篇数直接取存储统计里的 `notes.files`，
+  同一棵树不再走两遍，也用不上两套口径。
+- CI 增加前端自检与 `test_frontend`，并补上此前漏跑的设置 / 存储 / 技能 / 更新四组测试。
+
+### 修复
+
+- **`storage_report()` 返回浅拷贝**：调用方往 `report["notes"]` 里写字段会改到缓存里那一份，
+  下一次命中直接返回被改过的数字。现在每层 dict 都复制。
+- **`theme.js` 被写成 CRLF**：Windows 上 `write_text` 默认翻译换行，文件能跑但和 git 里对不上，
+  整文件 diff 变红。资源统一 LF，并由 `test_frontend` 断言。
+
 ## [1.17.0] - 2026-10-26
 
 界面整体重排：参照 DeepSeek 网页版改成「左侧常驻栏 / 中间对话流 / 底部输入」，

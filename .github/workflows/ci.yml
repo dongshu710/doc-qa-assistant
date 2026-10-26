@@ -39,8 +39,19 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: 语法检查
         run: python -m compileall -q src tests tools
+
+      # 前端资源是 .js/.css/.html 文件，语法错不该等到浏览器里白屏才发现
+      - name: 前端资源（node --check / CSS 括号 / 内联脚本）
+        run: python tools/check_frontend.py
+
+      - name: 前端装配与资源护栏
+        run: python tests/test_frontend.py
 
       - name: 可选向量依赖（NumPy + FAISS）
         run: python -m pip install "numpy==2.3.3" "faiss-cpu==1.12.0"
@@ -147,6 +158,14 @@ jobs:
 
       - name: 页面 / API 冒烟（离线模式）
         run: python tests/test_server.py
+
+      - name: 设置面板 / 存储统计 / 技能与更新
+        run: |
+          python tests/test_settings.py
+          python tests/test_settings_ops.py
+          python tests/test_storage.py
+          python tests/test_skill.py
+          python tests/test_update.py
 
       - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'

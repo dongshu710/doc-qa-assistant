@@ -1,0 +1,26 @@
+<div class="agent-mask" id="agentMask" hidden></div>
+<aside class="agent-dlg" id="agentPanel" hidden role="dialog" aria-modal="true" aria-labelledby="agentTitle">
+  <div class="agent-hd">
+    <b id="agentTitle">连接智能体</b>
+    <button class="agent-x" id="agentClose" type="button" aria-label="关闭">×</button>
+  </div>
+  <div class="agent-body">
+    <div class="agent-state" id="agentState">
+      <span class="led"></span>
+      <div><b id="agentStateTitle">正在读取配置…</b>
+        <i id="agentStateText">智能体通过 MCP 读写同一批 Markdown。</i></div>
+    </div>
+    <ul class="agent-list">
+      <li><b>给人用</b>：左侧「新对话」「知识库」「文件」，都在浏览器里。</li>
+      <li><b>给智能体用</b>：把下面这份配置粘贴到 MCP 客户端，或装技能包。</li>
+      <li><b>同一批文件</b>：两边都读写 <code id="agentHome">…</code>，哪边改动都算数。</li>
+    </ul>
+    <pre class="agent-pre" id="agentPre">加载中…</pre>
+    <p class="agent-note" id="agentNote"></p>
+  </div>
+  <div class="agent-foot">
+    <button class="btn ghost sm" id="agentCopy" type="button">复制配置</button>
+    <button class="btn ghost sm" id="agentInstall" type="button">打开安装分区</button>
+    <a class="btn ghost sm" href="/files" target="_blank" rel="noopener">打开文件页</a>
+  </div>
+</aside>

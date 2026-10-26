@@ -144,8 +144,11 @@ doc-qa-assistant/
 │  ├─ server.py                # Web 服务（两页原型 + API）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
 │  ├─ openapi.py               # OpenAPI 3.0 契约（21 个路径，含笔记接口）
-│  ├─ theme.py                 # 设计系统（令牌 / 深色模式 / 组件 / 页头页脚），各页共用
-│  ├─ web_pages.py             # 页面模板（问答 / 知识库）
+│  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点
+│  ├─ web_pages.py             # 两页装配（占位符替换 + shell()）
+│  ├─ webassets.py             # src/web/ 的读取与缓存
+│  ├─ web/                     # 前端资源：6 份 css + 9 份 js + 6 份 html 片段
+│  │                            # 改样式改脚本在这里改，跑 tools/check_frontend.py 验语法
 │  ├─ notes/                   # 智能体笔记：存储 / 摘要 / CLI / HTTP / MCP / 导出（零依赖）
 │  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出（CLI 用）
 │  ├─ version.py               # 版本号（读根目录 VERSION）
@@ -158,6 +161,7 @@ doc-qa-assistant/
 │  ├─ RELEASE.md               # 打包、验证、发布流程
 │  └─ screenshots/             # README 用的页面截图
 ├─ tools/
+│  ├─ check_frontend.py        # 前端自检：node --check / CSS 括号 / 内联脚本
 │  ├─ build_release.py         # 构建可下载的 zip + SHA256
 │  ├─ publish_release.py       # 把 zip 发到 GitHub Release（复用已存凭据）
 │  ├─ keyword_demo.py          # 小a场景演示：上传→关键词→命中→本地输出
@@ -327,7 +331,8 @@ python -m src.server --port 8000
 `/`、`/index.html`、`/insights`、`/dashboard`、`/report` 一律 302 到 `/ask`——旧链接不会 404，
 但页面上只剩问答与知识库两项导航。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.13](#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道)。
 
-页面统一走 `src/theme.py` 的设计系统（设计令牌 + 组件 + 页头页脚），纯内联 CSS/JS、零 CDN、断网可开；
+页面统一走 `src/theme.py` 的外壳与 `src/web/` 里的资源（样式 / 脚本 / 片段都是真文件，
+运行时内联进 HTML），零 CDN、断网可开；
 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。
 
 API：
@@ -1155,6 +1160,43 @@ python -m src.notes export --out tax.html --tag 税务           # 只导某一�
 - front matter 半截、缺字段、完全缺失都能读；`external: true` 标明这是外部文件。
 - 同一目录并发写有目录锁（默认等 5 秒），超时返回明确错误。
 - 提示注入、HTML/脚本标签、emoji 与零宽字符一律当纯文本处理，不执行、不解析。
+
+## 4.14 连接智能体、前端目录与统计缓存（v1.18.0）
+
+**一条边界，两条路。** 会话记录存在浏览器 `localStorage`（最多 60 条），换浏览器就看不到；
+要长期留存就「存为笔记」——落到磁盘上的 Markdown，人和智能体读的是同一批文件。
+v1.18.0 把这条分工做成了侧栏里点得到的按钮：
+
+| 入口 | 位置 | 给谁 |
+|---|---|---|
+| 新对话 / 知识库 | 侧栏 | 人，在浏览器里用 |
+| 文件（`#filesBtn`）+ `/files` | 侧栏 / 独立地址 | 人，看已存笔记与原文 |
+| **智能体（`#agentBtn`）** | 侧栏 | 接线口：状态 + 可复制的 `mcpServers` 配置 |
+
+点「智能体」弹出的面板里直接给出：接出工具数（`GET /tools.json` 的真实条数）、
+当前笔记目录、一份填好绝对路径与 `PYTHONPATH` 的 MCP 配置、复制按钮，以及跳到「设置 → 安装」的入口。
+不用去翻文档猜该粘什么——这是「应用形式 + 可连接智能体」在界面上的落点。
+
+**前端从 Python 字符串里搬出来了。** 原先 20 万字符的 CSS/JS 挤在 `theme.py`（1860 行）和
+`web_pages.py`（1862 行）的三引号里：没有语法高亮、没法查错、改一行要滚两千行。
+
+```
+src/web/   base.css  settings.css  files.css  agent.css  ask.css  kb.css
+           side.js  settings.js  files.js  files_page.js  agent.js  ask.js  kb.js  theme.js  util.js
+           settings.html  files.html  files_page.html  agent.html  ask.html  kb.html  art.txt
+```
+
+- 运行时行为不变：导入时读进内存、内联进 HTML，不新增静态路由、不引入构建步骤；
+- 两个 Python 文件降到 200 / 30 行，只留外壳、导航与占位符替换；
+- `tools/check_frontend.py` 在提交前跑：每个 `.js` 过 `node --check`、CSS 查括号与外部引用、
+  **拼装完成后的整页**再逐段过一遍（单文件对、拼起来错的情况也能抓到）；
+- `tests/test_frontend.py` 额外锁死「不许再内联回去」：`theme.py` ≤ 260 行 / 20 KB，超出即失败。
+
+**存储统计加了缓存。** 打开设置原本每次都要遍历 4~5 个目录树（1000 篇笔记约 20 ms）。
+现在扫描走 `os.scandir`（Windows 上目录项自带 size，省掉每条一次 stat）并把五个根目录并行，
+实扫降到约 5 ms；结果按「索引文件 + 各根目录的 mtime/size」验指纹缓存 30 秒，
+存一篇笔记立刻失效，重复打开约 0.05 ms。面板上会写清这次是「实扫用时 x ms」还是「沿用 30 秒内的统计」。
+
 
 ## 5. 评测
 

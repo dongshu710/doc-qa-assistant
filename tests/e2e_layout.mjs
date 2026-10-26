@@ -208,6 +208,52 @@ try {
   await page.keyboard.press('Escape');
   check('Esc 关闭设置', !(await page.isVisible('#setPanel')));
 
+  // ---------- 连接智能体（侧栏实体按钮） ----------
+  await page.click('#agentBtn');
+  await page.waitForFunction(
+    () => !document.getElementById('agentPanel').hidden
+      && (document.getElementById('agentPre') || {}).textContent !== '加载中…',
+    null, { timeout: 15000 },
+  ).catch(() => {});
+  check('点「智能体」打开面板', await page.isVisible('#agentPanel'));
+  const agent = await page.evaluate(() => ({
+    pre: (document.getElementById('agentPre') || {}).textContent || '',
+    title: (document.getElementById('agentStateTitle') || {}).textContent || '',
+    home: (document.getElementById('agentHome') || {}).textContent || '',
+    expanded: document.getElementById('agentBtn').getAttribute('aria-expanded'),
+  }));
+  check('面板里是可直接用的 MCP 配置', agent.pre.includes('mcpServers') && agent.pre.includes('agent-notes'),
+    agent.pre.slice(0, 80));
+  check('状态行说明接出了几个工具', /工具|配置/.test(agent.title), agent.title);
+  check('写明两边共用同一个目录', agent.home.length > 3 && !agent.home.includes('…'), agent.home);
+  check('按钮 aria-expanded 同步', agent.expanded === 'true', String(agent.expanded));
+
+  await page.click('#agentInstall');
+  await page.waitForTimeout(500);
+  const jumped = await page.evaluate(() => ({
+    open: !document.getElementById('setPanel').hidden,
+    tab: (document.querySelector('#setTabs .on') || {}).dataset?.tab,
+  }));
+  check('「打开安装分区」直接跳到安装', jumped.open && jumped.tab === 'install', JSON.stringify(jumped));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+
+  // 面板打开时遮罩盖住了侧栏，按钮点不到；用户实际是按 Esc 或点遮罩
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  const shut = await page.evaluate(() => ({
+    panel: document.getElementById('agentPanel').hidden,
+    mask: document.getElementById('agentMask').hidden,
+  }));
+  check('Esc 关闭面板并撤掉遮罩', shut.panel && shut.mask, JSON.stringify(shut));
+
+  await page.click('#agentBtn');
+  await page.waitForTimeout(250);
+  check('关掉后能再打开', await page.isVisible('#agentPanel'));
+  await page.mouse.click(40, 400);  // 点遮罩空白处
+  await page.waitForTimeout(250);
+  check('点遮罩也能关', await page.evaluate(() => document.getElementById('agentPanel').hidden));
+
   // ---------- 移动端 ----------
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(300);

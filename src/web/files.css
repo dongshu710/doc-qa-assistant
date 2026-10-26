@@ -1,0 +1,71 @@
+
+/* ============ 文件抽屉（已存内容） ============ */
+/* 红点是个独立按钮：点只有 7px，点击区做到 18px，鼠标和手指都点得中 */
+.files-dot{position:absolute;top:-5px;right:-5px;width:18px;height:18px;padding:0;border:0;
+  background:none;cursor:pointer;}
+.files-dot::after{content:"";position:absolute;top:50%;left:50%;width:7px;height:7px;
+  margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--bad);
+  box-shadow:0 0 0 2px var(--surface);transition:transform .12s;}
+.files-dot:hover::after{transform:scale(1.4);}
+.files-dot:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:50%;}
+.files-dot[hidden]{display:none;}
+/* 首次进入指一下入口在哪：位置写死在导航栏，提示只做一次，不打扰 */
+.files-tip{position:fixed;z-index:60;max-width:230px;padding:8px 11px;border-radius:9px;
+  background:#1f2228;color:#fff;font-size:12px;line-height:1.65;box-shadow:0 10px 24px -12px rgba(0,0,0,.5);}
+.files-tip::before{content:"";position:absolute;top:-4px;right:26px;width:8px;height:8px;
+  background:#1f2228;transform:rotate(45deg);}
+.files-tip kbd{font-family:var(--mono);font-size:11px;background:rgba(255,255,255,.18);
+  padding:1px 4px;border-radius:4px;}
+/* 独立页面 /files：不套抽屉，直接在正常文档流里两栏 */
+.pf-wrap{max-width:1120px;margin:0 auto;padding:22px 22px 40px;width:100%;}
+.pf-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.pf-head h1{font-size:20px;letter-spacing:-.02em;margin:0;}
+.pf-sub{margin:0;font-size:12.5px;color:var(--muted);}
+.pf-actions{margin-left:auto;display:flex;gap:8px;align-items:center;}
+.pf-total{font-size:12px;color:var(--faint);}
+.pf-grid{display:grid;grid-template-columns:280px minmax(0,1fr);
+  border-top:1px solid var(--line);background:var(--surface);
+  min-height:min(70vh,640px);}
+.pf-list{border-right:1px solid var(--line);padding:8px;overflow:auto;max-height:78vh;}
+.pf-detail{padding:20px 24px;overflow:auto;max-height:78vh;}
+@media (max-width:760px){
+  .pf-grid{grid-template-columns:1fr;}
+  .pf-list{border-right:0;border-bottom:1px solid var(--line);max-height:38vh;}
+  .pf-detail{max-height:none;}
+}
+.files-mask{position:fixed;inset:0;background:rgba(17,18,22,.26);z-index:100;}
+.files-panel{
+  position:fixed;top:0;right:0;bottom:0;width:min(760px,96vw);z-index:101;display:flex;flex-direction:column;
+  background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--sh-3);
+  transform:translateX(14px);opacity:0;transition:transform .18s ease,opacity .18s ease;
+}
+.files-panel.on{transform:none;opacity:1;}
+.files-hd{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line);}
+.files-hd b{font-size:14px;color:var(--ink);}
+.files-total{font-size:12px;color:var(--faint);}
+.files-x{width:28px;height:28px;border:0;background:none;color:var(--faint);font-size:19px;line-height:1;
+  border-radius:8px;cursor:pointer;}
+.files-x:hover{background:var(--surface-2);color:var(--ink);}
+.files-body{flex:1;min-height:0;display:grid;grid-template-columns:232px 1fr;}
+.files-list{overflow:auto;border-right:1px solid var(--line);padding:8px;}
+.file-item{display:block;width:100%;text-align:left;border:0;background:none;padding:9px 10px;
+  border-radius:9px;cursor:pointer;transition:background .12s;}
+.file-item:hover{background:var(--surface-2);}
+.file-item.on{background:var(--brand-soft);}
+.file-item b{display:block;font-size:13px;font-weight:600;color:var(--ink);line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.file-item span{font-size:11.5px;color:var(--faint);}
+.files-detail{overflow:auto;padding:18px 20px;}
+.files-detail h3{margin:0 0 4px;font-size:16px;letter-spacing:-.01em;}
+.files-meta{font-size:12px;color:var(--faint);margin-bottom:16px;}
+.files-sec{margin-bottom:14px;}
+.files-sec h4{margin:0 0 4px;font-size:11.5px;font-weight:600;color:var(--brand);letter-spacing:.04em;}
+.files-sec p{margin:0;font-size:13px;line-height:1.75;white-space:pre-wrap;color:var(--text);}
+.files-empty{margin:0;padding:16px;font-size:12.5px;color:var(--faint);line-height:1.7;}
+.files-note{font-size:12px;color:var(--faint);}
+.files-note.err{color:var(--bad);}
+.files-ft{padding:10px 16px;border-top:1px solid var(--line);min-height:40px;}
+@media (max-width:680px){
+  .files-body{grid-template-columns:1fr;}
+  .files-list{border-right:0;border-bottom:1px solid var(--line);max-height:36vh;}
+}

@@ -1,0 +1,74 @@
+
+<header class="topbar">
+  <div class="tb-title" id="tbTitle">新对话</div>
+  <span class="tb-sub" id="tbSub"></span>
+  <div class="tb-actions">
+    <button class="tb-link" id="exportMd" type="button" title="把当前对话导成 Markdown">导出</button>
+    <button class="tb-link" id="clear" type="button" title="清空当前对话">清空</button>
+  </div>
+</header>
+<main class="ask-main">
+  <section class="hero" id="hero">
+    <div class="hero-inner">
+      <div class="hero-mark" aria-hidden="true">__MARK__</div>
+      <h1>有什么可以帮你？</h1>
+      <p class="hero-sub">只依据知识库作答，每条都给出来源。可以这样问：</p>
+      <div class="ex-cards" id="exCards"></div>
+    </div>
+  </section>
+  <div id="list" class="chat-list" aria-live="polite"></div>
+  <div class="composer" id="composer">
+    <div class="keybar" id="keyBar" hidden>
+      <span>接口已启用 API Key</span>
+      <input id="apiKey" type="password" placeholder="粘贴 Key 后回车" autocomplete="off">
+      <button class="btn sm" id="keySave" type="button">保存</button>
+      <span class="key-note" id="keyNote"></span>
+    </div>
+    <div class="composer-box">
+      <textarea id="q" rows="1" placeholder="给记忆文档发送消息…" autocomplete="off"></textarea>
+      <div class="composer-bar">
+        <button class="chip" id="kbChip" type="button" title="查看知识库版本与文档">
+          <span class="dot"></span><span id="kbChipText">知识库</span></button>
+        <button class="chip warn" id="apiChip" type="button" title="配置模型接口">
+          <span class="dot"></span><span id="apiChipText">离线抽取</span></button>
+        <span class="spacer"></span>
+        <button class="send" id="send" type="button" aria-label="发送">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="composer-hint">
+      <span id="kbdHint">Enter 发送 · Shift + Enter 换行</span>
+      <span id="composerNote"></span>
+    </div>
+  </div>
+  <div class="src-mask" id="srcMask" hidden></div>
+  <aside class="src-drawer" id="srcDrawer" hidden aria-label="引用原文">
+    <div class="src-head">
+      <div><b id="srcTitle">原文</b><div class="src-sub" id="srcSub"></div></div>
+      <button class="src-close" id="srcClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <pre class="src-text" id="srcText"></pre>
+  </aside>
+  <div class="note-mask" id="noteMask" hidden></div>
+  <div class="note-dialog" id="noteDialog" hidden role="dialog" aria-modal="true" aria-labelledby="noteDlgTitle">
+    <div class="note-dlg-head"><b id="noteDlgTitle">存为笔记</b>
+      <button id="noteDlgClose" type="button" aria-label="关闭">×</button></div>
+    <div class="note-dlg-body">
+      <label class="nd-field">标题<input id="ndTitle" maxlength="120" placeholder="一句话说清留下了什么"></label>
+      <div class="nd-row">
+        <label class="nd-field">标签<input id="ndTags" placeholder="逗号分隔，可留空"></label>
+        <label class="nd-field">类型<select id="ndKind">
+          <option value="qa">问答</option><option value="decision">决策</option>
+          <option value="howto">做法</option><option value="reference">资料</option>
+          <option value="log">记录</option></select></label>
+      </div>
+      <pre class="nd-preview" id="ndPreview">整理中…</pre>
+      <div class="nd-hint" id="ndHint">本地规则整理，不联网。</div>
+    </div>
+    <div class="note-dlg-foot">
+      <button class="btn ghost sm" id="ndCancel" type="button">取消</button>
+      <button class="btn sm" id="ndSave" type="button">保存到笔记</button>
+    </div>
+  </div>
+</main>

@@ -1,0 +1,144 @@
+
+<main class="wrap kb-wrap">
+  <div class="kb-head">
+    <div>
+      <h1>知识库</h1>
+    </div>
+    <div class="actions">
+      <span class="pill" id="kbVersion">—</span>
+      <span class="pill" id="kbMeta">加载中…</span>
+      <button class="btn ghost sm" id="reload" type="button">重建索引</button>
+    </div>
+  </div>
+
+  <div class="kb-tabs" role="tablist" aria-label="知识库分区">
+    <button type="button" class="on" data-tab="docs" role="tab" aria-selected="true">文档</button>
+    <button type="button" data-tab="notes" role="tab" aria-selected="false">笔记</button>
+  </div>
+
+  <div id="panelDocs">
+  <div class="kb-layout">
+    <div class="kb-side">
+      <section class="card">
+        <div class="side-title">上传文档</div>
+        <div class="drop" id="drop">
+          <div class="dic">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          </div>
+          <b>拖拽或点击上传</b>
+          <span>.md / .txt / .pdf / .docx · 可多选<br>文本 ≤ 512 KB · PDF/Word ≤ 6 MB</span>
+          <input type="file" id="kbFile" accept=".md,.txt,.pdf,.docx,.xlsx,.csv,.tsv" multiple hidden>
+        </div>
+        <div class="kb-status" id="kbMsg"></div>
+      </section>
+    </div>
+
+    <section class="card kb-list">
+      <div class="approve" id="approvePanel" hidden>
+        <div class="approve-head">
+          <b>待审批变更</b><span class="pill warn" id="apprCount">0</span>
+          <span class="sp"><button class="btn ghost sm" id="apprRefresh" type="button">刷新</button></span>
+        </div>
+        <div id="apprList"></div>
+        <div class="appr-token" id="apprToken" hidden>
+          <span>管理员令牌</span>
+          <input id="adminToken" type="password" placeholder="配置 ADMIN_TOKEN 时需要" autocomplete="off">
+          <button class="btn ghost sm" id="adminSave" type="button">保存</button>
+        </div>
+      </div>
+
+      <div class="kb-toolbar">
+        <div class="search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="kbSearch" placeholder="搜索文档" autocomplete="off">
+        </div>
+        <div class="chips" id="kbFilters">
+          <button type="button" class="on" data-type="all">全部</button>
+          <button type="button" data-type="md">MD</button>
+          <button type="button" data-type="txt">TXT</button>
+          <button type="button" data-type="pdf">PDF</button>
+          <button type="button" data-type="docx">DOCX</button>
+        </div>
+        <select class="kb-sort" id="kbSort">
+          <option value="name">按名称</option>
+          <option value="chunks">按知识块</option>
+          <option value="size">按大小</option>
+          <option value="mtime">按更新时间</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>文件</th><th class="num">知识块</th><th class="num">关键词</th><th class="num">大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
+          <tbody id="kbBody"></tbody>
+        </table>
+      </div>
+      <div class="kb-foot"><span id="kbFoot"></span><span id="kbHint"></span></div>
+    </section>
+  </div>
+  </div>
+
+  <div class="notes-layout" id="panelNotes" hidden>
+    <aside class="card notes-side">
+      <div class="notes-tools">
+        <div class="search">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="noteSearch" placeholder="搜索标题 / 标签" autocomplete="off">
+        </div>
+      </div>
+      <div class="notes-tools">
+        <select class="kb-sort" id="noteKind" aria-label="按类型筛选">
+          <option value="">全部类型</option>
+          <option value="decision">决策</option><option value="howto">做法</option>
+          <option value="reference">资料</option><option value="qa">问答</option>
+          <option value="log">记录</option>
+        </select>
+        <select class="kb-sort" id="noteStatus" aria-label="按状态筛选">
+          <option value="">全部状态</option>
+          <option value="draft">草稿</option><option value="final">定稿</option>
+          <option value="archived">归档</option>
+        </select>
+      </div>
+      <div class="notes-count" id="noteCount">加载中…</div>
+      <div class="notes-list" id="noteList"></div>
+      <div class="notes-actions">
+        <button class="btn ghost sm" id="noteExportHtml" type="button">导出 HTML</button>
+        <button class="btn ghost sm" id="noteExportJson" type="button">JSON</button>
+      </div>
+    </aside>
+
+    <section class="card notes-main">
+      <div class="note-empty" id="noteEmpty"><b>还没有选中笔记</b>左侧选一篇；或在问答页点「存为笔记」，让智能体直接存进来。</div>
+      <div id="noteEditor" hidden>
+        <div class="ne-head">
+          <input id="neTitle" class="ne-title" maxlength="120" aria-label="笔记标题">
+          <span class="pill" id="neMeta">—</span>
+        </div>
+        <div class="ne-row">
+          <label>标签<input id="neTags" placeholder="逗号分隔"></label>
+          <label>类型<select id="neKind">
+            <option value="qa">问答</option><option value="decision">决策</option>
+            <option value="howto">做法</option><option value="reference">资料</option>
+            <option value="log">记录</option></select></label>
+          <label>状态<select id="neStatus">
+            <option value="draft">草稿</option><option value="final">定稿</option>
+            <option value="archived">归档</option></select></label>
+          <label>创建<input id="neCreated" readonly></label>
+        </div>
+        <div class="ne-sections" id="neSections"></div>
+        <div class="ne-foot">
+          <span class="ne-hint" id="neHint"></span>
+          <button class="btn ghost sm" id="neAddSec" type="button">加小节</button>
+          <button class="btn ghost sm" id="neDelete" type="button">删除</button>
+          <button class="btn sm" id="neSave" type="button">保存</button>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div class="kb-mask" id="kbMask" hidden></div>
+  <div class="kb-modal" id="kbModal" hidden>
+    <div class="kb-modal-head"><b id="kbModalTitle">版本</b>
+      <button id="kbModalClose" type="button" aria-label="关闭">×</button></div>
+    <div class="kb-modal-body" id="kbModalBody"></div>
+  </div>
+</main>

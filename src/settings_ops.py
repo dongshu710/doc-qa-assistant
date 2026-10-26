@@ -15,6 +15,7 @@ import shutil
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PROBE_TIMEOUT_S = 15
@@ -60,7 +61,7 @@ def count_notes(home: str) -> int:
     root = Path(home) / "notes"
     if not home or not root.is_dir():
         return 0
-    return sum(1 for _ in root.rglob("*.md"))
+    return _walk(root, suffix=".md")["files"]
 
 
 def copy_notes(src: str, dst: str) -> dict:
@@ -105,12 +106,51 @@ def mcp_config(python: str, project_root: str, notes_home: str) -> dict:
 # ---------- 存储占用 ----------
 # 设置页要回答的是「我的东西有多大、还能放多少」，所以这里只数磁盘上的真实字节，
 # 不去估算「每篇约多少 KB」——估出来的数字一旦和资源管理器对不上，用户就不信了。
+#
+# 性能上有两道处理，因为笔记上千篇时这里要遍历 4~5 个目录树：
+# 1. `os.scandir` 而不是 `Path.rglob`：Windows 上目录项自带 size，省掉每条一次 stat，
+#    而且 `Path` 对象创建本身在千级条目上就不便宜；
+# 2. 结果按「路径 + 变更指纹」缓存 30 秒：打开设置是高频动作（每次点齿轮都算一遍），
+#    但笔记内容不会在 30 秒内变几十次。指纹取索引文件与各根目录的 mtime/size，
+#    存一篇笔记立刻变——所以缓存不会给出过期数字，只是不重复扫。
+
+_STORAGE_TTL_S = 30.0
+# key 是「统计哪几个目录」，value 是 (指纹, 时间戳, 报表)
+_STORAGE_CACHE: dict = {}
+_STORAGE_STATS = {"hits": 0, "misses": 0, "last_ms": 0.0}
+
+
+def _walk(root: Path, suffix: str = "") -> dict:
+    """遍历目录，返回 {bytes, files}。
+
+    只走真实目录、只算普通文件：符号链接不跟（避免环）、权限不足的条目跳过
+    （正在被删的临时文件不该把面板打成 500）。
+    """
+    total = 0
+    files = 0
+    stack = [str(root)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            if suffix and not entry.name.endswith(suffix):
+                                continue
+                            total += entry.stat(follow_symlinks=False).st_size
+                            files += 1
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return {"bytes": total, "files": files}
 
 
 def _size_of(root: Path) -> dict:
     """目录总字节与文件数。权限不足或正在被删的条目直接跳过，不让统计把面板打成 500。"""
-    total = 0
-    files = 0
     if not root.exists():
         return {"bytes": 0, "files": 0}
     if root.is_file():
@@ -118,14 +158,36 @@ def _size_of(root: Path) -> dict:
             return {"bytes": root.stat().st_size, "files": 1}
         except OSError:
             return {"bytes": 0, "files": 0}
-    for path in root.rglob("*"):
+    return _walk(root)
+
+
+def _stamp(*targets) -> tuple:
+    """变更指纹：mtime + size 拼起来。一次 stat 几十微秒，比扫一遍目录便宜三个数量级。"""
+    out = []
+    for target in targets:
         try:
-            if path.is_file():
-                total += path.stat().st_size
-                files += 1
+            stat = os.stat(str(target))
+            out.append(f"{target}|{stat.st_mtime_ns}|{stat.st_size}")
         except OSError:
-            continue
-    return {"bytes": total, "files": files}
+            out.append(f"{target}|-|-")
+    return tuple(out)
+
+
+def invalidate_storage() -> None:
+    """显式作废缓存：清理/迁移这类「刚删完就要看结果」的动作用。"""
+    _STORAGE_CACHE.clear()
+
+
+def _clone(report: dict) -> dict:
+    """返回前把每层 dict 都复制一遍：调用方往里塞字段不该改到缓存里的那份。"""
+    return {key: (dict(value) if isinstance(value, dict) else value)
+            for key, value in report.items()}
+
+
+def storage_stats() -> dict:
+    """命中的计数，给测试和排查用（页面不展示）。"""
+    return dict(_STORAGE_STATS, cached=len(_STORAGE_CACHE))
+
 
 
 def _disk_of(target: Path) -> dict:
@@ -145,28 +207,73 @@ def _disk_of(target: Path) -> dict:
 
 
 def storage_report(notes_home: str, kb_root: str, index_dir: str,
-                   config_path: str, keep_versions: int) -> dict:
+                   config_path: str, keep_versions: int, fresh: bool = False) -> dict:
+    """一次统计：笔记 / 索引 / 知识库 / 配置 / 向量索引各自的真实占用。
+
+    `fresh=True` 跳过缓存（清理前后要拿准数，不能拿 30 秒前的）。
+    """
     home = Path(notes_home).expanduser() if notes_home else Path.home() / "agent-notes"
-    notes = _size_of(home / "notes")
-    index = _size_of(home / "index")
-    kb = _size_of(Path(kb_root)) if kb_root else {"bytes": 0, "files": 0}
-    config = _size_of(Path(config_path)) if config_path else {"bytes": 0, "files": 0}
+    kb = Path(kb_root) if kb_root else None
+    key = (str(home), kb_root or "", index_dir or "", config_path or "", int(keep_versions or 0))
+    stamp = _stamp(
+        home / "notes",
+        home / "index" / "notes.jsonl",
+        kb or home / "-",
+        (kb / "versions") if kb else home / "-",
+        config_path or home / "-",
+    )
+    now = time.monotonic()
+    hit = _STORAGE_CACHE.get(key)
+    if not fresh and hit and hit[0] == stamp and now - hit[1] < _STORAGE_TTL_S:
+        _STORAGE_STATS["hits"] += 1
+        report = _clone(hit[2])
+        report["cached"] = True
+        report["took_ms"] = 0
+        return report
+
+    _STORAGE_STATS["misses"] += 1
+    started = time.perf_counter()
+
+    # 五个根目录互不相干，并行扫：Windows 上单次 stat 被杀毒软件拖到 8~9 ms 级，
+    # 串行扫四个树就是把等待时间加起来。
+    targets = {"notes": home / "notes", "index": home / "index"}
+    if kb:
+        targets["kb"] = kb
+    if config_path:
+        targets["config"] = Path(config_path)
+    if index_dir:
+        targets["embedding"] = Path(index_dir)
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {name: pool.submit(_size_of, path) for name, path in targets.items()}
+        for name, future in futures.items():
+            try:
+                results[name] = future.result()
+            except Exception:  # 统计失败不该让整块面板 500
+                results[name] = {"bytes": 0, "files": 0}
+
     versions = 0
-    if kb_root:
+    if kb:
         try:
-            versions = sum(1 for name in os.listdir(Path(kb_root) / "versions")
-                           if name.startswith("v"))
+            versions = sum(1 for name in os.listdir(kb / "versions") if name.startswith("v"))
         except OSError:
             versions = 0
-    return {
-        "notes": {**notes, "path": str(home / "notes")},
-        "index": {**index, "path": str(home / "index")},
-        "kb": {**kb, "path": str(kb_root or ""), "versions": versions},
-        "config": {**config, "path": str(config_path or "")},
-        "embedding": _size_of(Path(index_dir)) if index_dir else {"bytes": 0, "files": 0},
+
+    report = {
+        "notes": {**results.get("notes", {"bytes": 0, "files": 0}), "path": str(home / "notes")},
+        "index": {**results.get("index", {"bytes": 0, "files": 0}), "path": str(home / "index")},
+        "kb": {**results.get("kb", {"bytes": 0, "files": 0}), "path": str(kb_root or ""),
+               "versions": versions},
+        "config": {**results.get("config", {"bytes": 0, "files": 0}), "path": str(config_path or "")},
+        "embedding": results.get("embedding", {"bytes": 0, "files": 0}),
         "disk": _disk_of(home),
         "keep_versions": int(keep_versions or 0),
+        "cached": False,
+        "took_ms": int((time.perf_counter() - started) * 1000),
     }
+    _STORAGE_CACHE[key] = (stamp, now, report)
+    return _clone(report)
+
 
 
 def clear_index(home: str) -> int:
