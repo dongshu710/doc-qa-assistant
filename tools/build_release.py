@@ -39,6 +39,8 @@ INCLUDE_FILES = (
     ".env.example",
     "start.bat",
     "start.sh",
+    "start-desktop.bat",
+    "start-desktop.sh",
 )
 
 # 插件包只带笔记：MCP stdio 只需要 src/notes + 版本号
@@ -127,8 +129,8 @@ def write_zip(out: Path, root_name: str, payload: list[Path],
                 arcname = f"{root_name}/{path.relative_to(base).as_posix()}"
             info = zipfile.ZipInfo.from_file(path, arcname)
             info.compress_type = zipfile.ZIP_DEFLATED
-            # 让解压后的 start.sh 直接可执行（zip 保存 Unix 权限位）
-            if path.name == "start.sh":
+            # 让解压后的启动脚本直接可执行（zip 保存 Unix 权限位）
+            if path.name.endswith(".sh"):
                 info.external_attr = 0o755 << 16
             zf.writestr(info, path.read_bytes())
     return out

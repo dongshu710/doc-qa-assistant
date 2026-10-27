@@ -68,6 +68,12 @@ jobs:
       - name: 关键词评测（应直出 / 不应直出）
         run: python tests/eval_keyword.py
 
+      # 质量门禁：对抗用例必须全过、总通过率 ≥90%，否则脚本非零退出。
+      # 不配 Key 也能跑（离线抽取），所以能作为每次提交的硬门禁；
+      # 有 Key 的真实模型评测另在发布前手工跑，避免 CI 烧钱。
+      - name: 问答质量门禁（离线抽取）
+        run: python tests/eval_run.py --out report.json
+
       - name: 多轮会话上下文
         run: python tests/test_session.py
 
@@ -166,6 +172,14 @@ jobs:
           python tests/test_storage.py
           python tests/test_skill.py
           python tests/test_update.py
+
+      # 来源校验、注入隔离、引用支持度、备份恢复、桌面客户端接口
+      - name: 安全与质量加固
+        run: |
+          python tests/test_security.py
+          python tests/test_quality.py
+          python tests/test_backup.py
+          python tests/test_client_api.py
 
       - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'

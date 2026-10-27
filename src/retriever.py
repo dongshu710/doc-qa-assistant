@@ -269,12 +269,14 @@ class EmbeddingRetriever:
     """
 
     def __init__(self, chunks, provider, index_dir: str, store_kind: str = "auto",
-                 recall_k: int = 48, nlist: int = 64, nprobe: int = 8):
+                 recall_k: int = 48, nlist: int = 64, nprobe: int = 8,
+                 build_budget_s: float | None = None):
         self.chunks = chunks
         self.provider = provider
         self.bm25 = BM25(chunks)
         self.recall_k = max(24, recall_k)
-        self.index = EmbeddingIndex(chunks, provider, index_dir, store_kind, nlist, nprobe)
+        self.index = EmbeddingIndex(chunks, provider, index_dir, store_kind, nlist, nprobe,
+                                    build_budget_s=build_budget_s)
         try:
             self.index_status = self.index.ensure()
         except EmbeddingError:
@@ -412,5 +414,6 @@ def build_retriever(chunks, mode: str = "vector", rrf_k: int = 60,
             recall_k=getattr(settings, "embedding_recall_k", 48),
             nlist=getattr(settings, "vector_ivf_nlist", 64),
             nprobe=getattr(settings, "vector_ivf_nprobe", 8),
+            build_budget_s=getattr(settings, "embedding_build_budget_s", 600.0),
         )
     return VectorRerankRetriever(chunks)

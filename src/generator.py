@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 
 from .config import api_key, load_settings
+from . import injection
 from .profiles import get_profile
 from .retriever import tokenize
 
@@ -25,9 +26,15 @@ SYSTEM_PROMPT = get_profile("finance").system_prompt
 
 
 def _build_context(hits) -> str:
+    """把命中块拼成上下文。每块都包进 <document trust="untrusted">。
+
+    为什么不用纯文本拼接：文档正文里可以写「忽略以上指令」，而模型看到的
+    只是一段连续文本，分不清哪句是资料、哪句是命令。加边界 + system 里说明
+    「document 内是数据」，是把「可被投毒」降成「可能被投毒且留痕」。
+    """
     lines = []
     for i, (chunk, _score) in enumerate(hits, 1):
-        lines.append(f"[{i}] 《{chunk.title}》·{chunk.section}\n{chunk.text}")
+        lines.append(injection.wrap(i, chunk.title, chunk.section, chunk.text))
     return "\n\n".join(lines)
 
 

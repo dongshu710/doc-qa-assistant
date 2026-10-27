@@ -86,6 +86,9 @@ class Settings:
     embedding_backoff_base_s: float = 0.5
     embedding_backoff_max_s: float = 4.0
     embedding_wall_clock_s: float = 30.0
+    # 建库与单次查询是两种负载：建库要跑完全部批次，30 秒必然不够，
+    # 分开配置才不会「一开 embedding 就超时、静默退回 n-gram」
+    embedding_build_budget_s: float = 600.0
     embedding_index_dir: str = "data/index"
     embedding_recall_k: int = 48
     # 向量存储
@@ -94,6 +97,8 @@ class Settings:
     vector_ivf_nprobe: int = 8
     # 输入
     max_input_chars: int = 500
+    # 引用校验：strict 时「编号合法但内容不支持」的答案会降级为抽取式
+    citation_strict: bool = False
     # 关键词直出：结构化条目命中后在本地输出，不调用任何 API
     keyword_mode: str = "on"            # on | off
     keyword_llm: str = "auto"           # auto=有 Key 才做整理 | off | on
@@ -165,6 +170,8 @@ def load_settings() -> Settings:
         query_expansion=expansion,
         profile=(_first_env("APP_PROFILE", default="finance") or "finance").strip().lower(),
         max_input_chars=int(_first_env("MAX_INPUT_CHARS", default="500")),
+        citation_strict=(_first_env("CITATION_STRICT", default="off") or "off").strip().lower()
+        in ("on", "1", "true", "yes"),
         keyword_mode=keyword_mode,
         keyword_llm=keyword_llm,
         keyword_index=_first_env("KEYWORD_INDEX", default="data/index/keywords.json"),
@@ -209,6 +216,7 @@ def load_settings() -> Settings:
         embedding_backoff_base_s=float(_first_env("EMBEDDING_BACKOFF_BASE_S", default="0.5")),
         embedding_backoff_max_s=float(_first_env("EMBEDDING_BACKOFF_MAX_S", default="4")),
         embedding_wall_clock_s=float(_first_env("EMBEDDING_WALL_CLOCK_S", default="30")),
+        embedding_build_budget_s=float(_first_env("EMBEDDING_BUILD_BUDGET_S", default="600")),
         embedding_index_dir=_first_env("EMBEDDING_INDEX_DIR", default="data/index"),
         embedding_recall_k=int(_first_env("EMBEDDING_RECALL_K", default="48")),
         vector_store=(_first_env("VECTOR_STORE", default="auto") or "auto").strip().lower(),

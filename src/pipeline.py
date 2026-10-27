@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .chunking import load_corpus
+from . import citations
 from .config import api_key, load_settings
 from .embeddings import EmbeddingError, EmbeddingUnavailable
 from .generator import build_messages, extractive_answer, generate, repair_citation, stream_chat
@@ -463,6 +464,25 @@ class RAGPipeline:
 
         result["citations"] = [self._cite(hits[n - 1][0], n) for n in valid]
         result["citation_coverage"] = round(len(valid) / len(cited), 3) if cited else 0.0
+
+        # ---------- 引用支持度（编号合法 ≠ 引对了） ----------
+        support = citations.verify(result["answer"], hits)
+        if (self.settings.citation_strict and result["mode"] == "llm"
+                and support["checked"] and support["rate"] < 1.0):
+            # 严格模式：宁可给可追溯的抽取式答案，也不交付「编号对、内容不对」的回答
+            fallback = extractive_answer(context_query, hits)
+            result["answer"] = fallback
+            result["mode"] = "extractive_fallback"
+            result["degraded"] = True
+            result["degrade_reason"] = "citation_unsupported"
+            cited = [int(x) for x in re.findall(r"\[(\d+)\]", fallback)]
+            valid = sorted({n for n in cited if 1 <= n <= len(hits)})
+            result["citations"] = [self._cite(hits[n - 1][0], n) for n in valid]
+            result["citation_coverage"] = round(len(valid) / len(cited), 3) if cited else 0.0
+            support = citations.verify(fallback, hits)
+        result["citation_support"] = support["items"]
+        result["citation_support_checked"] = support["checked"]
+        result["citation_support_rate"] = support["rate"]
         result["retrieved"] = [
             {"title": c.title, "section": c.section, "doc_id": c.doc_id,
              "chunk_index": self._chunk_pos.get(id(c), -1), "score": round(s, 3)}

@@ -69,7 +69,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, security, settings_ops, suggest
+from . import appconfig, backup, casegen, evaluator, ingest, jsonl, kbstore, security, settings_ops, suggest
 from . import update as update_mod
 from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
@@ -350,6 +350,31 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             "config_backup": view.get("config_backup") or "",
             "updated_at": view["updated_at"],
         }
+
+    def _runtime_warnings() -> list[str]:
+        """把「能跑但已经降级」的状态汇总成一句句人话，供 /api/health 与页面提示。
+
+        为什么需要：Redis 抖动退回内存、embedding 建库失败退回 n-gram，
+        这些都不影响出答案，所以最容易被忽略——而它们直接改变答案质量与成本口径。
+        """
+        out: list[str] = []
+        try:
+            status = guards.status()
+        except Exception:  # noqa: BLE001 —— 健康检查本身不能 500
+            return out
+        for name, hits in (status.get("fallbacks") or {}).items():
+            if hits:
+                out.append(f"{name} 已退回进程内状态（累计 {hits} 次），多实例下不再一致")
+        if status.get("redis_error"):
+            out.append(f"Redis 不可用：{status['redis_error']}")
+        detail = pipe.retrieval_detail or {}
+        if detail.get("fallback_error"):
+            out.append(f"检索未按配置运行：{detail['fallback_error']}")
+        if detail.get("degraded"):
+            out.append("embedding 最近一次调用失败，当前为词法兜底")
+        if note_ref["service"] is None:
+            out.append(f"笔记存储不可用：{note_ref['error']}")
+        return out
 
     def _setup_state() -> dict:
         """首次运行引导的状态：没建过存储区就要提示，建过就不再打扰。"""
@@ -865,6 +890,50 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 return
             self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
 
+        def _storage(self, method: str, path: str, query: dict, body: dict | None) -> None:
+            """存储区整库备份 / 恢复。
+
+            和 `/api/files/raw` 的区别：那是「改一个文件」，这里是「回到某个时间点」。
+            恢复前会自动再做一份备份，避免「恢复本身变成误操作」。
+            """
+            cors = self._cors_headers()
+            home = self._home()
+            if not home:
+                self._json({"ok": False, "error": "storage_unavailable",
+                            "message": "存储区不可用"}, 503, cors)
+                return
+            action = path.rstrip("/").rsplit("/", 1)[-1]
+            try:
+                if method == "GET" and action == "backups":
+                    self._json({"ok": True, "items": backup.list_backups(home)}, 200, cors)
+                    return
+                if method == "POST" and action == "backup":
+                    result = backup.create(home, note=str((body or {}).get("note") or ""))
+                    guards.audit.write("storage.backup", client=self._client(),
+                                       name=result["name"], files=result["files"],
+                                       bytes=result["bytes"])
+                    self._json({"ok": True, **result}, 200, cors)
+                    return
+                if method == "POST" and action == "restore":
+                    data = body or {}
+                    result = backup.restore(home, str(data.get("name") or ""),
+                                            force=bool(data.get("force")))
+                    settings_ops.invalidate_storage()
+                    guards.audit.write("storage.restore", client=self._client(),
+                                       source=result["source"], restored=result["restored"],
+                                       pre_backup=result.get("pre_backup"))
+                    self._json({"ok": True, **result}, 200, cors)
+                    return
+            except backup.BackupError as exc:
+                self._json({"ok": False, "error": "backup_error", "message": str(exc)},
+                           exc.status, cors)
+                return
+            except OSError as exc:
+                self._json({"ok": False, "error": "storage_error",
+                            "message": f"存储区读写失败：{exc}"}, 500, cors)
+                return
+            self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
+
         def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:
             """设置面板的全部后端动作：读、改、测连接、导出/写入插件配置、打开目录。
 
@@ -1130,6 +1199,11 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if result.get("degraded"):
                 metrics.inc("rag_retrieval_degraded_total",
                             {"reason": str(result.get("degrade_reason") or "unknown")})
+            # 引用支持度：编号合法但内容对不上时单独计数，别和「无出处」混在一起
+            bad_citations = sum(1 for item in (result.get("citation_support") or [])
+                                if not item.get("supported"))
+            if bad_citations:
+                metrics.inc("rag_citation_unsupported_total", value=bad_citations)
 
             guards.audit.write(
                 "ask", client=pre["client"], query=pre["query"][:200],
@@ -1140,6 +1214,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
                 latency_ms=result.get("latency_ms"), path=answer_path,
                 api_called=bool(result.get("api_called")),
+                citation_support_rate=result.get("citation_support_rate"),
                 keyword_terms=result.get("keyword_terms"),
                 keyword_gate=result.get("keyword_gate"),
                 keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
@@ -1250,6 +1325,9 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if path.startswith("/api/files/"):
                 self._files("GET", path, qs, None)
                 return
+            if path.startswith("/api/storage/"):
+                self._storage("GET", path, qs, None)
+                return
             if path == "/api/settings" or path.startswith("/api/settings/"):
                 self._settings("GET", path, qs, None)
                 return
@@ -1305,6 +1383,12 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     "guards": guards.status(),
                     "index": index_payload(),
                     "auth": api_keys.describe(),
+                    "runtime": {
+                        # 明确告诉使用者：这是单实例内存态，不是集群
+                        "mode": "single-instance",
+                        "state_backend": guards.backend,
+                        "warnings": _runtime_warnings(),
+                    },
                 })
             elif path == "/metrics":
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
@@ -1481,6 +1565,13 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
             if self._guard("POST", path):
+                return
+            if path.startswith("/api/storage/"):
+                body, err = self._read_note_body()
+                if err:
+                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                    return
+                self._storage("POST", path, parse_qs(urlparse(self.path).query), body)
                 return
             if path == "/api/settings" or path.startswith("/api/settings/"):
                 body, err = self._read_note_body()

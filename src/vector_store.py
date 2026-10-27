@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -219,6 +220,23 @@ def _chunk_key(chunk) -> str:
     return f"{chunk.doc_id}#{chunk.chunk_index}"
 
 
+def _embed_with_budget(provider, texts: list[str], budget_s: float | None):
+    """调用 provider.embed，兼容没有 `budget_s` 参数的旧实现。
+
+    为什么不在调用点用 try/except TypeError 兜底：那会把 embed 内部真实的 TypeError
+    也当成「签名不匹配」，问题会被吞掉。这里先看签名，再决定怎么调。
+    """
+    if budget_s is None:
+        return provider.embed(texts)
+    try:
+        params = inspect.signature(provider.embed).parameters
+    except (TypeError, ValueError):
+        return provider.embed(texts)
+    if "budget_s" in params:
+        return provider.embed(texts, budget_s=budget_s)
+    return provider.embed(texts)
+
+
 def corpus_fingerprint(chunks, model: str) -> str:
     digest = hashlib.sha256()
     digest.update(f"v{INDEX_FORMAT}|{model}".encode("utf-8"))
@@ -234,7 +252,7 @@ class EmbeddingIndex:
     """把语料、provider 和向量存储绑在一起，负责构建、加载与检索。"""
 
     def __init__(self, chunks, provider, index_dir: str, store_kind: str = "auto",
-                 nlist: int = 64, nprobe: int = 8):
+                 nlist: int = 64, nprobe: int = 8, build_budget_s: float | None = None):
         if not chunks:
             raise ValueError("语料为空，无法建索引")
         self.chunks = chunks
@@ -243,6 +261,7 @@ class EmbeddingIndex:
         self.store_kind = (store_kind or "auto").strip().lower()
         self.nlist = nlist
         self.nprobe = nprobe
+        self.build_budget_s = build_budget_s
         self.dim = int(getattr(provider, "dim", 0) or 0)
         self.store = None
         self.manifest: dict = {}
@@ -321,14 +340,14 @@ class EmbeddingIndex:
         # 先探测维度，保证缓存键稳定：否则首轮用 dim=0 写缓存，下轮 dim=256 读不到，
         # 每次重建都会重新付一次 embedding 费用。
         if not self.dim:
-            probe = self.provider.embed(["dimension-probe"])
+            probe = _embed_with_budget(self.provider, ["dimension-probe"], self.build_budget_s)
             self.dim = probe.dim
         cache = EmbeddingCache(os.path.join(self.index_dir, "embeddings.cache.jsonl"),
                                self.provider.model, self.dim)
         vectors, missing = cache.get_many(texts)
         if missing:
             batch = [texts[i] for i in missing]
-            result = self.provider.embed(batch)
+            result = _embed_with_budget(self.provider, batch, self.build_budget_s)
             for pos, vec in zip(missing, result.vectors):
                 vectors[pos] = vec
             cache.put_many(batch, result.vectors)

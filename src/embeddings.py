@@ -204,7 +204,13 @@ class OpenAIEmbeddingProvider:
             "total_tokens": int(usage.get("total_tokens") or usage.get("prompt_tokens") or 0),
         }
 
-    def embed(self, texts: list[str]) -> EmbeddingResult:
+    def embed(self, texts: list[str], budget_s: float | None = None) -> EmbeddingResult:
+        """把一批文本转成向量。
+
+        `budget_s` 用于区分两种负载：单次查询用默认的 `wall_clock_s`（30s），
+        建库时由调用方传入更长的预算（默认 600s）。不区分的话，语料一多就必然超时，
+        然后静默退回词法检索——用户以为开了 embedding，其实一直在跑 n-gram。
+        """
         if not self.configured:
             raise EmbeddingUnavailable("EMBEDDING_BASE_URL / EMBEDDING_MODEL 未配置")
         cleaned = [(t or "").replace("\x00", " ").strip()[: self.max_chars] for t in texts]
@@ -212,7 +218,7 @@ class OpenAIEmbeddingProvider:
             return EmbeddingResult([], self.model, self.dim, {}, 0.0)
 
         started = time.time()
-        deadline = started + self.wall_clock_s
+        deadline = started + max(self.timeout_s, float(budget_s or self.wall_clock_s))
         vectors: list[list[float]] = []
         usage = {"prompt_tokens": 0, "total_tokens": 0}
         for i in range(0, len(cleaned), self.batch_size):

@@ -257,6 +257,50 @@ python -m src.cli
 > `set PYTHONPATH=<项目根目录>`（Windows CMD）
 > 或 `export PYTHONPATH="$PWD"`（Git Bash / macOS / Linux）。
 
+### 方式 C：桌面客户端（不装浏览器也能用）
+
+Web 页面负责「看长文档 + 知识库审批」，日常的「问一句、存成笔记」用桌面窗口更省事。
+桌面端用的是同一套本地接口，数据仍在存储区，关掉窗口不丢东西。
+
+```bash
+# 先起服务（若已在运行可跳过）
+python -m src.server --port 8000
+
+# 另开一个终端
+python -m src.desktop                    # 默认连 http://127.0.0.1:8000
+python -m src.desktop --base http://127.0.0.1:8011 --key <API Key>
+```
+
+Windows 双击 `start-desktop.bat`，macOS / Linux 执行 `sh start-desktop.sh`：
+脚本会先探一下本机服务，没起就临时起一个，再打开窗口。
+
+四个页签：
+
+| 页签 | 能做什么 |
+|---|---|
+| 问答 | 提问（Ctrl+Enter）、看引用与降级原因、「存为笔记」 |
+| 记忆 | 笔记列表、直接编辑原 Markdown、保存带 `base_rev` 冲突保护、交给系统编辑器 |
+| 会话 | 历史问答只读浏览（与 Web 侧同一份 `threads/`） |
+| 存储 | 存储区路径与占用、打开目录、立即备份、选一个备份恢复 |
+
+只依赖标准库 Tkinter：Debian/Ubuntu 需要 `sudo apt install python3-tk`，Windows / macOS 官方 Python 自带。
+知识库上传与版本审批**故意留在 Web 页**——那是有审核流程、需要看 diff 的操作，不适合塞进小窗口。
+
+**没有图形环境也能用**（服务器、容器、精简版 Python 常常不带 Tkinter）：同一套接口有终端客户端。
+
+```bash
+python -m src.client status
+python -m src.client ask "稳盈系列的起购金额是多少" --save
+python -m src.client notes --limit 20
+python -m src.client show <note_id>
+python -m src.client cat notes/2026/10/xxx.md
+python -m src.client write notes/2026/10/xxx.md --content "# 改过"
+python -m src.client threads
+python -m src.client backup --note "手动备份"
+python -m src.client backups
+python -m src.client restore backup-20261027-221500.zip --force
+```
+
 ## 4. 模型接入（任意 OpenAI 兼容端点）
 
 **两种改法，优先级从高到低：界面 > 环境变量 > 代码默认。**
@@ -297,6 +341,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `RETRIEVAL` | `vector` | `embedding`（真向量）/ `vector`（n-gram 兜底）/ `bm25` / `hybrid` |
 | `TOP_K` | `4` | 召回条数 |
 | `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
+| `CITATION_STRICT` | `off` | `on` 时「编号合法但内容对不上」的答案降级为抽取式，见 `citation_support_rate` |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `KEYWORD_MODE` | `on` | `on` 命中结构化条目即本地直出；`off` 全部走检索 |
 | `KEYWORD_LLM` | `auto` | `auto` 有 Key 才做摘要/同义词整理；`off` 纯本地；`on` 强制尝试 |
@@ -570,6 +615,7 @@ EMBEDDING_DIM=0                    # 0=自动探测；已知维度时填上可�
 EMBEDDING_BATCH=16
 EMBEDDING_TIMEOUT_S=8
 EMBEDDING_MAX_RETRIES=2
+EMBEDDING_BUILD_BUDGET_S=600        # 建库预算，与单次查询的 30s 分开
 EMBEDDING_INDEX_DIR=data/index
 VECTOR_STORE=auto                  # auto | pure | numpy | faiss | faiss-ivf
 VECTOR_IVF_NLIST=64

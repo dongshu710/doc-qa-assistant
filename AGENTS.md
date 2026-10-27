@@ -78,6 +78,34 @@ DELETE /api/threads/{id}
 ```
 
 会话存在 `<存储区>/threads/<id>.json`，和笔记同一个根目录。
+
+### 备份与恢复（v1.20.0）
+
+```bash
+GET  /api/storage/backups                 # 列表
+POST /api/storage/backup {note}           # 打包 notes/threads/exports → exports/backups/*.zip
+POST /api/storage/restore {name, force}   # 覆盖前会再自动备份一份；force 缺省时遇已存在返回 409
+```
+
+### 不依赖浏览器的客户端（v1.20.0）
+
+两个入口，共用同一套接口：
+
+```bash
+python -m src.client status                 # 终端客户端，任何 Python 都能跑
+python -m src.desktop                       # 桌面窗口（需要标准库 Tkinter）
+```
+
+终端客户端还支持 `ask --save` / `notes` / `show` / `cat` / `write` / `threads` / `backup` / `restore`。
+接口层在 `src/client_api.py`，脚本里可以直接复用：
+
+```python
+from src.client_api import Client
+c = Client("http://127.0.0.1:8000")
+print(c.ask("稳盈系列起购金额是多少")["answer"])
+```
+
+客户端会自动绕过系统代理访问 127.0.0.1（否则代理会返回 502）。
 **它记的是过程，不是结论**：值得留下的结论仍应通过 `save_conversation` 写成笔记。
 
 ## 三、命令行（只能执行命令的智能体）
