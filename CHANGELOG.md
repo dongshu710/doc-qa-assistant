@@ -2,6 +2,49 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.19.1] - 2026-10-27
+
+安全修复版。起因是一次对抗式审查：单机部署下最危险的不是「被别人连上」，
+而是**浏览器里的任意网页都能向 `127.0.0.1` 发请求**，而对端 IP 就是本机。
+审查报告见 `docs/AUDIT-2026-10-27.md`。
+
+### 修复
+
+- **跨站请求可改配置（高危）**：以前 `POST /api/settings` 只看「对端是不是 127.0.0.1」，
+  而浏览器发起请求时对端天然是 127.0.0.1，且从不校验 `Content-Type`。
+  一个 `fetch(..., {mode:'no-cors', headers:{'Content-Type':'text/plain'}})` 就能把 `base_url`
+  改到攻击者端点，之后每次提问都会把 API Key 与文档正文发出去。
+  现在所有请求统一过 `_guard(method, path)`：`Host` 必须是回环；写请求必须是 `application/json`；
+  `Origin` / `Sec-Fetch-Site` 必须同源；浏览器来源还必须带 `X-Jiyi-Client: web`
+  （自定义头跨站无法伪造，预检会被 CORS 挡下）。前端由 `util.js` 统一包装 `fetch` 自动加头。
+- **DNS rebinding 可读走全库**：所有请求（含 GET）的 `Host` 必须是回环地址或 `ALLOWED_HOSTS` 白名单。
+- **知识库写接口零鉴权**：`/api/knowledge/upload|upload_pdf|upload_file|delete` 以前既无 Key 也无 admin 校验，
+  可被投毒或删库。现在统一走写前置闸门；配置 `API_KEYS` 后与其它写接口一致要求 Key（设置接口豁免，保留改回来的路）。
+- **乐观锁其实是可选的**：`PUT /api/files/raw` 不带 `base_rev` 时会直接覆盖。
+  现在覆盖已有文件必须带 rev（缺失 `428`），新建走 `create:true`（已存在 `409`），带旧 rev 写已删除文件返回 `409`。
+- **密钥文件权限**：`data/app.json` 写盘后按当前用户收紧（POSIX `0600`；Windows `icacls /inheritance:r`），失败不阻断保存。
+
+### 加固
+
+- **检索元数据改为返回值**：`EmbeddingRetriever.search_ex()` 返回 `(hits, meta)`，
+  `degraded / error / tokens` 跟着本次调用走。以前读写 `last_error` / `last_usage` 这两个实例字段，
+  并发时 A 的 embedding 失败会记到 B 的 `degraded` 上，token 也算错调用方。
+- **并发上限**：`BoundedHTTPServer` 最多 64 个并发连接，超出在 accept 阶段排队；避免慢连接把线程打满。
+- **SSE 心跳与总时长**：连接后立刻发 `: connected`，空闲每 15s 发 `: ping`，单次最长 300s；
+  生成放到独立线程，主线程负责心跳（检索慢或模型排队时浏览器不会以为连接死了）。
+- 拒绝原因写入审计（`write.rejected` / `request.rejected`）并计入 `rag_write_rejected_total`、`rag_host_rejected_total`。
+
+### 文档
+
+- `docs/SECURITY.md` 重写「密钥处理」与新增「请求来源校验」，并订正「Key 只从环境变量读取」的过时说法。
+- README 增加 `ALLOWED_HOSTS`、来源校验与 428/409 语义；`docs/AUDIT-2026-10-27.md` 收录完整审查与复现命令。
+
+### 测试
+
+- 新增 `tests/test_security.py`（45 项）：Host / Origin / Sec-Fetch-Site / 站内标记 / Content-Type 判定，
+  以及真起服务后「跨站改设置 403、配置没被改」「同源缺标记 403」「跨站投毒 403、文件没落盘」「无 rev 覆盖 428」。
+- 全量 43 个 Python 脚本与 4 组 Playwright e2e 通过。
+
 ## [1.19.0] - 2026-10-26
 
 产品方向收敛：**可接入不同智能体的文档记忆应用**。内容不再依赖浏览器，

@@ -315,6 +315,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `CANARY_PERCENT` | `0` | 灰度比例（0-100） |
 | `CANARY_MODEL` | 空 | 灰度模型名 |
 | `ADMIN_TOKEN` | 空 | 设置后 `/api/admin/*`、`/api/kb/approve|reject|rollback_doc` 需带 `X-Admin-Token`；为空仅本机可调用 |
+| `ALLOWED_HOSTS` | 空 | 额外允许的 `Host`（逗号分隔）。默认只认回环地址，局域网访问（如 `192.168.1.9:8011`）必须显式加进来，否则 403 |
 | `REDIS_URL` | 空 | 多实例共享限流/幂等/成本状态；为空用进程内状态 |
 | `KB_STORE` | `on` | 启用版本库（`off` 退回单目录模式，仅测试/批处理用） |
 | `KB_APPROVAL` | `auto` | `auto` 本机管理员直通 / `on` 全部审批 / `off` 全部直通 |
@@ -400,10 +401,14 @@ API：
 | 成本上限 | 按天累计 token，超过 `DAILY_TOKEN_BUDGET` 后跳过模型调用、降级为抽取式（`budget_exceeded`） |
 | 灰度 | 按 `IP + query` 哈希稳定分流到 `CANARY_MODEL`，比例可在运行时调整 |
 | 回滚 | 每次配置变更保留快照，`POST /api/admin/rollback` 恢复上一版 |
+| 来源校验 | 所有请求 `Host` 只认回环/白名单（挡 DNS rebinding）；写请求必须 `application/json`，`Origin`/`Sec-Fetch-Site` 同源，浏览器来源还要带 `X-Jiyi-Client: web`（挡 CSRF）；否则 `403`/`415` |
+| 并发上限 | 最多 64 个并发连接，超出在 accept 阶段排队；SSE 每 15s 心跳、单次最长 300s |
 
 加上已有的 `trace.jsonl` / `/api/metrics` 观测与 `/api/health` 健康检查，共八项生产控制。
 
-> 默认只绑定 `127.0.0.1`。已内置按 IP 限流与 `ADMIN_TOKEN` 管理接口保护；对外部署仍建议由网关统一做鉴权、HTTPS 与访问日志。模型 Key 需自备，未配置时自动走离线抽取。
+> 默认只绑定 `127.0.0.1`。**「绑本机」不等于安全**：浏览器里的任意页面都能向 `127.0.0.1` 发请求，
+> 且对端 IP 就是本机。所以 v1.19.1 起写操作必须通过来源校验（`src/security.py`），
+> 不能只靠 IP 判断「是不是自己人」。要在局域网访问，务必同时设置 `ALLOWED_HOSTS` 与 `API_KEYS`。
 
 ## 4.2 换成你自己的文档
 
@@ -1246,9 +1251,13 @@ POST /api/settings/setup   -> 建目录 + 写 notes.home + setup.done=true
 
 ```
 GET  /api/files/raw?path=notes/2026/10/xxx.md   -> {content, rev, size}
-PUT  /api/files/raw {path, content, base_rev}   -> 409 表示这段时间被别处改过
+PUT  /api/files/raw {path, content, base_rev}   -> 428 缺 rev / 409 被别处改过
+PUT  /api/files/raw {path, content, create:true} -> 新建；已存在返回 409
 POST /api/files/open {path}                     -> 交给系统默认编辑器
 ```
+
+> 覆盖已有文件**必须**带 `base_rev`（先 GET 拿一次）。v1.19.0 之前留了「不传就覆盖」的口子，
+> 结果是漏传参数就能静默丢改动——现在缺 rev 返回 `428`，写已删除的文件返回 `409`。
 
 路径先 `resolve` 再比前缀，出不了存储区；只允许文本后缀；单文件 2 MB 上限。
 页面上「编辑原文」是行内 textarea + 保存，「用系统编辑器打开」直接调系统程序。

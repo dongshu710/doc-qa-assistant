@@ -12,11 +12,34 @@
 ## 密钥处理
 
 - 源码与仓库中**不含任何密钥**；`.env` 已在 `.gitignore` 中。
-- Key 只从环境变量读取：`LLM_API_KEY` 优先，兼容 `DEEPSEEK_API_KEY`。
-- 日志与 trace 不记录请求头、Key、完整系统提示。
+- Key 从两处读取：界面里填的落 `data/app.json`（该文件已 gitignore，写盘后按当前用户收紧权限：
+  POSIX `0600`，Windows 去掉继承只授权当前用户）；也可以继续用环境变量 `LLM_API_KEY`（兼容 `DEEPSEEK_API_KEY`）。
+  界面配置优先于环境变量。
+- 日志与 trace 不记录请求头、Key、完整系统提示；`/api/settings` 只返回 `api_key_masked` 与 `api_key_set`。
 - 前端页面不接触 Key，所有模型调用都在服务端完成。
 
 如果你在自己的环境部署，建议使用系统密钥管理或容器 Secret，不要把 Key 写进启动脚本并提交。
+
+## 请求来源校验（v1.19.1 起）
+
+单机运行**不等于**安全：用户在浏览器里打开任意页面，那个页面可以向 `127.0.0.1` 发请求，
+而对端 IP 就是本机——用 IP 判断「是不是自己人」永远为真。所以来源校验是独立一层
+（`src/security.py`），不依赖「绑了 127.0.0.1」这个前提。
+
+| 攻击 | 拦法 | 结果 |
+|---|---|---|
+| 跨站 POST 改配置 / 传语料 | 带 body 的写请求必须 `Content-Type: application/json`；同时校验 `Origin` 与 `Sec-Fetch-Site` | 403 / 415 |
+| 浏览器发起的写请求 | 必须带 `X-Jiyi-Client: web`（跨站伪造它会触发预检，而本项目不开放跨域） | 403 |
+| DNS rebinding 读走全文 | 所有请求（含 GET）的 `Host` 必须是回环地址或 `ALLOWED_HOSTS` 白名单 | 403 |
+| 表单 / `fetch(no-cors)` 绕过 | 这两类只能发 `text/plain`、`urlencoded`、`multipart`，一律 415 | 415 |
+
+三道检查统一在 `server.py::_guard(method, path)` 里执行，不分散到各 handler——
+之前知识库上传/删除就是因为「各写各的」漏掉了鉴权。前端由 `util.js` 统一包了一层 `fetch`，
+自动给写请求加 `X-Jiyi-Client`，新增接口不会忘。
+
+不拦非浏览器客户端：curl / SDK / MCP 不带 `Origin`，也不受同源策略约束，拦了只会让接入变难
+（它们也不需要带 `X-Jiyi-Client`）。
+局域网访问需显式设置 `ALLOWED_HOSTS`（如 `192.168.1.9`），并同时配置 `API_KEYS`。
 
 ## 已实现的输入防护
 
@@ -49,7 +72,9 @@
 
 ## 已知缺口
 
-1. **业务接口鉴权是可选的**：`API_KEYS` 为空时 `/api/ask` 仍依赖部署侧网关；上传/删除接口未做调用方认证（管理动作由 `ADMIN_TOKEN` 保护）。对外暴露时必须配置 `API_KEYS` 并在网关再做一层鉴权与配额。
+1. **业务接口鉴权默认关闭**：`API_KEYS` 为空时 `/api/ask` 与知识库读写不做调用方认证（单机自用场景的默认值）。
+   v1.19.1 起所有写接口都必须过来源校验，且一旦配置 `API_KEYS`，知识库写接口同样要求 Key；
+   但读接口（`/api/knowledge`、`/api/source` 等）仍只靠 Host 校验与「绑本机」。对外暴露必须配 `API_KEYS`。
 2. **Redis 自身的安全**：连接支持密码，但没有内置 TLS 校验与 ACL 管理；`REDIS_URL` 必须只在内网可达，禁止裸奔到公网。Redis 失联时会回退进程内状态，此时多实例限流不再一致。
 3. **trace 与审计会记录用户问题原文**：`logs/trace.jsonl`、`logs/audit.jsonl` 用于评测与排查。接入真实业务前需要脱敏（手机号、身份证、卡号）并设置保留期。
 4. **上传解析在进程内完成**：没有沙箱与杀毒扫描。只接受文本型 PDF/DOCX；不要接受来源不明的文件。

@@ -74,16 +74,28 @@ def read(home, rel: str) -> dict:
     }
 
 
-def write(home, rel: str, content: str, base_rev: str = "") -> dict:
-    """整篇覆盖写。base_rev 为空表示「我知道会覆盖」——页面新建文件时用。"""
+def write(home, rel: str, content: str, base_rev: str = "", create: bool = False) -> dict:
+    """整篇覆盖写。已有文件必须带 base_rev，否则拒绝——乐观锁不是可选项。
+
+    为什么默认拒绝：`base_rev` 一旦可选，漏传它的调用方（智能体、脚本、旧版前端）
+    就会静默覆盖别人刚写的内容，而文档里还写着「冲突返回 409」。
+    真正新建文件用 `create=True` 明确表达意图，两者不混。
+    """
     target = resolve(home, rel)
     if target.exists():
+        if create:
+            raise FileError("文件已经存在，换个名字或直接编辑它", 409)
+        if not base_rev:
+            raise FileError("覆盖已有文件必须带 base_rev（先读一次拿到 rev）", 428)
         try:
             current = target.read_bytes()
         except OSError as exc:
             raise FileError(f"读取失败：{exc}", 500) from exc
-        if base_rev and _rev(current) != base_rev:
+        if _rev(current) != base_rev:
             raise FileError("文件在你编辑期间被改过（可能是智能体或别的编辑器），已拒绝覆盖", 409)
+    elif base_rev:
+        # 带着旧 rev 来写一个已经不存在的文件：多半是别处删了，别悄悄把它复活
+        raise FileError("文件已不存在（可能已被删除或改名），请刷新后再试", 409)
     data = str(content if content is not None else "").encode("utf-8")
     if len(data) > MAX_READ_BYTES:
         raise FileError("内容超过 2 MB", 413)

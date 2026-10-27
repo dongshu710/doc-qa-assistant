@@ -169,32 +169,43 @@ class RAGPipeline:
         """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
         return bool(api_key())
 
+    def _retrieve(self, query: str, focus: str | None = None):
+        """检索一次，返回 (hits, meta)。
+
+        检索器支持 `search_ex` 就用它拿元数据；老实现只有 `search`，包一层空 meta。
+        元数据走返回值而不是实例字段，是为了并发下不把 A 的失败算到 B 头上。
+        """
+        fn = getattr(self.retriever, "search_ex", None)
+        if callable(fn):
+            return fn(query, self.settings.top_k, focus_query=focus or query)
+        return self.retriever.search(query, self.settings.top_k,
+                                     focus_query=focus or query), {}
+
     def _search(self, query: str, result: dict):
         """检索一次；异常降级为空结果并显式标注，不把异常抛给调用方。"""
         try:
-            hits = self.retriever.search(query, self.settings.top_k, focus_query=query)
+            hits, meta = self._retrieve(query)
         except Exception as exc:  # noqa: BLE001 —— 检索失败降级为不检索
             hits = []
             result["degraded"] = True
             result["degrade_reason"] = "retrieval_error"
             result["retrieval_error"] = str(exc)
             return hits
-        self._absorb_retrieval(result)
+        self._absorb_meta(result, meta)
         return hits
 
-    def _absorb_retrieval(self, result: dict) -> None:
-        """把检索器的 embedding 用量与降级原因并入结果。
+    def _absorb_meta(self, result: dict, meta: dict) -> None:
+        """把本次检索的降级原因与 embedding 用量并入结果。
 
-        一次问答可能检索两次（判域 + 扩展），`last_usage` 只保留最后一次，
-        所以要在这里累加，否则成本统计会少一半。
+        一次问答可能检索两次（判域 + 扩展），每次的用量都要累加；
+        以前读 `retriever.last_usage` 只能拿到最后一次，成本会少算一半。
         """
-        err = getattr(self.retriever, "last_error", None)
-        if err:
+        meta = meta or {}
+        if meta.get("error"):
             result["degraded"] = True
             result["degrade_reason"] = "embedding_error"
-            result["retrieval_error"] = str(err)[:300]
-        usage = getattr(self.retriever, "last_usage", {}) or {}
-        tokens = int(usage.get("total_tokens") or 0)
+            result["retrieval_error"] = str(meta["error"])[:300]
+        tokens = int(meta.get("tokens") or 0)
         if tokens:
             result["embedding_tokens"] = int(result.get("embedding_tokens") or 0) + tokens
             result["api_called"] = True
@@ -337,9 +348,8 @@ class RAGPipeline:
                     result["search_query"] = search_query
                     result["api_called"] = True
                     try:
-                        exp_hits = self.retriever.search(search_query, self.settings.top_k,
-                                                         focus_query=context_query)
-                        self._absorb_retrieval(result)
+                        exp_hits, exp_meta = self._retrieve(search_query, focus=context_query)
+                        self._absorb_meta(result, exp_meta)
                     except Exception as exc:  # noqa: BLE001 —— 扩展检索失败就保留原结果
                         exp_hits = []
                         result["degraded"] = True

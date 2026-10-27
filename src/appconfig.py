@@ -12,6 +12,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 from datetime import datetime, timezone
@@ -182,6 +184,28 @@ def _backup_broken(target: Path) -> str:
     return str(backup)
 
 
+def _tighten(path: Path) -> None:
+    """这个文件里有模型密钥，能收紧就收紧；收不紧也不能阻断保存。
+
+    常见做法（不引入系统凭据库）：POSIX 上 chmod 0600；Windows 上去掉继承，
+    只给当前用户完全控制。失败静默——权限收紧是加固，不是功能前提。
+    """
+    try:
+        if os.name == "nt":
+            user = os.environ.get("USERNAME") or ""
+            if not user:
+                return
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                capture_output=True, timeout=8, check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        else:
+            os.chmod(path, 0o600)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+
+
 def _write(data: dict) -> None:
     """原子写：先落临时文件再替换，避免半个 JSON 把配置彻底读废。"""
     global _parse_error, _last_backup, _revision
@@ -200,6 +224,7 @@ def _write(data: dict) -> None:
         except OSError:
             pass
         raise
+    _tighten(target)
     _parse_error = ""
     _revision += 1
 

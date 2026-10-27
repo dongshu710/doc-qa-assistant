@@ -50,13 +50,23 @@ GET    /api/notes/stats
 
 ```bash
 GET  /api/files/raw?path=notes/2026/10/xxx.md      # -> content / rev / size
-PUT  /api/files/raw {path, content, base_rev}      # 冲突 409：先 GET 拿新 rev 再改
+PUT  /api/files/raw {path, content, base_rev}      # 缺 rev 428；被改过 409：先 GET 拿新 rev 再改
+PUT  /api/files/raw {path, content, create:true}   # 新建；已存在 409
 POST /api/files/open {path}                        # 交给用户的系统编辑器
 ```
 
 - 路径是**相对存储区**的；绝对路径、`..`、符号链接逃逸都会被拒；
 - 只允许 `.md .markdown .txt .json .jsonl .csv .yaml .yml`，单文件 ≤ 2 MB；
-- `base_rev` 是内容哈希：别人（人或智能体）在这期间改过就拒绝覆盖，避免静默丢改动。
+- `base_rev` 是内容哈希：别人（人或智能体）在这期间改过就拒绝覆盖，避免静默丢改动；
+  覆盖已有文件**必须**带 rev（v1.19.1 起），新建要显式 `create:true`。
+
+### 调用约定（v1.19.1）
+
+- 写请求必须带 `Content-Type: application/json`，否则 415；服务端还会校验 `Host` 与 `Origin`。
+- 浏览器发起的写请求要带 `X-Jiyi-Client: web`（页面里的 `fetch` 已统一包装，自动加）；
+  curl / SDK / MCP 不带 `Origin`，不需要这个头。
+- 配了 `API_KEYS` 后，知识库写接口（上传/删除）与笔记、会话、文件接口一样要带 Key；
+  设置接口豁免，方便 Key 配错时改回来。
 
 ### 会话记录（v1.19.0）
 

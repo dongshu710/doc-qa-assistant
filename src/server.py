@@ -53,6 +53,7 @@ import json
 import os
 import pathlib
 import re
+import queue
 import shutil
 import subprocess
 import sys
@@ -68,7 +69,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, settings_ops, suggest
+from . import appconfig, casegen, evaluator, ingest, jsonl, kbstore, security, settings_ops, suggest
 from . import update as update_mod
 from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
@@ -102,6 +103,8 @@ NOTES_MAX_BYTES = 2 * 1024 * 1024        # 一段对话可能很长：笔记接�
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
 DOC_MAX_BYTES = 6 * 1024 * 1024         # 单个 PDF/DOCX 上限（解码后）
 DOC_B64_MAX_BYTES = DOC_MAX_BYTES * 4 // 3 + 4096
+SSE_HEARTBEAT_S = 15.0                  # 流式回答的空闲心跳间隔
+SSE_MAX_SECONDS = 300.0                 # 单次流式回答的总时长上限
 ALLOWED_EXT = (".md", ".txt")
 
 
@@ -150,11 +153,43 @@ def _read_jsonl(path: str, limit: int) -> list[dict]:
     return jsonl.tail_json(path, max(1, int(limit)))
 
 
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """限并发的 HTTP 服务。
+
+    为什么要限：`ThreadingHTTPServer` 来一个连接开一个线程。浏览器会预连接，
+    SSE 又长占线程，几十个慢客户端就能把线程数打满、让正常请求排不上。
+    个人电脑上也一样——一个卡住的标签页足以把服务拖成假死。
+    """
+
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 64
+
+    def __init__(self, address, handler, max_workers: int = 64):
+        super().__init__(address, handler)
+        self.max_workers = max(1, int(max_workers))
+        self._slots = threading.BoundedSemaphore(self.max_workers)
+
+    def process_request(self, request, client_address):
+        # 拿不到槽位就在 accept 阶段等，让内核 backlog 兜住，而不是无限开线程
+        self._slots.acquire()
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def create_server(host: str, port: int, knowledge_dir: str | None = None):
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     settings = load_settings()
     metrics = Metrics(enabled=True)
-
     # 显式传入目录 = 传统单目录模式（测试与批量导入用）；否则走版本库 + 审批流
     store: kbstore.KnowledgeStore | None = None
     if knowledge_dir is None and settings.kb_store not in ("off", "0", "false", "no"):
@@ -541,6 +576,69 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             return self._is_admin()
 
 
+        def _guard(self, method: str, path: str) -> bool:
+            """所有请求的唯一入口闸门：先校 Host，再按方法决定是否校来源。
+
+            集中成一个函数而不是散在各 handler 里，是因为「新增一个写接口忘了加鉴权」
+            已经真实发生过（知识库上传/删除漏了几个月）。分发前统一过闸，
+            漏写只能漏在路由表里，肉眼一眼能看见。
+            """
+            if self._host_gate():
+                return True
+            if method.upper() in ("GET", "HEAD", "OPTIONS"):
+                return False
+            return self._write_gate(path)
+
+        def _host_gate(self) -> bool:
+            """Host 必须是本机：挡 DNS rebinding，也挡反代把外部请求伪装成本机。
+
+            为什么读请求也要拦：rebinding 之后页面与 API 同源，GET 的响应可以直接被读走，
+            只保护写请求会漏掉「整库原文被拖走」。
+            """
+            reason = security.read_problem(self.headers)
+            if not reason:
+                return False
+            metrics.inc("rag_host_rejected_total")
+            guards.audit.write("request.rejected", client=self._client(),
+                               path=self.path[:160], reason=reason)
+            self._json({"ok": False, "error": "host_not_allowed",
+                        "message": security.REASONS[reason]}, 403)
+            return True
+
+        def _write_gate(self, path: str) -> bool:
+            """写请求的第二道闸：来源 + 内容类型，再按配置决定是否要 Key。
+
+            `/api/ask*` 的鉴权留在 `_ask_preflight` 里做——那里还要记账与限流，
+            在这里拦会让审计日志少一半信息。
+            """
+            try:
+                has_body = int(self.headers.get("Content-Length") or 0) > 0
+            except ValueError:
+                has_body = True
+            reason = security.write_problem(self.headers, has_body)
+            if reason:
+                metrics.inc("rag_write_rejected_total", {"reason": reason})
+                guards.audit.write("write.rejected", client=self._client(),
+                                   path=path[:160], reason=reason)
+                self._json({"ok": False, "error": reason,
+                            "message": security.REASONS[reason]},
+                           415 if reason == "content_type" else 403)
+                return True
+            # 配了 Key 就必须带：知识库写接口原来完全没有鉴权，等于把语料交给任何人改。
+            # 设置接口例外——Key 配错时总得留一条能改回来的路。
+            if api_keys.enabled and not path.startswith("/api/settings") \
+                    and not path.startswith("/api/ask"):
+                _name, err = self._api_auth()
+                if err:
+                    metrics.inc("rag_unauthorized_total")
+                    guards.audit.write("write.unauthorized", client=self._client(),
+                                       path=path[:160], reason=err)
+                    self._json({"ok": False, "error": "unauthorized",
+                                "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
+                               401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
+                    return True
+            return False
+
         def _presented_key(self) -> str:
             auth = (self.headers.get("Authorization") or "").strip()
             if auth.lower().startswith("bearer "):
@@ -749,7 +847,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 if method == "PUT" and action == "raw":
                     data = body or {}
                     result = fileops.write(home, data.get("path"), data.get("content", ""),
-                                           str(data.get("base_rev") or ""))
+                                           str(data.get("base_rev") or ""),
+                                           create=bool(data.get("create")))
                     self._json({"ok": True, **result}, 200, cors)
                     return
                 if method == "POST" and action == "open":
@@ -1065,6 +1164,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def do_PUT(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             target = self._api_target(parsed)
+            if self._guard("PUT", parsed.path):
+                return
             if target not in ("threads", "files"):
                 self._json({"error": "not found"}, 404)
                 return
@@ -1078,6 +1179,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def do_PATCH(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             target = self._api_target(parsed)
+            if self._guard("PATCH", parsed.path):
+                return
             if target not in ("notes", "threads"):
                 self._json({"error": "not found"}, 404)
                 return
@@ -1091,6 +1194,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             target = self._api_target(parsed)
+            if self._guard("DELETE", parsed.path):
+                return
             if target not in ("notes", "threads"):
                 self._json({"error": "not found"}, 404)
                 return
@@ -1110,6 +1215,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def do_OPTIONS(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             target = self._api_target(parsed)
+            if self._guard("OPTIONS", parsed.path):
+                return
             if not target:
                 self._json({"error": "not found"}, 404)
                 return
@@ -1121,6 +1228,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             parsed = urlparse(self.path)
             path = parsed.path
             qs = parse_qs(parsed.query)
+            if self._guard("GET", path):
+                return
 
             if path == "/tools.json":
                 host = self.headers.get("Host") or "127.0.0.1"
@@ -1371,6 +1480,8 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
+            if self._guard("POST", path):
+                return
             if path == "/api/settings" or path.startswith("/api/settings/"):
                 body, err = self._read_note_body()
                 if err:
@@ -1903,6 +2014,11 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     self.wfile.write(chunk.encode("utf-8"))
                     self.wfile.flush()
 
+                def send_comment(text: str) -> None:
+                    # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着
+                    self.wfile.write(f": {text}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+
                 if pre["cached"] is not None:
                     metrics.inc("rag_idempotent_replay_total")
                     guards.audit.write("ask.idempotent_replay", client=pre["client"],
@@ -1913,11 +2029,38 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     return
 
                 started = time.time()
+                events: queue.Queue = queue.Queue()
+                # 生成放到独立线程：主线程要能在「模型还没吐第一个字」时发心跳，
+                # 否则浏览器/代理会以为连接死了，而实际只是检索慢或模型排队。
+                def produce() -> None:
+                    try:
+                        for item in pipe.ask_stream(
+                                pre["query"], model=pre["model"],
+                                force_extractive=pre["budget_blocked"],
+                                session_id=pre["session_id"]):
+                            events.put(item)
+                    except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
+                        events.put(("__error__", str(exc)[:300]))
+                    finally:
+                        events.put(("__done__", None))
+
+                threading.Thread(target=produce, name="ask-stream", daemon=True).start()
                 try:
-                    for event, data in pipe.ask_stream(
-                            pre["query"], model=pre["model"],
-                            force_extractive=pre["budget_blocked"],
-                            session_id=pre["session_id"]):
+                    send_comment("connected")
+                    while True:
+                        if time.time() - started > SSE_MAX_SECONDS:
+                            send("error", {"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"})
+                            break
+                        try:
+                            event, data = events.get(timeout=SSE_HEARTBEAT_S)
+                        except queue.Empty:
+                            send_comment("ping")
+                            continue
+                        if event == "__done__":
+                            break
+                        if event == "__error__":
+                            send("error", {"error": data})
+                            break
                         if event == "delta":
                             send("delta", {"text": data})
                         elif event == "replace":
@@ -1928,11 +2071,6 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                             send("final", data)
                 except (BrokenPipeError, ConnectionResetError):
                     return
-                except Exception as exc:  # noqa: BLE001 —— 已经开始写 SSE，只能发错误事件
-                    try:
-                        send("error", {"error": str(exc)[:300]})
-                    except Exception:  # noqa: BLE001
-                        pass
                 return
 
             pre, err = self._ask_preflight(payload)
@@ -1970,7 +2108,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def log_message(self, fmt: str, *args) -> None:
             pass
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    httpd = BoundedHTTPServer((host, port), Handler)
     return httpd, pipe
 
 

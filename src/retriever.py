@@ -283,35 +283,44 @@ class EmbeddingRetriever:
             raise EmbeddingError(
                 f"索引构建失败: {type(exc).__name__}: {exc}") from exc
         self.last_error: str | None = None
-        self.last_usage: dict = {}
         self._query_cache: dict[str, list[float]] = {}
         self._cache_order: list[str] = []
 
-    def _embed_query(self, query: str) -> list[float]:
+    def _embed_query(self, query: str) -> tuple[list[float], dict]:
+        """返回 (向量, 用量)。用量跟着返回值走，不落实例字段——并发会串账。"""
         hit = self._query_cache.get(query)
         if hit is not None:
-            return hit
+            return hit, {}
         result = self.provider.embed([query])
         vec = result.vectors[0]
-        self.last_usage = result.usage
         self._query_cache[query] = vec
         self._cache_order.append(query)
         if len(self._cache_order) > 128:
             self._query_cache.pop(self._cache_order.pop(0), None)
-        return vec
+        return vec, result.usage
 
-    def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
+    def search_ex(self, query: str, top_k: int = 4, focus_query: str | None = None):
+        """返回 (hits, meta)。meta = {degraded, error, tokens}。
+
+        为什么不用 `last_error` / `last_usage` 传这两个值：它们是实例字段，
+        `ThreadingHTTPServer` 下两个请求交错时，A 的 embedding 失败会被记到 B 的
+        `degraded` 上，token 也会算到别人账上。按返回值传递，天然线程安全。
+        `last_error` 仍保留，只用于健康检查展示「最近一次错误」。
+        """
         focus = focus_query or query
         try:
-            qv = self._embed_query(query)
+            qv, usage = self._embed_query(query)
             candidates = self.index.search(qv, max(self.recall_k, top_k * 8))
             self.last_error = None
         except EmbeddingError as exc:
             # 失败降级：当次用 BM25 召回，分数仍归一化，保证闸门语义一致
-            return self._fallback(query, focus, top_k, str(exc))
+            hits = self._fallback(query, focus, top_k, str(exc))
+            return hits, {"degraded": True, "error": str(exc)[:300], "tokens": 0}
 
+        tokens = int((usage or {}).get("total_tokens") or 0)
+        meta = {"degraded": False, "error": None, "tokens": tokens}
         if not candidates:
-            return []
+            return [], meta
 
         q_tokens = set(tokenize(focus))
         lex = {id(c): s for c, s in self.bm25.search(query, len(self.chunks))}
@@ -333,7 +342,12 @@ class EmbeddingRetriever:
             reranked.append((round(score, 4), idx))
 
         reranked.sort(key=lambda x: x[0], reverse=True)
-        return [(self.chunks[i], s) for s, i in reranked[:top_k]]
+        return [(self.chunks[i], s) for s, i in reranked[:top_k]], meta
+
+    def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
+        """兼容旧调用：只要命中块。需要降级原因与用量时用 `search_ex`。"""
+        hits, _meta = self.search_ex(query, top_k, focus_query)
+        return hits
 
     def _fallback(self, query: str, focus: str, top_k: int, error: str):
         self.last_error = error
