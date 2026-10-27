@@ -24,6 +24,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ghnet  # noqa: E402 —— 同目录工具：先直连、失败再走代理
+
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 CHANGELOG = ROOT / "CHANGELOG.md"
@@ -83,7 +86,7 @@ def api(method: str, path: str, payload: dict | None = None) -> tuple[int, objec
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with ghnet.opener().open(req, timeout=TIMEOUT) as resp:
             body = resp.read().decode("utf-8", "replace")
             return resp.status, (json.loads(body) if body.strip() else None)
     except urllib.error.HTTPError as exc:
@@ -164,7 +167,7 @@ def upload_asset(slug: str, release_id: int, path: Path) -> bool:
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("Content-Type", "application/zip")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with ghnet.opener().open(req, timeout=TIMEOUT) as resp:
             return resp.status in (200, 201)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:300]
@@ -199,7 +202,7 @@ def verify_asset(slug: str, asset: dict, local: Path) -> bool:
     req.add_header("Authorization", f"token {token()}")
     req.add_header("Accept", "application/octet-stream")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with ghnet.opener().open(req, timeout=TIMEOUT) as resp:
             remote_digest = hashlib.sha256(resp.read()).hexdigest()
     except (urllib.error.HTTPError, urllib.error.URLError) as exc:
         say(f"  回读失败：下载 {local.name} 出错（{exc}）")

@@ -2,6 +2,20 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.21.1] - 2026-10-27
+
+发布 1.21.0 时真实踩到的坑：本机代理开始对 `api.github.com` 返回 `502`，
+而直连 `api.github.com` 正常、直连 `github.com:443` 反被重置。
+`tools/publish_release.py` 换了网络路径后能发，但 `tools/ghnet.py` 是在 1.21.0 提交之后才写的，
+所以 1.21.0 的应用包里 `publish_release.py` 引用了不存在的模块（`ImportError`）。
+
+### 修复
+
+- 新增 `tools/ghnet.py`：启动时探一次 `/rate_limit`，**先直连、失败再走系统代理**，选中的路径缓存复用。
+  不写死直连，是因为有些网络只有代理能出去；两条都不通时保留直连，让调用方看到真实错误。
+- `tools/publish_release.py` 的三处网络调用（API、上传、回读校验）统一走 `ghnet.opener()`。
+- `ghnet.py` 随 `tools/` 一起进包（`INCLUDE_DIRS` 已含 `tools`）。
+
 ## [1.21.0] - 2026-10-27
 
 把审查报告里剩下的 P2 项按「投入产出」做掉，并补上桌面端一直缺的流式显示。
