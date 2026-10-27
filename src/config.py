@@ -99,6 +99,8 @@ class Settings:
     max_input_chars: int = 500
     # 引用校验：strict 时「编号合法但内容不支持」的答案会降级为抽取式
     citation_strict: bool = False
+    # 是否把异常原文回传前端：默认关，只在排查问题时打开
+    debug: bool = False
     # 关键词直出：结构化条目命中后在本地输出，不调用任何 API
     keyword_mode: str = "on"            # on | off
     keyword_llm: str = "auto"           # auto=有 Key 才做整理 | off | on
@@ -171,6 +173,8 @@ def load_settings() -> Settings:
         profile=(_first_env("APP_PROFILE", default="finance") or "finance").strip().lower(),
         max_input_chars=int(_first_env("MAX_INPUT_CHARS", default="500")),
         citation_strict=(_first_env("CITATION_STRICT", default="off") or "off").strip().lower()
+        in ("on", "1", "true", "yes"),
+        debug=(_first_env("DEBUG", default="off") or "off").strip().lower()
         in ("on", "1", "true", "yes"),
         keyword_mode=keyword_mode,
         keyword_llm=keyword_llm,

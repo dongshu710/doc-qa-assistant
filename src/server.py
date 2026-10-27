@@ -69,7 +69,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import appconfig, backup, casegen, evaluator, ingest, jsonl, kbstore, security, settings_ops, suggest
+from . import appconfig, backup, casegen, evaluator, ingest, jsonl, kbstore, routing, security, settings_ops, suggest
 from . import update as update_mod
 from .auth import ApiKeyStore, safe_equal
 from .config import api_key, load_settings
@@ -540,7 +540,20 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             extra = {key: str(value) for key, value in (extra_headers or {}).items()}
             # 弱校验：gzip 后字节不同但内容相同，仍应命中同一个 ETag
             etag = 'W/"' + hashlib.sha256(data).hexdigest()[:20] + '"'
-            headers = {"ETag": etag, "Cache-Control": cache, "Vary": "Accept-Encoding"}
+            mime = content_type.split(";")[0].strip().lower()
+            headers = {"ETag": etag, "Cache-Control": cache, "Vary": "Accept-Encoding",
+                       # 三件套：不许猜 MIME、不许被嵌进别人的 iframe、不外泄 Referer。
+                       # 本地应用也一样——恶意页面用 iframe 套住本服务就能诱导点击。
+                       "X-Content-Type-Options": "nosniff",
+                       "X-Frame-Options": "DENY",
+                       "Referrer-Policy": "no-referrer"}
+            if mime == "text/html":
+                # 页面全部资源都在本站：禁止外部脚本与表单提交，把注入后的利用面压到最小
+                headers["Content-Security-Policy"] = (
+                    "default-src 'self'; img-src 'self' data:; "
+                    "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+                )
 
             inm = (self.headers.get("If-None-Match") or "").strip()
             if inm and inm.replace("W/", "") == etag.replace("W/", ""):
@@ -550,7 +563,6 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 self.end_headers()
                 return
 
-            mime = content_type.split(";")[0].strip().lower()
             accepts = (self.headers.get("Accept-Encoding") or "").lower()
             if "gzip" in accepts and mime in self.COMPRESSIBLE and len(data) >= 512:
                 data = gzip.compress(data, 6)
@@ -585,6 +597,15 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
         def _client(self) -> str:
             return self.client_address[0] if self.client_address else "unknown"
 
+        def _error_text(self, exc: Exception, prefix: str = "服务端异常") -> str:
+            """异常详情默认不回传：消息里常带绝对路径与内部端点。
+
+            排查问题时设 `DEBUG=on` 才带上原文；平时只给异常类型，正文进服务端日志。
+            """
+            if pipe.settings.debug:
+                return f"{prefix}：{type(exc).__name__}: {exc}"
+            return f"{prefix}：{type(exc).__name__}（详情见服务端日志，设 DEBUG=on 可显示）"
+
         def _is_admin(self) -> bool:
             token = pipe.settings.admin_token
             if token:
@@ -602,17 +623,45 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
 
 
         def _guard(self, method: str, path: str) -> bool:
-            """所有请求的唯一入口闸门：先校 Host，再按方法决定是否校来源。
+            """所有请求的唯一入口闸门：Host → 鉴权等级 → 来源/内容类型。
 
-            集中成一个函数而不是散在各 handler 里，是因为「新增一个写接口忘了加鉴权」
-            已经真实发生过（知识库上传/删除漏了几个月）。分发前统一过闸，
-            漏写只能漏在路由表里，肉眼一眼能看见。
+            鉴权等级不再由各 handler 自己判断，统一查 `src/routing.py` 的表。
+            这样「新增接口忘了加鉴权」不会再发生——漏登记只会让接口默认要 Key。
+            OPTIONS 只校 Host：浏览器预检不带 Key，拦了就连正常跨域都做不了。
             """
             if self._host_gate():
                 return True
-            if method.upper() in ("GET", "HEAD", "OPTIONS"):
+            verb = method.upper()
+            if verb == "OPTIONS":
+                return False
+            level = routing.level_for(path)
+            if level == routing.ADMIN and not self._is_admin():
+                metrics.inc("rag_unauthorized_total")
+                guards.audit.write("request.forbidden", client=self._client(),
+                                   path=path[:160], reason="admin_required")
+                self._json({"ok": False, "error": "forbidden",
+                            "message": "需要管理员权限（本机访问或带 X-Admin-Token）"}, 403)
+                return True
+            if verb in ("GET", "HEAD"):
+                # 读请求同样按表：/api/source 返回整段原文、/api/trace 返回用户提问，
+                # 只因为方法是 GET 就放行，等于把语料和提问记录公开。
+                if level == routing.API and api_keys.enabled:
+                    return self._require_key(path, "read.unauthorized")
                 return False
             return self._write_gate(path)
+
+        def _require_key(self, path: str, action: str) -> bool:
+            """配了 API_KEYS 就必须带有效 Key；未配置时直接放行（单机默认形态）。"""
+            _name, err = self._api_auth()
+            if not err:
+                return False
+            metrics.inc("rag_unauthorized_total")
+            guards.audit.write(action, client=self._client(),
+                               path=path[:160], reason=err)
+            self._json({"ok": False, "error": "unauthorized",
+                        "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
+                       401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
+            return True
 
         def _host_gate(self) -> bool:
             """Host 必须是本机：挡 DNS rebinding，也挡反代把外部请求伪装成本机。
@@ -649,19 +698,11 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                             "message": security.REASONS[reason]},
                            415 if reason == "content_type" else 403)
                 return True
-            # 配了 Key 就必须带：知识库写接口原来完全没有鉴权，等于把语料交给任何人改。
-            # 设置接口例外——Key 配错时总得留一条能改回来的路。
-            if api_keys.enabled and not path.startswith("/api/settings") \
-                    and not path.startswith("/api/ask"):
-                _name, err = self._api_auth()
-                if err:
-                    metrics.inc("rag_unauthorized_total")
-                    guards.audit.write("write.unauthorized", client=self._client(),
-                                       path=path[:160], reason=err)
-                    self._json({"ok": False, "error": "unauthorized",
-                                "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
-                               401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
-                    return True
+            # 表里登记为 api 的写接口，配了 Key 就必须带。
+            # `/api/ask*` 例外：它在 `_ask_preflight` 里鉴权，那里还要记账与限流，
+            # 提前拦会让审计日志少一半信息。
+            if routing.level_for(path) == routing.API and not path.startswith("/api/ask"):
+                return self._require_key(path, "write.unauthorized")
             return False
 
         def _presented_key(self) -> str:
@@ -761,7 +802,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                 guards.audit.write(f"notes.{method.lower()}.error", client=self._client(),
                                    path=path[:120], error=f"{type(exc).__name__}: {exc}")
                 self._json({"ok": False, "error": "internal_error",
-                            "message": f"服务端异常：{type(exc).__name__}"}, 500, cors)
+                            "message": self._error_text(exc)}, 500, cors)
                 return
             if method != "GET":
                 guards.audit.write(f"notes.{method.lower()}", client=self._client(),
@@ -1107,7 +1148,7 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             except Exception as exc:  # noqa: BLE001 —— 设置面板报错也要能看见原因
                 traceback.print_exc()
                 self._json({"ok": False, "error": "internal_error",
-                            "message": f"服务端异常：{type(exc).__name__}: {exc}"}, 500, cors)
+                            "message": self._error_text(exc)}, 500, cors)
 
         def _ask_preflight(self, payload: dict):
             """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
@@ -1193,9 +1234,11 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
             if cost_usd:
                 metrics.inc("rag_cost_usd_total", value=cost_usd)
             if pre.get("api_key"):
-                metrics.inc("rag_api_tokens_total", {"key": pre["api_key"]}, tokens)
+                # 标签只放名字的哈希前缀：指标导出后可能被采集/转发，别把密钥名也带走
+                key_label = hashlib.sha256(str(pre["api_key"]).encode("utf-8")).hexdigest()[:8]
+                metrics.inc("rag_api_tokens_total", {"key": key_label}, tokens)
                 if cost_usd:
-                    metrics.inc("rag_api_cost_usd_total", {"key": pre["api_key"]}, value=cost_usd)
+                    metrics.inc("rag_api_cost_usd_total", {"key": key_label}, value=cost_usd)
             if result.get("degraded"):
                 metrics.inc("rag_retrieval_degraded_total",
                             {"reason": str(result.get("degrade_reason") or "unknown")})
@@ -1391,6 +1434,10 @@ def create_server(host: str, port: int, knowledge_dir: str | None = None):
                     },
                 })
             elif path == "/metrics":
+                # 指标带 key 标签与成本口径：不设防等于把用量结构公开给任何本机页面
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
             elif path == "/api/admin/config":
                 if not self._is_admin():

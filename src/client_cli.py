@@ -54,9 +54,34 @@ def cmd_status(args) -> int:
 
 def cmd_ask(args) -> int:
     client = _client(args)
-    result = client.ask(args.query, args.session)
-    print(result.get("answer") or "")
-    print()
+    streamed = ""
+    rewritten = False
+    result = None
+    if getattr(args, "stream", False):
+        for event, payload in client.ask_stream(args.query, args.session):
+            if event == "delta":
+                text = str(payload.get("text") or "")
+                streamed += text
+                sys.stdout.write(text)
+                sys.stdout.flush()
+            elif event == "replace":
+                streamed = str(payload.get("text") or "")
+                rewritten = True
+            elif event == "final":
+                result = payload
+        if result is None:
+            raise ClientError("流式回答没有返回结果", 0, "stream")
+        answer = str(result.get("answer") or "")
+        # 终端没法回退已打印的字：修正版要明确标出来，而不是悄悄覆盖
+        if rewritten and answer != streamed:
+            print("\n\n〔以下为修正后的最终答案〕\n" + answer)
+        elif not streamed:
+            print(answer)
+        print()
+    else:
+        result = client.ask(args.query, args.session)
+        print(result.get("answer") or "")
+        print()
     for item in result.get("citations") or []:
         print(f"[{item.get('ref')}] {item.get('title')} · {item.get('section')}")
     meta = [f"mode={result.get('mode')}", f"{result.get('latency_ms')} ms"]
@@ -164,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("query")
     ask.add_argument("--session", default=None, help="多轮会话 id")
     ask.add_argument("--save", action="store_true", help="顺便存成笔记")
+    ask.add_argument("--stream", action="store_true", help="逐字输出（SSE）")
     ask.set_defaults(func=cmd_ask)
 
     notes = sub.add_parser("notes", help="笔记列表")

@@ -22,12 +22,33 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
 MAX_TURNS = 500
 MAX_BYTES = 4 * 1024 * 1024
+
+# 所有会话写入串行化。两个原因：
+# 1) 每次请求都会 new 一个 ThreadStore，实例锁拦不住并发，必须是模块级的；
+# 2) Windows 上两个线程同时 os.replace 到同一目标会抛 WinError 5（共享冲突），
+#    先到的那个成功、后到的直接 500，而用户只是想保存一次对话。
+_WRITE_LOCK = threading.Lock()
+
+
+def _replace_with_retry(tmp: str, path: Path) -> None:
+    """原子替换 + 短暂重试：杀毒软件/索引器短暂占用目标文件时也能落地。"""
+    last: Exception | None = None
+    for attempt in range(4):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:      # Windows 的共享冲突就是 PermissionError
+            last = exc
+            time.sleep(0.01 * (attempt + 1))
+    if last is not None:
+        raise last
 LIST_LIMIT = 60
 # 前端只在标题/末轮变化时写，覆盖同一秒内的重复写；这里再兜一层，防止手滑刷爆磁盘
 MIN_WRITE_GAP_S = 0.0
@@ -138,29 +159,32 @@ class ThreadStore:
         if not isinstance(data, dict):
             raise ThreadError("请求体必须是对象")
         turns = self._clean_turns(data.get("turns"))
-        existing = {}
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            existing = {}
-        created = str(data.get("created") or (existing.get("created") if isinstance(existing, dict) else "") or _now())
-        record = {
-            "schema": "thread/v1",
-            "id": thread_id,
-            "title": str(data.get("title") or "新对话")[:120],
-            "created": created,
-            "updated": _now(),
-            "sid": str(data.get("sid") or "")[:80],
-            "turns": turns,
-        }
-        payload = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
-        if len(payload.encode("utf-8")) > MAX_BYTES:
-            raise ThreadError("这条会话太大了（超过 4 MB），建议把结论存成笔记")
         handle, tmp = tempfile.mkstemp(dir=str(self.dir), prefix=".t-", suffix=".json")
         try:
-            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(payload)
-            os.replace(tmp, path)
+            with _WRITE_LOCK:
+                existing = {}
+                try:
+                    existing = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    existing = {}
+                created = str(data.get("created")
+                              or (existing.get("created") if isinstance(existing, dict) else "")
+                              or _now())
+                record = {
+                    "schema": "thread/v1",
+                    "id": thread_id,
+                    "title": str(data.get("title") or "新对话")[:120],
+                    "created": created,
+                    "updated": _now(),
+                    "sid": str(data.get("sid") or "")[:80],
+                    "turns": turns,
+                }
+                payload = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
+                if len(payload.encode("utf-8")) > MAX_BYTES:
+                    raise ThreadError("这条会话太大了（超过 4 MB），建议把结论存成笔记")
+                with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(payload)
+                _replace_with_retry(tmp, path)
         except BaseException:
             try:
                 os.unlink(tmp)

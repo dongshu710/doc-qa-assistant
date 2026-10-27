@@ -210,14 +210,24 @@ class App:
         self.store_chat = bool(notes.get("store_chat", True))
 
     # ---------------- 问答 ----------------
+    def _paint(self, text: str) -> None:
+        """流式增量刷新回答区；保持只读态，但内容随生成变化。"""
+        self._set_text(self.answer, text)
+        self.answer.see("end")
+        self.ask_meta.config(text=f"生成中… {len(text)} 字")
+
     def do_ask(self) -> None:
         query = self.question.get("1.0", "end").strip()
         if not query:
             return
         self.ask_btn.config(state="disabled")
         self.ask_meta.config(text="查询中…")
+        self._set_text(self.answer, "")
+        self.citations.delete(0, "end")
+        self.save_note_btn.config(state="disabled")
+        self.last_qa = None
 
-        def ok(result: dict) -> None:
+        def finish(result: dict) -> None:
             self.ask_btn.config(state="normal")
             answer = str(result.get("answer") or "")
             self._set_text(self.answer, answer)
@@ -237,7 +247,36 @@ class App:
             self.save_note_btn.config(state="normal" if answer else "disabled")
             self._say(f"完成 · {result.get('latency_ms', 0)} ms")
 
-        self._run(lambda: self.client.ask(query, self.session_id), ok, "正在检索并生成…")
+        def worker() -> None:
+            """流式优先；一个字都没收到时退回一次性请求，服务端不支持也不丢功能。"""
+            buffer = ""
+            final = None
+            try:
+                for event, payload in self.client.ask_stream(query, self.session_id):
+                    if event == "delta":
+                        buffer += str(payload.get("text") or "")
+                        self.root.after(0, lambda text=buffer: self._paint(text))
+                    elif event == "replace":
+                        buffer = str(payload.get("text") or "")
+                        self.root.after(0, lambda text=buffer: self._paint(text))
+                    elif event == "final":
+                        final = payload
+            except Exception as exc:  # noqa: BLE001 —— 已渲染的部分内容不丢
+                if buffer or final is not None:
+                    self.root.after(0, lambda exc=exc: self._error(exc))
+                    return
+                try:
+                    final = self.client.ask(query, self.session_id)
+                except Exception:  # noqa: BLE001
+                    self.root.after(0, lambda exc=exc: self._error(exc))
+                    return
+            if final is None:
+                self.root.after(0, lambda: self._error(
+                    ClientError("流式回答没有返回结果", 0, "stream")))
+                return
+            self.root.after(0, lambda: finish(final))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def clear_ask(self) -> None:
         self.question.delete("1.0", "end")

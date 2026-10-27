@@ -13,10 +13,17 @@ import hashlib
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".yaml", ".yml"}
 MAX_READ_BYTES = 2 * 1024 * 1024
+
+# 「读 rev → 比较 → 落盘」必须在同一把锁里。
+# 不加锁的话两个并发写会同时读到旧 rev、同时通过检查，双双返回 200，
+# 乐观锁就退化成了「谁最后写谁赢」——而页面上明明提示「冲突已拒绝」。
+# 一把全局锁足够：这是个人存储区的文本文件，写入本来就不是热点路径。
+_WRITE_LOCK = threading.Lock()
 
 
 class FileError(ValueError):
@@ -82,27 +89,28 @@ def write(home, rel: str, content: str, base_rev: str = "", create: bool = False
     真正新建文件用 `create=True` 明确表达意图，两者不混。
     """
     target = resolve(home, rel)
-    if target.exists():
-        if create:
-            raise FileError("文件已经存在，换个名字或直接编辑它", 409)
-        if not base_rev:
-            raise FileError("覆盖已有文件必须带 base_rev（先读一次拿到 rev）", 428)
-        try:
-            current = target.read_bytes()
-        except OSError as exc:
-            raise FileError(f"读取失败：{exc}", 500) from exc
-        if _rev(current) != base_rev:
-            raise FileError("文件在你编辑期间被改过（可能是智能体或别的编辑器），已拒绝覆盖", 409)
-    elif base_rev:
-        # 带着旧 rev 来写一个已经不存在的文件：多半是别处删了，别悄悄把它复活
-        raise FileError("文件已不存在（可能已被删除或改名），请刷新后再试", 409)
     data = str(content if content is not None else "").encode("utf-8")
     if len(data) > MAX_READ_BYTES:
         raise FileError("内容超过 2 MB", 413)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, target)
+    with _WRITE_LOCK:
+        if target.exists():
+            if create:
+                raise FileError("文件已经存在，换个名字或直接编辑它", 409)
+            if not base_rev:
+                raise FileError("覆盖已有文件必须带 base_rev（先读一次拿到 rev）", 428)
+            try:
+                current = target.read_bytes()
+            except OSError as exc:
+                raise FileError(f"读取失败：{exc}", 500) from exc
+            if _rev(current) != base_rev:
+                raise FileError("文件在你编辑期间被改过（可能是智能体或别的编辑器），已拒绝覆盖", 409)
+        elif base_rev:
+            # 带着旧 rev 来写一个已经不存在的文件：多半是别处删了，别悄悄把它复活
+            raise FileError("文件已不存在（可能已被删除或改名），请刷新后再试", 409)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
     return {"path": str(target.relative_to(_home(home))).replace(os.sep, "/"),
             "rev": _rev(data), "size": len(data)}
 

@@ -2,6 +2,66 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.21.0] - 2026-10-27
+
+把审查报告里剩下的 P2 项按「投入产出」做掉，并补上桌面端一直缺的流式显示。
+过程中并发用例抓出两个真实缺陷（文件乐观锁可被并发击穿、会话写入在 Windows 上会 500），
+都不是「理论上可能」，而是用例稳定复现的。
+
+### 新增：路由鉴权表（B7 的一半）
+
+- 新增 `src/routing.py`：按路径前缀登记 `open` / `api` / `admin` 三级，最长前缀优先。
+  `_guard()` 在分发前统一执行，`GET`/`HEAD` 也要按表检查。
+- **未登记的 `/api/*` 默认按 `api` 处理**——漏登记只会让接口多要一个 Key，
+  不会变成「谁都能读原文」。这是对「新增接口忘了加鉴权」的结构性回答。
+- 读接口不再豁免：`/api/source`（整段原文）、`/api/trace`（用户提问）、`/api/knowledge`
+  以前只靠「绑了 127.0.0.1」，配了 `API_KEYS` 之后现在同样要 Key。
+- 新增 `tests/test_routing.py`（47 项）：表本身（最长前缀、默认收紧）＋ 真服务上的
+  `401`/`403` 行为 ＋ **六个 `do_*` 的第一次调用必须是 `_guard`**（绕过闸门会被测试挡住）。
+
+> 仍未做：把 2241 行的 `server.py` 拆成 `src/handlers/` 多文件。原因是 Handler 是
+> `create_server()` 内的类，闭包着 `pipe`/`metrics`/`store` 等运行时对象；拆文件要先把它们
+> 收敛成显式上下文对象，属于「改结构 + 改语义」的双重改动，不该和这批修复混在一起发布。
+
+### 新增：桌面端与终端流式回答
+
+- `Client.ask_stream()`：解析 SSE 的 `event:`/`data:` 帧，忽略 `: connected`/`: ping` 心跳，
+  把 `error` 事件转成 `ClientError`；损坏的半帧跳过而不打断整条流。
+- 桌面端「问答」页签改为流式逐字显示，状态栏显示「生成中… N 字」；
+  若一个字都没收到（服务端不支持或中间层截断），自动退回一次性 `/api/ask`。
+- 终端 `python -m src.client ask "..." --stream` 逐字输出；发生 `replace` 事件时明确标注
+  「以下为修正后的最终答案」——终端没法回退已打印的内容，就不假装它没出现过。
+
+### 修复（并发，实测复现）
+
+- **文件乐观锁可被并发击穿**：`fileops.write()` 的「读 rev → 比较 → 落盘」原先不在锁内，
+  8 个线程带同一 `base_rev` 并发写会**同时通过检查**，双双返回 200，
+  乐观锁退化成「谁最后写谁赢」。现在整段进 `_WRITE_LOCK`。
+  新增 `tests/test_concurrency.py`：8 线程并发写同一文件，断言**恰好 1 个成功、7 个 409**。
+- **会话写入在 Windows 上并发 500**：两个线程同时 `os.replace` 到同一目标抛 `WinError 5`（共享冲突）。
+  `threadstore` 现在模块级串行化写入（每次请求都 new 一个 store，实例锁拦不住），
+  并对 `PermissionError` 做短暂重试；`put()` 的「读旧 created → 写新内容」也进了同一把锁。
+
+### 加固（P2）
+
+- **C5 异常原文**：接口 500 默认只回 `服务端异常：<类型>`，原文进服务端日志；
+  `DEBUG=on` 才回传完整消息（异常里常带绝对路径）。
+- **C6 指标面**：`/metrics` 归入 `admin` 等级；指标里的 `key` 标签改为 Key 名字的 SHA-256 前 8 位，
+  导出/转发后不泄露密钥名。
+- **C7 响应头**：全站 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、
+  `Referrer-Policy: no-referrer`；HTML 页面加 CSP（`default-src 'self'`、`frame-ancestors 'none'`、
+  `base-uri 'none'`、`form-action 'none'`）。页面本来就不引外部资源，所以不必放宽。
+- **C9 发布校验**：`tools/publish_release.py` 上传后**回读**附件（大小 + sha256），
+  不一致直接失败退出。以前只看 201，被代理截断的残包也会显示「已发布」。
+- **A6 反向代理**：`_client()` 只认 TCP 对端、**从不读 `X-Forwarded-For`**（否则一个请求头就能冒充管理员）；
+  代价与做法写进 `docs/SECURITY.md`：放到反代后面必须同时设 `ADMIN_TOKEN` + `API_KEYS` + `ALLOWED_HOSTS`。
+
+### 测试
+
+- 新增 `tests/test_concurrency.py`（9 项）、`tests/test_routing.py`（47 项）；
+  `test_client_api.py` 增加流式用例（帧序、心跳不污染数据、流式文本与最终答案一致）。
+- 全量 46 个 Python 测试脚本 + 4 组 Playwright e2e + `check_frontend` 37/0 全绿；成品包冒烟通过。
+
 ## [1.20.0] - 2026-10-27
 
 审查报告里剩下的几项集中处理，并补上一个**不依赖浏览器的桌面客户端**。

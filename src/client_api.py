@@ -43,6 +43,17 @@ class Client:
                         if loopback else None)
 
     # ---------- 底层 ----------
+    @staticmethod
+    def _http_error(exc: urllib.error.HTTPError) -> ClientError:
+        """把服务端的结构化错误搬成异常；流式与一次性请求共用同一套映射。"""
+        payload = {}
+        try:
+            payload = json.loads(exc.read().decode("utf-8", "replace"))
+        except (ValueError, OSError):
+            payload = {}
+        message = payload.get("message") or payload.get("error") or f"HTTP {exc.code}"
+        return ClientError(str(message)[:300], exc.code, str(payload.get("error") or ""))
+
     def _request(self, method: str, path: str, body: dict | None = None,
                  query: dict | None = None, timeout: float = READ_TIMEOUT) -> dict:
         url = self.base + path
@@ -63,14 +74,7 @@ class Client:
             with opener(req, timeout=timeout) as resp:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
-            payload = {}
-            try:
-                payload = json.loads(exc.read().decode("utf-8", "replace"))
-            except (ValueError, OSError):
-                payload = {}
-            message = payload.get("message") or payload.get("error") or f"HTTP {exc.code}"
-            raise ClientError(str(message)[:300], exc.code,
-                              str(payload.get("error") or "")) from exc
+            raise self._http_error(exc) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
             raise ClientError(f"连不上服务（{reason}）。请先启动：python -m src.server",
@@ -114,6 +118,63 @@ class Client:
         if session_id:
             body["session_id"] = session_id
         return self._request("POST", "/api/ask", body=body, timeout=ASK_TIMEOUT)
+
+    def ask_stream(self, query: str, session_id: str | None = None):
+        """流式提问，逐条产出 `(event, payload)`；最后一条是 `("final", 完整结果)`。
+
+        为什么不复用 `_request`：SSE 是长连接分块返回，`read()` 会一直等到连接关闭，
+        那就等于把「流式」变成了「等更久才看到第一个字」。
+        """
+        body = {"query": query}
+        if session_id:
+            body["session_id"] = session_id
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = urllib.request.Request(self.base + "/api/ask/stream", data=data,
+                                     headers=headers, method="POST")
+        opener = self._opener.open if self._opener is not None else urllib.request.urlopen
+        try:
+            resp = opener(req, timeout=ASK_TIMEOUT)
+        except urllib.error.HTTPError as exc:
+            raise self._http_error(exc) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise ClientError(f"连不上服务（{reason}）。请先启动：python -m src.server",
+                              0, "offline") from exc
+
+        event = "message"
+        try:
+            for raw in resp:
+                line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if not line:
+                    event = "message"      # 空行 = 一帧结束，事件名复位
+                    continue
+                if line.startswith(":"):
+                    continue               # `: connected` / `: ping` 心跳，不是数据
+                if line.startswith("event:"):
+                    event = line[6:].strip() or "message"
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                text = line[5:].strip()
+                try:
+                    payload = json.loads(text) if text else {}
+                except ValueError:
+                    # 半行或损坏的帧不该打断整条流：丢掉这一帧继续读
+                    continue
+                if event == "error":
+                    raise ClientError(str(payload.get("error") or "流式回答失败")[:300],
+                                      0, "stream")
+                yield event, payload
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise ClientError(f"流式连接中断（{getattr(exc, 'reason', exc)}）", 0, "stream") from exc
+        finally:
+            try:
+                resp.close()
+            except OSError:
+                pass
 
     def save_note(self, question: str, answer: str, title: str = "") -> dict:
         """把一轮问答存成笔记；`from=chat` 与服务端「储存对话内容」开关语义一致。"""

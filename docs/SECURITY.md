@@ -41,6 +41,48 @@
 （它们也不需要带 `X-Jiyi-Client`）。
 局域网访问需显式设置 `ALLOWED_HOSTS`（如 `192.168.1.9`），并同时配置 `API_KEYS`。
 
+## 路由鉴权表（v1.21.0 起）
+
+「记得在 handler 里加鉴权」不是可靠约束——知识库的上传/删除就是这样漏掉的（同目录的审批接口却要管理员）。
+现在鉴权等级写在 `src/routing.py` 的一张表里，分发前由 `_guard()` 统一执行：
+
+| 等级 | 含义 | 覆盖 |
+|---|---|---|
+| `open` | 明确开放 | `/api/settings`（Key 配错时的回退通道）、`/api/health`、`/api/update`、`/tools.json`、`/openapi.json`、页面 |
+| `api` | 配了 `API_KEYS` 就要 Key | 笔记、会话、文件、存储、知识库读写、原文、提问记录、反馈、评测用例、`/api/ask` |
+| `admin` | 本机或 `X-Admin-Token` | `/metrics`、`/api/audit`、`/api/admin/*`、`/api/kb/approve|reject|rollback_doc` |
+
+两条规则值得记住：
+
+- **未登记的 `/api/*` 默认按 `api` 处理**。漏登记最多让接口多要一个 Key，不会变成「谁都能读原文」。
+- **读接口不再豁免**。`/api/source`（整段原文）、`/api/trace`（用户提问）以前只靠「绑了 127.0.0.1」，
+  现在和其他数据面一样按表执行——GET 不等于公开。
+
+测试 `tests/test_routing.py` 同时断言表本身（最长前缀优先、默认收紧）与分发函数
+（六个 `do_*` 的第一次调用必须是 `_guard`），所以「绕过闸门」也会被测试挡住。
+
+## 反向代理与来源判定（A6）
+
+`_client()` 只认 TCP 对端的 `client_address`，**从不读 `X-Forwarded-For`**。这是刻意的：
+
+- 伪造成本为零的请求头不能用来决定「是不是本机」，否则一个 `X-Forwarded-For: 127.0.0.1` 就能冒充管理员；
+- 代价是：挂上反向代理后，所有请求看起来都来自 `127.0.0.1`，`_is_admin()` 的「本机即可」会整体失效。
+
+所以**一旦放到反代后面，必须同时**：
+
+1. 设置 `ADMIN_TOKEN`（此时管理员判定只认 `X-Admin-Token`，不再看来源 IP）；
+2. 设置 `API_KEYS`（否则所有调用方都是匿名的同一个身份）；
+3. 设置 `ALLOWED_HOSTS` 为外部实际访问的域名，否则 Host 校验会 403。
+
+## 响应头与可观测面
+
+- 所有响应带 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`；
+  HTML 页面额外带 CSP（`default-src 'self'`、`frame-ancestors 'none'`、`base-uri 'none'`、`form-action 'none'`），
+  页面不引任何外部脚本，所以不需要放宽。
+- `/metrics` 归到 `admin` 等级；指标的 `key` 标签只放 Key 名字的 SHA-256 前 8 位，导出后也不泄露密钥名。
+- 接口异常默认只回 `服务端异常：<异常类型>`，原文进服务端日志；排查时设 `DEBUG=on` 才回传完整消息
+  （异常里常带绝对路径，不该出现在响应体里）。
+
 ## 已实现的输入防护
 
 | 风险 | 处理 |
@@ -72,9 +114,9 @@
 
 ## 已知缺口
 
-1. **业务接口鉴权默认关闭**：`API_KEYS` 为空时 `/api/ask` 与知识库读写不做调用方认证（单机自用场景的默认值）。
-   v1.19.1 起所有写接口都必须过来源校验，且一旦配置 `API_KEYS`，知识库写接口同样要求 Key；
-   但读接口（`/api/knowledge`、`/api/source` 等）仍只靠 Host 校验与「绑本机」。对外暴露必须配 `API_KEYS`。
+1. **业务接口鉴权默认关闭**：`API_KEYS` 为空时所有接口不做调用方认证（单机自用场景的默认值）。
+   一旦配置 `API_KEYS`，读接口与写接口一样要求 Key（v1.21.0 起由 `src/routing.py` 统一执行，
+   含 `/api/source`、`/api/trace`、`/api/knowledge` 等原先只看「是不是本机」的接口）。对外暴露必须配 `API_KEYS`。
 2. **Redis 自身的安全**：连接支持密码，但没有内置 TLS 校验与 ACL 管理；`REDIS_URL` 必须只在内网可达，禁止裸奔到公网。Redis 失联时会回退进程内状态，此时多实例限流不再一致。
 3. **trace 与审计会记录用户问题原文**：`logs/trace.jsonl`、`logs/audit.jsonl` 用于评测与排查。接入真实业务前需要脱敏（手机号、身份证、卡号）并设置保留期。
 4. **上传解析在进程内完成**：没有沙箱与杀毒扫描。只接受文本型 PDF/DOCX；不要接受来源不明的文件。

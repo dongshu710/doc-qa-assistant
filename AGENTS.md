@@ -60,13 +60,17 @@ POST /api/files/open {path}                        # 交给用户的系统编辑
 - `base_rev` 是内容哈希：别人（人或智能体）在这期间改过就拒绝覆盖，避免静默丢改动；
   覆盖已有文件**必须**带 rev（v1.19.1 起），新建要显式 `create:true`。
 
-### 调用约定（v1.19.1）
+### 调用约定（v1.21.0）
 
 - 写请求必须带 `Content-Type: application/json`，否则 415；服务端还会校验 `Host` 与 `Origin`。
 - 浏览器发起的写请求要带 `X-Jiyi-Client: web`（页面里的 `fetch` 已统一包装，自动加）；
   curl / SDK / MCP 不带 `Origin`，不需要这个头。
-- 配了 `API_KEYS` 后，知识库写接口（上传/删除）与笔记、会话、文件接口一样要带 Key；
-  设置接口豁免，方便 Key 配错时改回来。
+- **鉴权按 `src/routing.py` 的表**：`open`（设置/健康/更新/契约）、`api`（其余 `/api/*`）、
+  `admin`（`/metrics`、`/api/audit`、`/api/admin/*`、`/api/kb/approve|reject|rollback_doc`）。
+  未登记的 `/api/*` 默认按 `api` 处理。配了 `API_KEYS` 后**读接口也要 Key**（含 `/api/source`、`/api/trace`）。
+- 反向代理后面必须同时设 `ADMIN_TOKEN` + `API_KEYS` + `ALLOWED_HOSTS`：
+  服务端只认 TCP 对端，从不读 `X-Forwarded-For`，否则谁都能冒充本机管理员。
+- 500 响应默认只回异常类型（`DEBUG=on` 才带完整消息）；`/metrics` 的 `key` 标签是名字的哈希前缀。
 
 ### 会话记录（v1.19.0）
 
@@ -96,16 +100,21 @@ python -m src.client status                 # 终端客户端，任何 Python �
 python -m src.desktop                       # 桌面窗口（需要标准库 Tkinter）
 ```
 
-终端客户端还支持 `ask --save` / `notes` / `show` / `cat` / `write` / `threads` / `backup` / `restore`。
-接口层在 `src/client_api.py`，脚本里可以直接复用：
+终端客户端还支持 `ask --save` / `ask --stream` / `notes` / `show` / `cat` / `write` /
+`threads` / `backup` / `restore`。接口层在 `src/client_api.py`，脚本里可以直接复用：
 
 ```python
 from src.client_api import Client
 c = Client("http://127.0.0.1:8000")
 print(c.ask("稳盈系列起购金额是多少")["answer"])
+
+for event, payload in c.ask_stream("稳盈系列起购金额是多少"):   # SSE 逐字
+    if event == "delta":
+        print(payload["text"], end="", flush=True)
 ```
 
-客户端会自动绕过系统代理访问 127.0.0.1（否则代理会返回 502）。
+流式只有 `ask_stream()` 一个实现，桌面窗口与终端共用；遇到不支持流式的服务端，
+桌面端会自动退回一次性请求。客户端会自动绕过系统代理访问 127.0.0.1（否则代理返回 502）。
 **它记的是过程，不是结论**：值得留下的结论仍应通过 `save_conversation` 写成笔记。
 
 ## 三、命令行（只能执行命令的智能体）

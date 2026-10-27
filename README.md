@@ -278,7 +278,7 @@ Windows 双击 `start-desktop.bat`，macOS / Linux 执行 `sh start-desktop.sh`�
 
 | 页签 | 能做什么 |
 |---|---|
-| 问答 | 提问（Ctrl+Enter）、看引用与降级原因、「存为笔记」 |
+| 问答 | 提问（Ctrl+Enter）、**流式逐字显示**、看引用与降级原因、「存为笔记」 |
 | 记忆 | 笔记列表、直接编辑原 Markdown、保存带 `base_rev` 冲突保护、交给系统编辑器 |
 | 会话 | 历史问答只读浏览（与 Web 侧同一份 `threads/`） |
 | 存储 | 存储区路径与占用、打开目录、立即备份、选一个备份恢复 |
@@ -290,7 +290,8 @@ Windows 双击 `start-desktop.bat`，macOS / Linux 执行 `sh start-desktop.sh`�
 
 ```bash
 python -m src.client status
-python -m src.client ask "稳盈系列的起购金额是多少" --save
+python -m src.client ask "稳盈系列的起购金额是多少" --save      # 一次性返回
+python -m src.client ask "稳盈系列的起购金额是多少" --stream     # 逐字输出（SSE）
 python -m src.client notes --limit 20
 python -m src.client show <note_id>
 python -m src.client cat notes/2026/10/xxx.md
@@ -300,6 +301,10 @@ python -m src.client backup --note "手动备份"
 python -m src.client backups
 python -m src.client restore backup-20261027-221500.zip --force
 ```
+
+流式在客户端侧只有一条实现（`Client.ask_stream()`），桌面窗口与终端共用：
+解析 `event:`/`data:` 帧、忽略 `: ping` 心跳、把 `error` 事件转成异常。
+桌面端若一个字都没收到（服务端不支持或中间层截断），会自动退回一次性请求，功能不会因流式失败而丢。
 
 ## 4. 模型接入（任意 OpenAI 兼容端点）
 
@@ -342,6 +347,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `TOP_K` | `4` | 召回条数 |
 | `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
 | `CITATION_STRICT` | `off` | `on` 时「编号合法但内容对不上」的答案降级为抽取式，见 `citation_support_rate` |
+| `DEBUG` | `off` | `on` 时接口异常回传完整消息（含路径）；默认只回异常类型 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `KEYWORD_MODE` | `on` | `on` 命中结构化条目即本地直出；`off` 全部走检索 |
 | `KEYWORD_LLM` | `auto` | `auto` 有 Key 才做摘要/同义词整理；`off` 纯本地；`on` 强制尝试 |
@@ -447,7 +453,10 @@ API：
 | 灰度 | 按 `IP + query` 哈希稳定分流到 `CANARY_MODEL`，比例可在运行时调整 |
 | 回滚 | 每次配置变更保留快照，`POST /api/admin/rollback` 恢复上一版 |
 | 来源校验 | 所有请求 `Host` 只认回环/白名单（挡 DNS rebinding）；写请求必须 `application/json`，`Origin`/`Sec-Fetch-Site` 同源，浏览器来源还要带 `X-Jiyi-Client: web`（挡 CSRF）；否则 `403`/`415` |
+| 路由鉴权表 | `src/routing.py` 按路径登记 `open` / `api` / `admin` 三级，分发前统一执行；未登记的 `/api/*` 默认要 Key。读接口（`/api/source`、`/api/trace`）不再因为是 GET 就放行 |
+| 响应头 | 全站 `nosniff` / `X-Frame-Options: DENY` / `no-referrer`；HTML 额外带 CSP（仅本站资源，禁 iframe 与外部表单） |
 | 并发上限 | 最多 64 个并发连接，超出在 accept 阶段排队；SSE 每 15s 心跳、单次最长 300s |
+| 写锁 | 文件写入与乐观锁比较在同一把锁内；会话落盘串行化并对 Windows 共享冲突重试（并发写不再 500） |
 
 加上已有的 `trace.jsonl` / `/api/metrics` 观测与 `/api/health` 健康检查，共八项生产控制。
 
@@ -622,6 +631,12 @@ VECTOR_IVF_NLIST=64
 VECTOR_IVF_NPROBE=8
 RETRIEVAL=embedding
 ```
+
+**规模上限（实测，本机 Python 3.13）**：没有 numpy/faiss 时走纯 Python 点积，
+5000 块 × 1024 维约 **186 ms/查询**，20k 块约 750 ms，而且 GIL 下并发会线性变差。
+默认的 hash 向量路径（`RETRIEVAL=vector`）5000 块只要约 18 ms，不受这个限制影响。
+所以：**纯后端建议 ≤2k 块**；再大就装 numpy/faiss，或把 `EMBEDDING` 换成本机模型端点 +
+`VECTOR_STORE=faiss`。这不是「慢一点」，是单次问答里多出半秒以上的等待。
 
 索引文件（`data/index/<model>/`）：
 

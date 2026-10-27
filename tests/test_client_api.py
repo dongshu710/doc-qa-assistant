@@ -73,6 +73,28 @@ def main() -> int:
             check("带引用", isinstance(result.get("citations"), list))
             check("带引用支持率", "citation_support_rate" in result)
 
+            print("流式问答")
+            events = []
+            streamed = ""
+            final = None
+            for event, payload in client.ask_stream("稳盈系列的起购金额是多少"):
+                events.append(event)
+                if event == "delta":
+                    streamed += str(payload.get("text") or "")
+                elif event == "replace":
+                    streamed = str(payload.get("text") or "")
+                elif event == "final":
+                    final = payload
+            check("收到 delta 或 replace", any(e in ("delta", "replace") for e in events),
+                  str(events[:6]))
+            check("以 final 收尾", events[-1] == "final", str(events[-3:]))
+            check("流式拿到完整结果", bool((final or {}).get("answer")), str(final)[:80])
+            check("流式文本与最终答案一致",
+                  streamed.strip() == str((final or {}).get("answer") or "").strip(),
+                  f"streamed={streamed[:40]!r} final={str((final or {}).get('answer'))[:40]!r}")
+            check("心跳行没有污染数据", all(e in ("delta", "replace", "final") for e in events),
+                  str(set(events)))
+
             print("存为笔记")
             try:
                 client.save_note("稳盈系列的起购金额是多少", answer)

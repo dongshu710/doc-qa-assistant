@@ -183,6 +183,34 @@ def delete_asset(slug: str, asset_id: int) -> bool:
     return True
 
 
+def verify_asset(slug: str, asset: dict, local: Path) -> bool:
+    """上传后回读：大小与 sha256 都要对上，这次发布才算成功。
+
+    为什么不能只看 201：上传被代理截断、连接中途断开都可能是「响应成功、文件残缺」，
+    而这种包发出去以后，用户下到的是坏 zip，我们这边却显示已发布。
+    """
+    remote_size = int(asset.get("size") or -1)
+    local_size = local.stat().st_size
+    if remote_size != local_size:
+        say(f"  回读失败：{local.name} 远端 {remote_size} 字节，本地 {local_size} 字节")
+        return False
+    url = f"https://api.github.com/repos/{slug}/releases/assets/{asset['id']}"
+    req = urllib.request.Request(url)
+    req.add_header("Authorization", f"token {token()}")
+    req.add_header("Accept", "application/octet-stream")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            remote_digest = hashlib.sha256(resp.read()).hexdigest()
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        say(f"  回读失败：下载 {local.name} 出错（{exc}）")
+        return False
+    local_digest = sha256_of(local)
+    if remote_digest != local_digest:
+        say(f"  回读失败：{local.name} sha256 不一致（远端 {remote_digest[:12]}…）")
+        return False
+    return True
+
+
 def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool = False) -> bool:
     version = tag.lstrip("v")
     paths = [p for p in asset_paths(version) if p.exists()]
@@ -236,6 +264,16 @@ def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool 
             f"（{path.stat().st_size // 1024} KB）")
         if not ok:
             return False
+        # 上传成功不算数，回读比对 sha256 才算数
+        status, fresh = api("GET", f"/repos/{slug}/releases/{release_id}")
+        asset = next((a for a in (fresh or {}).get("assets", [])
+                      if a.get("name") == path.name), None) if status == 200 else None
+        if asset is None:
+            say(f"  回读失败：远端找不到刚上传的 {path.name}")
+            return False
+        if not verify_asset(slug, asset, path):
+            return False
+        say(f"  回读校验通过：{path.name} sha256 {sha256_of(path)[:12]}…")
     return True
 
 
