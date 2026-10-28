@@ -118,12 +118,63 @@ def test_build_budget() -> None:
         check("落盘了 vectors.jsonl", (Path(tmpdir) / "vectors.jsonl").exists())
 
 
+def test_history_in_messages() -> None:
+    print("多轮历史进 messages（C3）")
+    from src.generator import HISTORY_MAX_CHARS, HISTORY_MAX_TURNS, build_messages
+    from src.sessions import Turn
+
+    hits = [(Chunk("稳盈系列起购金额为 1 元，期限 90 天。"), 0.9)]
+
+    plain = build_messages("起购金额是多少", hits)
+    check("无历史时只有 system + user", len(plain) == 2, str(len(plain)))
+    check("当前问题带资料块", "【资料】" in plain[-1]["content"]
+          and "【问题】起购金额是多少" in plain[-1]["content"])
+
+    one = [Turn(query="稳盈系列的期限是多久", answer="90 天 [1]", ts=0.0)]
+    with_history = build_messages("那起购金额呢", hits, one)
+    check("带历史时是 4 条", len(with_history) == 4, str(len(with_history)))
+    check("历史问题标注为上一轮", with_history[1]["role"] == "user"
+          and "上一轮" in with_history[1]["content"], with_history[1]["content"])
+    check("历史答案作为 assistant", with_history[2]["role"] == "assistant"
+          and "90 天" in with_history[2]["content"])
+    check("最后一轮仍是本次资料 + 问题", "【问题】那起购金额呢" in with_history[-1]["content"])
+
+    many = [Turn(query=f"问题 {i}", answer=f"答案 {i}", ts=float(i)) for i in range(5)]
+    trimmed = build_messages("继续追问", hits, many)
+    check("只取最近一轮", len(trimmed) == 4, str(len(trimmed)))
+    check("取的是最后一条", "问题 4" in trimmed[1]["content"], trimmed[1]["content"])
+    check("HISTORY_MAX_TURNS 与实现一致", HISTORY_MAX_TURNS == 1, str(HISTORY_MAX_TURNS))
+
+    long_turn = [Turn(query="问" * 600, answer="答" * 600, ts=0.0)]
+    capped = build_messages("继续", hits, long_turn)
+    check("历史被截断", len(capped[1]["content"]) <= HISTORY_MAX_CHARS + 10,
+          str(len(capped[1]["content"])))
+    check("截断后仍保留标记", "上一轮" in capped[1]["content"])
+
+
+def test_context_budget() -> None:
+    print("资料长度上限（C2）")
+    from src.generator import _build_context
+
+    big = [(Chunk("甲" * 3000), 0.9), (Chunk("乙" * 3000), 0.8), (Chunk("丙" * 3000), 0.7)]
+    text = _build_context(big, max_chars=4000)
+    check("超出预算的块被裁掉", text.count("<document") == 1, str(text.count("<document")))
+    check("截断在提示里可见", "另有 2 段未纳入" in text, text[-40:])
+    check("第一块完整保留", "甲" * 100 in text)
+
+    small = [(Chunk("短资料"), 0.9)]
+    check("放得下时不加提示", "未纳入" not in _build_context(small, max_chars=4000))
+    check("默认预算来自配置", _build_context(small).count("<document") == 1)
+
+
 def main() -> int:
     test_injection_scan()
     test_injection_wrap()
     test_citation_support()
     test_pipeline_wiring()
     test_build_budget()
+    test_history_in_messages()
+    test_context_budget()
     print(f"\n{'全部通过' if FAILED == 0 else f'{FAILED} 项失败'}")
     return 0 if FAILED == 0 else 1
 

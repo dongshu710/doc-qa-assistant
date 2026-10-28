@@ -2,6 +2,62 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.22.0] - 2026-10-28
+
+把上一版明确留下的两件事做掉：**`server.py` 拆文件**（B7 的后半）与
+**多轮历史进 messages**（C3），另外补上资料长度上限（C2 的一半）。
+
+### 结构：2241 行的 server.py 拆成 5 个路由模块（B7）
+
+拆分方式和结果：
+
+| 文件 | 行数 | 职责 |
+|---|---|---|
+| `src/server.py` | 62 | 只剩命令行入口与兼容的 `create_server` |
+| `src/http_server.py` | 42 | `BoundedHTTPServer`（限并发） |
+| `src/handlers/common.py` | 80 | 上限常量与纯函数（文件名净化、项目根、jsonl 尾读） |
+| `src/handlers/base.py` | 373 | 响应/压缩/ETag、来源闸门、鉴权、`do_PUT/PATCH/DELETE/OPTIONS` |
+| `src/handlers/resources.py` | 513 | 笔记、会话、文件、存储、设置 |
+| `src/handlers/read.py` | 373 | 页面与全部只读 API |
+| `src/handlers/write.py` | 853 | 问答（含 SSE）、知识库、设置写入、评测用例 |
+| `src/handlers/app.py` | 421 | 组合根：装配依赖，把四个路由类拼成 Handler |
+
+关键做法：依赖从「`create_server()` 的闭包」变成**显式传参**（`make_xxx(deps)`），
+方法体原样搬过去，所以语义没有变化。三个坑都是拆分过程中真实踩到并用测试抓出来的：
+
+1. `_knowledge_dir()` / `_raw_dir()` 多退了一层目录（`src/` 当成了项目根）→ 知识库路径错误；
+2. 组合根的 `project_root` 同样算错 → `/api/cases` 找不到用例文件，评测跑出 `total=0`；
+3. 基类忘了继承 `BaseHTTPRequestHandler` → 每个请求都 `Handler() takes no arguments`。
+
+新增结构测试（`tests/test_routing.py`）：`server.py` ≤120 行、不再定义 Handler、
+五个模块齐全、组合根里不许出现 `self._json(`；六个 `do_*` 的第一句必须是 `_guard`
+（现在按目录扫，不再只看 server.py）。
+
+### 质量：多轮历史进 messages（C3）
+
+以前多轮历史只用于**改写检索词**，模型看不到对话，追问「那第二条呢」只能靠规则蒙。
+现在 `build_messages()` 带**最近一轮** Q/A（各截断 240 字，标为「上一轮」），
+system prompt 增加第 5 条：「上一轮只用于理解追问指向，答案仍以本次【资料】为准」。
+检索与引用校验仍按当前问题，不放松「无出处不交付」。
+
+只带一轮是有意的：带多了模型会开始复述上一轮的答案与引用编号，
+而引用校验是针对本次 `hits` 做的，旧编号会被判成错引。
+
+### 质量：资料长度上限（C2 的一半）
+
+`MAX_CONTEXT_CHARS`（默认 6000）限制拼进 prompt 的资料总量。以前 4 块 × 320 字看似不多，
+但表格块和长条款块能到几千字，拼起来会把当前问题挤到很后面。超出预算时按命中顺序裁掉尾部，
+并在结尾写明「另有 N 段未纳入本次上下文」——**截断必须可见**，否则模型以为资料就这些。
+
+未做的一半：分块重叠（chunk overlap）。它会改变所有 chunk 的边界与索引，
+必须重建索引并重跑评测做 A/B，属于「会改变答案」的改动，不和本次结构重构混在一起发。
+
+### 测试
+
+- 全量 46 个 Python 测试脚本 + 4 组 Playwright e2e + `check_frontend` 37/0 全绿；
+- 离线评测仍 **26/26**、对抗 7/7（`tests/eval_run.py`）；
+- 新增 C3 用例 11 项、C2 用例 5 项、结构用例 8 项。
+
 ## [1.21.1] - 2026-10-27
 
 发布 1.21.0 时真实踩到的坑：本机代理开始对 `api.github.com` 返回 `502`，

@@ -116,15 +116,32 @@ def test_table() -> None:
 
 def test_dispatch_guard() -> None:
     print("分发函数必须过闸")
-    text = (ROOT / "src" / "server.py").read_text(encoding="utf-8")
+    # 路由已经拆到 src/handlers/：六个 do_* 分散在 base / read / write 里，
+    # 所以按目录扫，而不是只看 server.py。
+    sources = "\n\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "src" / "handlers").glob("*.py")))
     for verb in ("do_GET", "do_POST", "do_PUT", "do_PATCH", "do_DELETE", "do_OPTIONS"):
-        match = re.search(rf"def {verb}\(self\).*?(?=\n        def )", text, re.S)
+        match = re.search(rf"        def {verb}\(self\).*?(?=\n        def |\n\n    return )",
+                          sources, re.S)
         check(f"{verb} 存在", bool(match), verb)
         if not match:
             continue
         check(f"{verb} 第一句就是 _guard",
               re.search(r"if self\._guard\(", match.group(0)) is not None,
               match.group(0)[:60].replace("\n", " "))
+
+
+def test_layout() -> None:
+    print("文件职责边界")
+    server = (ROOT / "src" / "server.py").read_text(encoding="utf-8")
+    check("server.py 只剩入口（≤120 行）", server.count("\n") <= 120, str(server.count("\n")))
+    check("server.py 不再定义 Handler", "class Handler" not in server)
+    modules = {p.stem for p in (ROOT / "src" / "handlers").glob("*.py")}
+    for name in ("app", "base", "resources", "read", "write", "common"):
+        check(f"handlers/{name}.py 存在", name in modules, str(sorted(modules)))
+    app = (ROOT / "src" / "handlers" / "app.py").read_text(encoding="utf-8")
+    check("组合根只装配、不写路由", "self._json(" not in app)
 
 
 def test_enforcement() -> None:
@@ -175,6 +192,7 @@ def test_enforcement() -> None:
 def main() -> int:
     test_table()
     test_dispatch_guard()
+    test_layout()
     test_enforcement()
     print()
     print("全部通过" if not FAILED else f"{FAILED} 项失败")

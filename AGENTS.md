@@ -68,6 +68,9 @@ POST /api/files/open {path}                        # 交给用户的系统编辑
 - **鉴权按 `src/routing.py` 的表**：`open`（设置/健康/更新/契约）、`api`（其余 `/api/*`）、
   `admin`（`/metrics`、`/api/audit`、`/api/admin/*`、`/api/kb/approve|reject|rollback_doc`）。
   未登记的 `/api/*` 默认按 `api` 处理。配了 `API_KEYS` 后**读接口也要 Key**（含 `/api/source`、`/api/trace`）。
+- **要改代码**：路由在 `src/handlers/`（`read.py` 只读、`write.py` 写入、`resources.py` 资源、
+  `base.py` 闸门与通用动作、`app.py` 装配依赖）。`src/server.py` 只有入口，
+  `tests/test_routing.py` 会断言它保持精简、且每个 `do_*` 第一句都过 `_guard`。
 - 反向代理后面必须同时设 `ADMIN_TOKEN` + `API_KEYS` + `ALLOWED_HOSTS`：
   服务端只认 TCP 对端，从不读 `X-Forwarded-For`，否则谁都能冒充本机管理员。
 - 500 响应默认只回异常类型（`DEBUG=on` 才带完整消息）；`/metrics` 的 `key` 标签是名字的哈希前缀。

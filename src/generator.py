@@ -25,17 +25,32 @@ def system_prompt() -> str:
 SYSTEM_PROMPT = get_profile("finance").system_prompt
 
 
-def _build_context(hits) -> str:
+def _build_context(hits, max_chars: int | None = None) -> str:
     """把命中块拼成上下文。每块都包进 <document trust="untrusted">。
 
     为什么不用纯文本拼接：文档正文里可以写「忽略以上指令」，而模型看到的
     只是一段连续文本，分不清哪句是资料、哪句是命令。加边界 + system 里说明
     「document 内是数据」，是把「可被投毒」降成「可能被投毒且留痕」。
+
+    为什么要截断（C2）：4 块 × 320 字看着不多，但表格与长条款块可以到几千字，
+    拼起来能挤掉当前问题本身。超过 `MAX_CONTEXT_CHARS` 就按命中顺序裁掉尾部，
+    并在结尾写明「另有 N 段未纳入」——截断必须可见，否则模型以为资料就这些。
     """
-    lines = []
+    budget = int(max_chars or load_settings().max_context_chars or 6000)
+    lines: list[str] = []
+    used = 0
+    dropped = 0
     for i, (chunk, _score) in enumerate(hits, 1):
-        lines.append(injection.wrap(i, chunk.title, chunk.section, chunk.text))
-    return "\n\n".join(lines)
+        block = injection.wrap(i, chunk.title, chunk.section, chunk.text)
+        if lines and used + len(block) > budget:
+            dropped += 1
+            continue
+        lines.append(block)
+        used += len(block)
+    text = "\n\n".join(lines)
+    if dropped:
+        text += f"\n\n（资料较长，另有 {dropped} 段未纳入本次上下文）"
+    return text
 
 
 def _best_sentence(query: str, chunk) -> str:
@@ -129,16 +144,33 @@ def repair_citation(query: str, hits, answer: str) -> str | None:
     return text.strip() or None
 
 
-def build_messages(query: str, hits) -> list[dict]:
-    """生成与流式共用同一份提示，避免两条路径的答案口径不一致。"""
-    return [
-        {"role": "system", "content": system_prompt()},
-        {"role": "user", "content": f"【资料】\n{_build_context(hits)}\n\n【问题】{query}"},
-    ]
+HISTORY_MAX_TURNS = 1        # 只带最近一轮：再多会让模型开始复述旧答案
+HISTORY_MAX_CHARS = 240      # 每段截断，避免历史挤掉资料与当前问题
 
 
-def _call_llm(query: str, hits, model: str | None = None) -> tuple[str, dict]:
-    return chat(build_messages(query, hits), temperature=0.1, model=model)
+def build_messages(query: str, hits, history=None) -> list[dict]:
+    """生成与流式共用同一份提示，避免两条路径的答案口径不一致。
+
+    为什么要带历史：追问「那第二条呢」离开上一轮就无从理解。以前只把历史用于
+    改写检索词，模型看不到对话，答案常常答非所问。这里只带**最近一轮**，
+    且历史明确标为「仅供参考」——资料才是本次回答的依据。
+    """
+    messages = [{"role": "system", "content": system_prompt()}]
+    for turn in list(history or [])[-HISTORY_MAX_TURNS:]:
+        question = str(getattr(turn, "query", "") or "").strip()[:HISTORY_MAX_CHARS]
+        answer = str(getattr(turn, "answer", "") or "").strip()[:HISTORY_MAX_CHARS]
+        if not question:
+            continue
+        messages.append({"role": "user", "content": f"（上一轮）{question}"})
+        if answer:
+            messages.append({"role": "assistant", "content": answer})
+    messages.append(
+        {"role": "user", "content": f"【资料】\n{_build_context(hits)}\n\n【问题】{query}"})
+    return messages
+
+
+def _call_llm(query: str, hits, model: str | None = None, history=None) -> tuple[str, dict]:
+    return chat(build_messages(query, hits, history), temperature=0.1, model=model)
 
 
 def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | None = None,
@@ -210,8 +242,12 @@ def _retry_after(exc: Exception) -> float | None:
     return None
 
 
-def generate(query: str, hits, model: str | None = None, force_extractive: bool = False) -> dict:
-    """生成答案。force_extractive 用于成本上限触发时跳过模型调用。"""
+def generate(query: str, hits, model: str | None = None, force_extractive: bool = False,
+             history=None) -> dict:
+    """生成答案。force_extractive 用于成本上限触发时跳过模型调用。
+
+    `history` 只影响模型能看到的上文（最近一轮），检索与引用校验仍按当前问题。
+    """
     settings = load_settings()
     t0 = time.time()
 
@@ -232,7 +268,7 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
             last_err = TimeoutError("超出墙钟预算")
             break
         try:
-            answer, usage = _call_llm(query, hits, model=model)
+            answer, usage = _call_llm(query, hits, model=model, history=history)
             return {
                 "mode": "llm",
                 "answer": answer,

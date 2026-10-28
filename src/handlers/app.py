@@ -1,0 +1,423 @@
+"""组合根：把运行时依赖装配起来，再把路由类拼成一个 Handler。
+
+为什么单独一层：`create_server()` 原来同时负责「建依赖」和「定义 30 多个路由方法」，
+2241 行里两种关注点缠在一起，改一个上传接口要在一屏之外找对应的鉴权。
+现在依赖只在这里组装，路由在 base/resources/read/write 四个文件里。
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import gzip
+import hashlib
+import json
+import os
+import pathlib
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.request
+import uuid
+from collections import Counter
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
+                routing, security, settings_ops, suggest)
+from .. import update as update_mod
+from ..auth import ApiKeyStore, safe_equal
+from ..config import api_key, load_settings
+from ..guards import Guards
+from ..metrics import summarize
+from ..metrics_exporter import Metrics
+from ..notes.api import ApiError
+from ..notes.api import dispatch as notes_dispatch
+from ..notes.service import NoteService
+from ..notes.tools import tools_payload as notes_tools_payload
+from ..openapi import build_spec
+from ..pipeline import RAGPipeline
+from ..theme import FILES_PAGE
+from ..threadstore import ThreadError, ThreadStore
+from ..version import __version__
+from ..web_pages import ASK_HTML, KB_HTML
+from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
+                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
+                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
+                     _safe_doc_name, _safe_kb_name)
+
+from types import SimpleNamespace
+
+from ..http_server import BoundedHTTPServer
+from .base import make_base
+from .read import make_read
+from .resources import make_resources
+from .write import make_write
+
+
+def build_app(host: str, port: int, knowledge_dir: str | None = None):
+    # 本文件在 src/handlers/ 下：项目根要退三层，退两层会算成 src/
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    settings = load_settings()
+    metrics = Metrics(enabled=True)
+    # 显式传入目录 = 传统单目录模式（测试与批量导入用）；否则走版本库 + 审批流
+    store: kbstore.KnowledgeStore | None = None
+    if knowledge_dir is None and settings.kb_store not in ("off", "0", "false", "no"):
+        kb_root = settings.kb_dir if os.path.isabs(settings.kb_dir) else os.path.join(project_root, settings.kb_dir)
+        seed = settings.kb_seed_dir if os.path.isabs(settings.kb_seed_dir) else os.path.join(project_root, settings.kb_seed_dir)
+        store = kbstore.KnowledgeStore(kb_root, seed_dir=seed,
+                                       keep_versions=settings.kb_keep_versions)
+        store.bootstrap()
+        pipe = RAGPipeline(store.active_dir())
+    else:
+        pipe = RAGPipeline(knowledge_dir or _knowledge_dir())
+
+    log_dir = os.path.dirname(pipe.log_path)
+    guards = Guards(pipe.settings, log_dir)
+    api_keys = ApiKeyStore(pipe.settings.api_keys)
+    try:
+        note_ref: dict = {"service": NoteService(), "error": None}
+    except OSError as exc:  # 目录不可写等情况：接口回 503，问答照常
+        note_ref = {"service": None, "error": f"{type(exc).__name__}: {exc}"}
+
+    feedback_path = os.path.join(log_dir, "feedback.jsonl")
+    feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
+    raw_dir = _raw_dir()
+    doc_cases_path = os.path.join(project_root, "tests", "eval_cases_docs.jsonl")
+    run_report_path = os.path.join(project_root, "tests", "report_doc_cases.json")
+
+    def kb_dir() -> str:
+        """活动版本目录；审批通过后只换这个指针，不在原目录上打补丁。"""
+        # 异步重建期间 pipe.knowledge_dir 还是旧的，列表必须以版本库为准，
+        # 否则刚上传的文件在页面上“消失”几秒。
+        return store.active_dir() if store is not None else pipe.knowledge_dir
+
+    def async_reload() -> bool:
+        # 传统单目录模式（测试/批量导入）保持同步：调用方拿到的 chunks 必须是最终值。
+        return store is not None and (pipe.settings.kb_async_reload or "on").strip().lower() == "on"
+
+    def reload_kb(wait: bool | None = None) -> int | None:
+        """重建索引。默认按 KB_ASYNC_RELOAD 走后台；返回 None 表示“已排队”。"""
+        target = store.active_dir() if store is not None else None
+        if wait is None:
+            wait = not async_reload()
+        if wait:
+            return pipe.reload(target or pipe.knowledge_dir)
+        pipe.reload_async(target or pipe.knowledge_dir)
+        return None
+
+    def index_payload() -> dict:
+        return pipe.rebuild_state()
+
+    def index_fields(before: int | None = None) -> dict:
+        """接口响应用的索引字段：重建中时 chunks 返回 null，避免报旧值误导。"""
+        state = pipe.rebuild_state()
+        building = bool(state.get("rebuilding"))
+        out = {"rebuilding": building, "index": state,
+               "chunks": None if building else len(pipe.chunks)}
+        if before is not None:
+            out["added_chunks"] = None if building else len(pipe.chunks) - before
+        return out
+
+    def _reopen_notes() -> dict:
+        """存储位置变了就重建笔记服务：旧实例的路径与缓存都指向老目录，不能复用。"""
+        try:
+            note_ref["service"] = NoteService()
+            note_ref["error"] = None
+            return {"ok": True, "home": str(note_ref["service"].store.home)}
+        except OSError as exc:
+            note_ref["error"] = f"{type(exc).__name__}: {exc}"
+            return {"ok": False, "message": note_ref["error"]}
+
+    def _repo_url() -> str:
+        """从 .git/config 读 origin，换 fork 也不用改代码；读不到就给个能点的默认值。"""
+        try:
+            text = (pathlib.Path(project_root) / ".git" / "config").read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        found = re.search(r"url\s*=\s*(\S+)", text)
+        if not found:
+            return ""
+        url = found.group(1)
+        match = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?$", url)
+        return f"https://github.com/{match.group(1)}/{match.group(2)}" if match else ""
+
+    def _downloads() -> dict:
+        """两种下载入口：整包（问答+笔记）与插件包（只有笔记）。页面按钮直接指到这里。"""
+        repo = _repo_url()
+        if not repo:
+            return {"page": "", "app": "", "plugin": ""}
+        names = update_mod.asset_names(__version__)
+        base = f"{repo}/releases/latest/download"
+        return {"page": f"{repo}/releases/latest",
+                "app": f"{base}/{names['app']}",
+                "plugin": f"{base}/{names['plugin']}"}
+
+    def _mcp_config() -> dict:
+        """生成 MCP 客户端配置；实现放在 settings_ops，这里只负责取当前实际路径。"""
+        service = note_ref["service"]
+        home = str(service.store.home) if service else str(pathlib.Path.home() / "agent-notes")
+        return settings_ops.mcp_config(sys.executable, project_root, home)
+
+    def _probe_llm(cfg: dict) -> dict:
+        """真打一次 minimal 请求验证配置。实现见 settings_ops.probe_llm（可单测）。"""
+        return settings_ops.probe_llm(cfg.get("base_url"), cfg.get("model"), cfg.get("api_key"))
+
+    def _storage_report(fresh: bool = False) -> dict:
+        service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        index_dir = settings.embedding_index_dir
+        if index_dir and not os.path.isabs(index_dir):
+            index_dir = os.path.join(project_root, index_dir)
+        return settings_ops.storage_report(
+            notes_home=home,
+            kb_root=str(store.root) if store is not None else "",
+            index_dir=index_dir,
+            config_path=str(appconfig.path()),
+            keep_versions=appconfig.keep_versions(),
+            fresh=fresh,
+        )
+
+    def _clear_index(home: str) -> int:
+        return settings_ops.clear_index(home) if home else 0
+
+    def _total_bytes(report: dict) -> int:
+        return sum(int((report.get(key) or {}).get("bytes") or 0)
+                   for key in ("notes", "index", "kb", "config", "embedding"))
+
+    def _settings_payload() -> dict:
+        live = load_settings()
+        view = appconfig.view()
+        service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        # 笔记篇数直接取存储统计的结果：两边都数的是 notes/*.md，
+        # 分开数就是同一棵树走两遍（千篇时多花 10 ms 以上，且两次结果可能不一致）。
+        storage = _storage_report()
+        count = int((storage.get("notes") or {}).get("files") or 0)
+        return {
+            "ok": True,
+            "llm": {
+                **view["llm"],
+                "effective_base_url": live.api_base,
+                "effective_model": live.model,
+                "key_ready": bool(api_key()),
+            },
+            "notes": {
+                **view["notes"],
+                "home_effective": home,
+                "home_default": str(pathlib.Path.home() / "agent-notes"),
+                "available": service is not None,
+                "error": note_ref["error"],
+                "count": count,
+                "backup": appconfig.backup_state(count),
+            },
+            "mcp": _mcp_config(),
+            "repo_url": _repo_url(),
+            "downloads": _downloads(),
+            "storage": storage,
+            "config_path": view["config_path"],
+            "config_error": view.get("config_error") or "",
+            "config_backup": view.get("config_backup") or "",
+            "updated_at": view["updated_at"],
+        }
+
+    def _runtime_warnings() -> list[str]:
+        """把「能跑但已经降级」的状态汇总成一句句人话，供 /api/health 与页面提示。
+
+        为什么需要：Redis 抖动退回内存、embedding 建库失败退回 n-gram，
+        这些都不影响出答案，所以最容易被忽略——而它们直接改变答案质量与成本口径。
+        """
+        out: list[str] = []
+        try:
+            status = guards.status()
+        except Exception:  # noqa: BLE001 —— 健康检查本身不能 500
+            return out
+        for name, hits in (status.get("fallbacks") or {}).items():
+            if hits:
+                out.append(f"{name} 已退回进程内状态（累计 {hits} 次），多实例下不再一致")
+        if status.get("redis_error"):
+            out.append(f"Redis 不可用：{status['redis_error']}")
+        detail = pipe.retrieval_detail or {}
+        if detail.get("fallback_error"):
+            out.append(f"检索未按配置运行：{detail['fallback_error']}")
+        if detail.get("degraded"):
+            out.append("embedding 最近一次调用失败，当前为词法兜底")
+        if note_ref["service"] is None:
+            out.append(f"笔记存储不可用：{note_ref['error']}")
+        return out
+
+    def _setup_state() -> dict:
+        """首次运行引导的状态：没建过存储区就要提示，建过就不再打扰。"""
+        service = note_ref["service"]
+        home = str(service.store.home) if service else ""
+        count = _count_notes(home) if home else 0
+        # 老用户升级上来时目录里已经有笔记：默认值给现有位置，别让人「重新建一个空库」
+        suggested = home if count else str(pathlib.Path.home() / "记忆文档")
+        return {
+            "ok": True,
+            "needed": not appconfig.setup_done(),
+            "home": home,
+            "default_home": suggested,
+            "notes": count,
+            "exists": bool(suggested) and os.path.isdir(suggested),
+            "platform": sys.platform,
+        }
+
+    def _apply_setup(home: str, client: str = "") -> tuple[dict, int]:
+        """建存储区：目录、说明文件、配置一次写全，然后重建笔记服务。
+
+        失败必须说清是哪一步失败的（不可写 / 是文件 / 建目录失败），
+        否则用户只会看到「设置失败」四个字，不知道去改什么。
+        """
+        text = appconfig.clean_path(home)
+        if not text:
+            return {"ok": False, "error": "invalid_argument", "message": "先选一个存放位置"}, 400
+        target = pathlib.Path(text).expanduser()
+        if not target.is_absolute():
+            return {"ok": False, "error": "invalid_argument",
+                    "message": "填绝对路径，例如 D:////记忆文档"}, 400
+        if target.exists() and not target.is_dir():
+            return {"ok": False, "error": "invalid_argument",
+                    "message": f"{target} 是个文件，不能当存储区"}, 400
+        created = []
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            for name in ("notes", "threads", "index", "exports", "assets"):
+                path = target / name
+                if not path.exists():
+                    path.mkdir(parents=True, exist_ok=True)
+                    created.append(name)
+            probe = target / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            return {"ok": False, "error": "io_error",
+                    "message": f"这个位置不可写：{exc}"}, 400
+        try:
+            appconfig.update({"notes": {"home": str(target)},
+                              "setup": {"done": True}})
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_argument", "message": str(exc)}, 400
+        reopened = _reopen_notes()
+        if not reopened.get("ok"):
+            # 目录建好了但服务没起来：配置保留，报错让人能重试，不要假装成功
+            return {"ok": False, "error": "notes_unavailable",
+                    "message": f"目录已建好，但笔记服务启动失败：{reopened.get('message')}",
+                    "home": str(target)}, 500
+        guards.audit.write("setup.done", client=client, home=str(target), created=created)
+        return {"ok": True, "home": str(target), "created": created,
+                "notes": _count_notes(str(target))}, 200
+
+    def _claude_config_path() -> pathlib.Path | None:
+        appdata = os.environ.get("APPDATA")
+        if os.name == "nt" and appdata:
+            return pathlib.Path(appdata) / "Claude" / "claude_desktop_config.json"
+        if sys.platform == "darwin":
+            return pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        if sys.platform.startswith("linux"):
+            return pathlib.Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        return None
+
+    pick_lock = threading.Lock()      # 连点两次不能弹两个框
+
+    def _picker_command() -> list[str] | None:
+        """各平台的原生目录选择器。找不到就返回 None，让前端回退到手输。"""
+        if os.name == "nt":
+            exe = shutil.which("powershell") or shutil.which("pwsh")
+            if not exe:
+                return None
+            script = (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$d.Description='选择笔记存储位置';"
+                "$d.ShowNewFolderButton=$true;"
+                "if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK)"
+                "{[Console]::Out.Write($d.SelectedPath)}"
+            )
+            cmd = [exe, "-NoProfile", "-Command", script]
+            # Windows PowerShell 5.1 需要 -STA 才能弹 WinForms；pwsh 7 默认就是 STA，传了反而报错
+            if os.path.basename(exe).lower().startswith("powershell"):
+                cmd.insert(2, "-STA")
+            return cmd
+        if sys.platform == "darwin":
+            return ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择笔记存储位置")']
+        if shutil.which("zenity"):
+            return ["zenity", "--file-selection", "--directory", "--title=选择笔记存储位置"]
+        if shutil.which("kdialog"):
+            return ["kdialog", "--getexistingdirectory", str(pathlib.Path.home())]
+        return None
+
+    def _pick_folder() -> tuple[int, dict]:
+        """弹系统原生目录选择框，返回 (HTTP 状态, 响应体)。
+
+        浏览器拿不到本机路径，只能由服务进程在桌面会话里弹。
+        独立子进程执行：不占 HTTP 线程，也不和 GUI 主线程纠缠；
+        取消 / 超时 / 无图形环境都返回结构化结果，前端据此回退到手输。
+        """
+        if (os.environ.get("SETTINGS_PICKER") or "").strip().lower() in ("off", "0", "false"):
+            return 200, {"ok": False, "error": "disabled", "message": "目录选择已关闭，请手动填路径"}
+        if not pick_lock.acquire(timeout=1):
+            return 429, {"ok": False, "error": "busy", "message": "已经有一个选择窗口开着"}
+        try:
+            cmd = _picker_command()
+            if not cmd:
+                return 200, {"ok": False, "error": "unsupported",
+                             "message": "这个系统没有可用的目录选择器，请手动填路径"}
+            started = time.time()
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace", timeout=180)
+            except subprocess.TimeoutExpired:
+                return 200, {"ok": False, "error": "timeout", "message": "等了 180 秒没有选择，已取消"}
+            except OSError as exc:
+                return 200, {"ok": False, "error": "unsupported", "message": f"弹不出选择框：{exc}"}
+            path = appconfig.clean_path(proc.stdout or "")
+            if proc.returncode != 0 or not path:
+                return 200, {"ok": False, "error": "cancelled", "message": "已取消"}
+            return 200, {"ok": True, "path": path,
+                         "elapsed_ms": int((time.time() - started) * 1000)}
+        finally:
+            pick_lock.release()
+
+    def _count_notes(home: str) -> int:
+        return settings_ops.count_notes(home)
+
+    def _copy_notes(src: str, dst: str) -> dict:
+        return settings_ops.copy_notes(src, dst)
+
+
+    deps = SimpleNamespace(
+        project_root=project_root, settings=settings, metrics=metrics, pipe=pipe,
+        store=store, log_dir=log_dir, guards=guards, api_keys=api_keys,
+        note_ref=note_ref, feedback_path=feedback_path,
+        feedback_cases_path=feedback_cases_path, doc_cases_path=doc_cases_path,
+        run_report_path=run_report_path, raw_dir=raw_dir, kb_dir=kb_dir,
+        async_reload=async_reload, reload_kb=reload_kb, index_payload=index_payload,
+        index_fields=index_fields, _reopen_notes=_reopen_notes, _repo_url=_repo_url,
+        _downloads=_downloads, _mcp_config=_mcp_config, _probe_llm=_probe_llm,
+        _storage_report=_storage_report, _clear_index=_clear_index,
+        _total_bytes=_total_bytes, _settings_payload=_settings_payload,
+        _runtime_warnings=_runtime_warnings, _setup_state=_setup_state,
+        _apply_setup=_apply_setup, _claude_config_path=_claude_config_path,
+        _picker_command=_picker_command, _pick_folder=_pick_folder,
+        _count_notes=_count_notes, _copy_notes=_copy_notes,
+    )
+    ReadRoutes = make_read(deps)
+    WriteRoutes = make_write(deps)
+    ResourceRoutes = make_resources(deps)
+    BaseRoutes = make_base(deps)
+
+    class Handler(ReadRoutes, WriteRoutes, ResourceRoutes, BaseRoutes):
+        # HEAD 复用 GET：BaseHTTPRequestHandler 会把 HEAD 当独立方法找，
+        # 不显式绑定就会 501（浏览器的预检与部分客户端会先发 HEAD）。
+        do_HEAD = ReadRoutes.do_GET
+
+    httpd = BoundedHTTPServer((host, port), Handler)
+    return httpd, pipe

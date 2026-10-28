@@ -361,14 +361,16 @@ class RAGPipeline:
                         result["retrieval_score"] = exp_hits[0][1]
 
         return result, {"query": context_query, "hits": hits, "t0": t0,
-                        "model": model, "force_extractive": force_extractive}
+                        "model": model, "force_extractive": force_extractive,
+                        "history": history}
 
     def ask(self, query: str, model: str | None = None, force_extractive: bool = False,
             session_id: str | None = None) -> dict:
         result, ctx = self._prepare(query, model, force_extractive, session_id)
         if ctx is None:
             return result
-        gen = generate(ctx["query"], ctx["hits"], model=model, force_extractive=force_extractive)
+        gen = generate(ctx["query"], ctx["hits"], model=model,
+                       force_extractive=force_extractive, history=ctx["history"])
         return self._finalize(result, ctx, gen)
 
     def ask_stream(self, query: str, model: str | None = None, force_extractive: bool = False,
@@ -384,15 +386,17 @@ class RAGPipeline:
             return
 
         if ctx["force_extractive"] or not api_key():
-            gen = generate(ctx["query"], ctx["hits"], model=ctx["model"], force_extractive=True)
+            gen = generate(ctx["query"], ctx["hits"], model=ctx["model"],
+                           force_extractive=True, history=ctx["history"])
             if gen["answer"]:
                 yield "delta", gen["answer"]
         else:
             chunks: list[str] = []
             usage: dict = {}
             try:
-                for delta in stream_chat(build_messages(ctx["query"], ctx["hits"]),
-                                         model=ctx["model"], usage_out=usage):
+                for delta in stream_chat(
+                        build_messages(ctx["query"], ctx["hits"], ctx["history"]),
+                        model=ctx["model"], usage_out=usage):
                     chunks.append(delta)
                     yield "delta", delta
                 answer = "".join(chunks).strip()

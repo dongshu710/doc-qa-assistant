@@ -97,6 +97,8 @@ class Settings:
     vector_ivf_nprobe: int = 8
     # 输入
     max_input_chars: int = 500
+    # 资料总长度上限：命中块拼起来超过这个数就按顺序裁掉后面的，并显式标注
+    max_context_chars: int = 6000
     # 引用校验：strict 时「编号合法但内容不支持」的答案会降级为抽取式
     citation_strict: bool = False
     # 是否把异常原文回传前端：默认关，只在排查问题时打开
@@ -172,6 +174,7 @@ def load_settings() -> Settings:
         query_expansion=expansion,
         profile=(_first_env("APP_PROFILE", default="finance") or "finance").strip().lower(),
         max_input_chars=int(_first_env("MAX_INPUT_CHARS", default="500")),
+        max_context_chars=max(800, int(_first_env("MAX_CONTEXT_CHARS", default="6000"))),
         citation_strict=(_first_env("CITATION_STRICT", default="off") or "off").strip().lower()
         in ("on", "1", "true", "yes"),
         debug=(_first_env("DEBUG", default="off") or "off").strip().lower()
