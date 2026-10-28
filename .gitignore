@@ -39,3 +39,7 @@ Thumbs.db
 tests/e2e-layout-server.log
 
 tests/report.json
+
+# pip install . 会在项目目录留下这些（构建隔离不清理）
+build/
+*.egg-info/

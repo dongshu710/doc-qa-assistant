@@ -122,7 +122,7 @@ class OpenAIEmbeddingProvider:
 
         attempt = 0
         while True:
-            attempted_at = time.time()
+            attempted_at = time.monotonic()
             if attempted_at >= deadline:
                 raise EmbeddingError(f"embedding 超出墙钟预算 {self.wall_clock_s}s")
             try:
@@ -155,7 +155,7 @@ class OpenAIEmbeddingProvider:
         return min(self.backoff_max_s, raw * jitter)
 
     def _sleep(self, seconds: float, deadline: float) -> None:
-        remaining = deadline - time.time()
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise EmbeddingError(f"embedding 超出墙钟预算 {self.wall_clock_s}s")
         time.sleep(min(seconds, remaining))
@@ -217,7 +217,7 @@ class OpenAIEmbeddingProvider:
         if not cleaned:
             return EmbeddingResult([], self.model, self.dim, {}, 0.0)
 
-        started = time.time()
+        started = time.monotonic()
         deadline = started + max(self.timeout_s, float(budget_s or self.wall_clock_s))
         vectors: list[list[float]] = []
         usage = {"prompt_tokens": 0, "total_tokens": 0}
@@ -228,7 +228,7 @@ class OpenAIEmbeddingProvider:
             usage["prompt_tokens"] += int(used.get("prompt_tokens") or 0)
             usage["total_tokens"] += int(used.get("total_tokens") or 0)
         result = EmbeddingResult(vectors, self.model, self.dim, usage,
-                                 round((time.time() - started) * 1000, 1))
+                                 round((time.monotonic() - started) * 1000, 1))
         with self._lock:
             self.last_usage = usage
         return result

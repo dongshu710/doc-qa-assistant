@@ -48,6 +48,7 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/api/ask", API),
     ("/api/session", API),
     ("/api/reload", API),
+    ("/mcp", API),                    # MCP over HTTP：能读写笔记，等同于 notes 接口
 )
 
 PAGE_PREFIXES = ("", "/ask", "/kb", "/files", "/index.html", "/insights",

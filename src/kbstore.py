@@ -78,7 +78,7 @@ class _FileLock:
         self._fd: int | None = None
 
     def __enter__(self):
-        deadline = time.time() + self.timeout_s
+        deadline = time.monotonic() + self.timeout_s
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         while True:
             try:
@@ -93,7 +93,7 @@ class _FileLock:
                         continue
                 except OSError:
                     pass
-                if time.time() >= deadline:
+                if time.monotonic() >= deadline:
                     raise KnowledgeError("知识库正被其他进程修改，请稍后重试")
                 time.sleep(0.05)
 

@@ -85,7 +85,7 @@ def make_base(deps):
     _runtime_warnings = deps._runtime_warnings
     _setup_state = deps._setup_state
     _apply_setup = deps._apply_setup
-    _claude_config_path = deps._claude_config_path
+    _mcp_targets = deps._mcp_targets
     _picker_command = deps._picker_command
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes

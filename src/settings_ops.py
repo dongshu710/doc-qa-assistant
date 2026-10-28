@@ -41,11 +41,11 @@ def probe_llm(base_url: str, model: str, api_key: str, timeout_s: float = PROBE_
     req = urllib.request.Request(base + "/chat/completions", data=payload, method="POST")
     req.add_header("Content-Type", "application/json")
     req.add_header("Authorization", f"Bearer {key}")
-    started = time.time()
+    started = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             resp.read()
-        return {"ok": True, "latency_ms": int((time.time() - started) * 1000)}
+        return {"ok": True, "latency_ms": int((time.monotonic() - started) * 1000)}
     except urllib.error.HTTPError as exc:
         hint = {401: "密钥无效或没有权限", 403: "密钥无权访问该模型",
                 404: "地址不对：应填到 /v1 这一层，不要带 /chat/completions",
@@ -88,6 +88,57 @@ def copy_notes(src: str, dst: str) -> dict:
             if len(failed) < 5:
                 failed.append(f"{rel}: {exc}")
     return {"copied": copied, "skipped": skipped, "failed": failed}
+
+
+MCP_CLIENTS = {
+    "claude": "Claude Desktop",
+    "cursor": "Cursor",
+    "cline": "Cline（VS Code 扩展）",
+    "windsurf": "Windsurf",
+}
+
+
+def mcp_targets(home: str | os.PathLike | None = None, os_name: str | None = None,
+                appdata: str | None = None) -> list[dict]:
+    """各 MCP 客户端的配置文件位置；找不到的那个平台就不给。
+
+    为什么只认已知客户端、不接受调用方传路径：这个接口会「写别人的配置文件」，
+    一旦允许任意路径，就等于在本地服务里开了一个任意写文件的洞。
+    参数只为可测试（注入 home / 平台 / APPDATA），生产调用一律用默认值。
+    """
+    home_path = Path(home) if home else Path.home()
+    name = os_name if os_name is not None else os.name
+    app_dir = Path(appdata) if appdata is not None else (
+        Path(os.environ.get("APPDATA") or home_path) if os.environ.get("APPDATA") else None)
+
+    def pick(*candidates: Path | None) -> Path | None:
+        for item in candidates:
+            if item is not None:
+                return item
+        return None
+
+    if name == "nt":
+        claude = pick(app_dir and app_dir / "Claude" / "claude_desktop_config.json")
+        cline = pick(app_dir and app_dir / "Code" / "User" / "globalStorage"
+                     / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json")
+    elif name == "darwin":
+        claude = home_path / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        cline = (home_path / "Library" / "Application Support" / "Code" / "User" / "globalStorage"
+                 / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json")
+    else:
+        claude = home_path / ".config" / "Claude" / "claude_desktop_config.json"
+        cline = (home_path / ".config" / "Code" / "User" / "globalStorage"
+                 / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json")
+
+    found = {
+        "claude": claude,
+        "cursor": home_path / ".cursor" / "mcp.json",
+        "cline": cline,
+        "windsurf": home_path / ".codeium" / "windsurf" / "mcp_config.json",
+    }
+    return [{"id": key, "name": MCP_CLIENTS[key], "path": str(found[key]),
+             "exists": found[key].exists()}
+            for key in MCP_CLIENTS if found.get(key) is not None]
 
 
 def mcp_config(python: str, project_root: str, notes_home: str) -> dict:

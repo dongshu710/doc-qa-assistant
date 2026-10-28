@@ -155,6 +155,7 @@
     if($('setDownload')) $('setDownload').href=dl.app||page;
     if($('setDownloadPlugin')) $('setDownloadPlugin').href=dl.plugin||page;
     if($('setMcpPre')) $('setMcpPre').textContent=JSON.stringify(d.mcp||{},null,2);
+    renderMcpClients(d.mcp_targets||[]);
     renderApiState(d.llm||{});
     renderStorage(d.storage||{});
   }
@@ -363,6 +364,24 @@
     });
   });
 
+  function renderMcpClients(items){
+    var box=$('setMcpClient'); if(!box) return;
+    box.innerHTML=items.map(function(t){
+      var tag=t.exists?'（已有配置，会合并）':'（将新建）';
+      return '<option value="'+esc(t.id)+'">'+esc(t.name)+tag+'</option>';
+    }).join('');
+    if(!items.length){
+      box.innerHTML='<option value="claude">Claude Desktop</option>';
+      if($('setMcpNote')) $('setMcpNote').textContent='当前系统没找到已知客户端，只能手动复制配置。';
+    }
+  }
+
+  function esc(v){
+    return String(v==null?'':v).replace(/[&<>"']/g,function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
   if($('setMcpCopy')) $('setMcpCopy').addEventListener('click',function(){
     var text=$('setMcpPre')?$('setMcpPre').textContent:'';
     function done(){ note('setMcpNote','已复制，粘贴到客户端的 mcpServers 里',false); }
@@ -373,8 +392,11 @@
   });
 
   if($('setMcpInstall')) $('setMcpInstall').addEventListener('click',function(){
-    if(!confirm('会写入 Claude Desktop 的配置，原文件先备份。继续？')) return;
-    api('POST','/api/settings/mcp/install',{}).then(function(d){
+    var sel=$('setMcpClient');
+    var client=sel?sel.value:'claude';
+    var label=sel&&sel.selectedIndex>=0?sel.options[sel.selectedIndex].text:client;
+    if(!confirm('会写入 '+label+' 的配置，原文件先备份。继续？')) return;
+    api('POST','/api/settings/mcp/install',{client:client}).then(function(d){
       if(!d||!d.ok){ note('setMcpNote',(d&&d.message)||'写入失败',true); return; }
       note('setMcpNote',d.message+'（'+d.target+'）',false);
     });

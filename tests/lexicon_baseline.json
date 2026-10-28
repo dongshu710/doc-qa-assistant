@@ -1,0 +1,122 @@
+{
+  "BUILDER_VERSION": {
+    "sha256": "a4aab3f1f08004e9",
+    "size": 1,
+    "type": "scalar"
+  },
+  "DIRECT_KINDS": {
+    "sha256": "a638dca4d1704b77",
+    "size": 4,
+    "type": "seq"
+  },
+  "_BS": {
+    "sha256": "687a9ed5a2b70195",
+    "size": 1,
+    "type": "scalar"
+  },
+  "_BULLET": {
+    "sha256": "1900e165dd630301",
+    "size": 1,
+    "type": "regex"
+  },
+  "_COLON": {
+    "sha256": "cb7be7d98ba8c542",
+    "size": 1,
+    "type": "regex"
+  },
+  "_EXPLAIN": {
+    "sha256": "e343a7b18025640f",
+    "size": 1,
+    "type": "regex"
+  },
+  "_FIRST_PERSON": {
+    "sha256": "d16d22ef43ab346f",
+    "size": 1,
+    "type": "regex"
+  },
+  "_FUNC_CHARS": {
+    "sha256": "accd429dfd0d6a6d",
+    "size": 31,
+    "type": "set"
+  },
+  "_GENERIC_CORE": {
+    "sha256": "46f6c2a03ddc67ea",
+    "size": 12,
+    "type": "set"
+  },
+  "_ITEM_SEP": {
+    "sha256": "c4cce72a357e56d4",
+    "size": 1,
+    "type": "regex"
+  },
+  "_MEASURE": {
+    "sha256": "39a9aac4c5469c18",
+    "size": 1,
+    "type": "regex"
+  },
+  "_MEASURE_PREFIX": {
+    "sha256": "82fd9ebd5682a310",
+    "size": 1,
+    "type": "regex"
+  },
+  "_NEG_MARKERS": {
+    "sha256": "d0bbd6993b78eecd",
+    "size": 24,
+    "type": "seq"
+  },
+  "_NEG_WINDOW": {
+    "sha256": "69b8545b2e994431",
+    "size": 1,
+    "type": "regex"
+  },
+  "_NOISE": {
+    "sha256": "503b9941dea19af1",
+    "size": 1,
+    "type": "regex"
+  },
+  "_POS_MARKERS": {
+    "sha256": "6d440ee6226fe9f9",
+    "size": 8,
+    "type": "seq"
+  },
+  "_Q_NEG": {
+    "sha256": "5d5a6532217f4117",
+    "size": 1,
+    "type": "regex"
+  },
+  "_Q_POS": {
+    "sha256": "1752ff5676c4d769",
+    "size": 1,
+    "type": "regex"
+  },
+  "_SENT_SPLIT": {
+    "sha256": "924f0849a175f576",
+    "size": 1,
+    "type": "regex"
+  },
+  "_SINGLE_OK": {
+    "sha256": "e9b1a4d163558542",
+    "size": 18,
+    "type": "set"
+  },
+  "_STOP": {
+    "sha256": "a6685e2e0d8eb463",
+    "size": 56,
+    "type": "set"
+  },
+  "_TABLE_HEAD": {
+    "sha256": "3071882ad70eefbe",
+    "size": 11,
+    "type": "set"
+  },
+  "_TABLE_SKIP": {
+    "sha256": "afc3075bad7997f2",
+    "size": 7,
+    "type": "set"
+  },
+  "_TRAIL": {
+    "sha256": "d4c262f780128213",
+    "size": 10,
+    "type": "scalar"
+  }
+}

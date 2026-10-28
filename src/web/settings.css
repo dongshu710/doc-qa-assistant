@@ -51,6 +51,10 @@
 .st-keep{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
 .st-keep select{height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:8px;
   background:var(--surface);color:var(--text);font-size:12.5px;font-family:inherit;}
+/* MCP 客户端选择：和按钮同高，避免一行里三个控件高低不齐 */
+.set-pick{height:32px;max-width:220px;padding:0 8px;border:1px solid var(--line-2);border-radius:8px;
+  background:var(--surface);color:var(--text);font-size:12.5px;font-family:inherit;}
+.set-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
 
 /* 接口接入：先给结论（当前能不能用），再给三步操作 */
 .api-state{display:flex;align-items:flex-start;gap:10px;padding:12px 13px;border-radius:11px;

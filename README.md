@@ -247,7 +247,24 @@ doc-qa-assistant/
 应用包已内置演示知识库与启动脚本，**不需要 `pip install`**。未配置 Key 时自动进入离线抽取模式。
 只需要笔记能力的话，下载 `jiyi-plugin-<版本>.zip`，按包内 `README.md` 挂进 MCP 客户端。
 
-### 方式 B：源码运行
+### 方式 B：pip 安装（可选，把源码装成命令）
+
+不想每次带 `PYTHONPATH`，或者要在别的项目里调用接口层时用这种方式：
+
+```bash
+pip install .            # 或 pipx install .
+agent-notes-mcp --help   # MCP 服务
+jiyi-server --help       # Web 服务
+jiyi-client --help       # 终端客户端
+```
+
+`dependencies` 是空的——装完仍然只有标准库。构建需要 `setuptools`（`pip` 会自动取，
+离线环境加 `--no-build-isolation` 并用系统已有的）。版本号在构建时从 `VERSION` 读取，
+与仓库里的文件不会两份各改一遍。
+
+装成包以后 `src/version.py` 会改从包元数据取版本；开发态仍读仓库根的 `VERSION`。
+
+### 方式 C：源码运行
 
 在项目根目录执行：
 
@@ -266,7 +283,7 @@ python -m src.cli
 > `set PYTHONPATH=<项目根目录>`（Windows CMD）
 > 或 `export PYTHONPATH="$PWD"`（Git Bash / macOS / Linux）。
 
-### 方式 C：桌面客户端（不装浏览器也能用）
+### 方式 D：桌面客户端（不装浏览器也能用）
 
 Web 页面负责「看长文档 + 知识库审批」，日常的「问一句、存成笔记」用桌面窗口更省事。
 桌面端用的是同一套本地接口，数据仍在存储区，关掉窗口不丢东西。
@@ -326,7 +343,7 @@ python -m src.client restore backup-20261027-221500.zip --force
 自动备份成 `app.json.bak-<时间>`，不会把原来的密钥直接覆盖掉。
 
 同一个抽屉里还有三件事：**存储**（笔记放自选目录，可用系统选择框挑；切换时若旧位置还有笔记会提示复制过来）、
-**对话**（是否储存对话内容，默认关）、**安装**（下载包与 MCP 配置，可复制或一键写入 Claude Desktop）。
+**对话**（是否储存对话内容，默认关）、**安装**（下载包与 MCP 配置，可复制或一键写入 Claude Desktop / Cursor / Cline / Windsurf）。
 
 不配 Key 时走「离线抽取模式」，链路照样跑通、可评测；配了 Key 自动切换为大模型生成。**源码不含任何密钥**，只从环境变量或本地配置读取。
 
@@ -356,6 +373,8 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `TOP_K` | `4` | 召回条数 |
 | `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
 | `CITATION_STRICT` | `off` | `on` 时「编号合法但内容对不上」的答案降级为抽取式，见 `citation_support_rate` |
+| `CHUNK_MAX_CHARS` | `320` | 单块上限。按「第X条」切，超长条款再按句号兜底 |
+| `CHUNK_OVERLAP` | `0` | 兜底切分时带上前一块末尾的字符数。**默认 0**：现有语料全部在 320 字内，实测 0/40/80/120 的 Recall 与 MRR 完全一致；语料里有超长条款时才需要开（改动后会重建索引，缓存签名已含该值） |
 | `DEBUG` | `off` | `on` 时接口异常回传完整消息（含路径）；默认只回异常类型 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `KEYWORD_MODE` | `on` | `on` 命中结构化条目即本地直出；`off` 全部走检索 |
@@ -1195,6 +1214,22 @@ stdio 传输，客户端拉起进程即可，不需要端口与证书：
   且**不中断会话**；工具执行失败返 `isError: true`（模型能读到原因并自行纠正），不掐连接。
 - **stdout 只跑协议**：诊断日志全部走 stderr，避免客户端因为多一行日志解析失败。
 
+**HTTP 传输（v1.23）**：不想让客户端拉起进程时，直接把 JSON-RPC POST 到主服务：
+
+```bash
+curl -s http://127.0.0.1:8000/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+与 stdio 共用同一份 `handle()`：同样的错误码、同样的工具、同样的 `NoteService`。
+通知类请求（`notifications/initialized`）回 `202` 且无正文，支持 JSON-RPC 批量，
+`GET /mcp` 明确回 `405`。配了 `API_KEYS` 之后同样要带 Key（`/mcp` 在路由表里是 `api` 级）。
+本实现是无状态的 JSON 响应，不提供 SSE 下行流——每个 MCP 请求都是短事务。
+
+**一键写入客户端（v1.23）**：设置面板的「安装」页可以从下拉里选 Claude Desktop /
+Cursor / Cline / Windsurf，点一下把 `mcpServers` 合并进去（原文件先备份）。
+接口只接受客户端 id，**不接受路径**——否则等于在本地服务上开了个任意写文件的洞。
+
 ### 四条通道，任何智能体都能接（v1.12）
 
 | 通道 | 适用 | 需要什么 |
@@ -1202,7 +1237,7 @@ stdio 传输，客户端拉起进程即可，不需要端口与证书：
 | 文件直读 | 完全离线，或只想看 | 一个能读 `NOTE_HOME` 的智能体；格式见 `AGENTS.md` |
 | CLI | 只能执行命令 | `python -m src.notes ...` |
 | HTTP | 能发请求、支持 function calling | `/api/notes` 六个端点 + `/tools.json` |
-| MCP | 支持 MCP 的客户端 | 一段 `mcpServers` 配置 |
+| MCP | 支持 MCP 的客户端 | 一段 `mcpServers` 配置（stdio），或 `POST /mcp`（HTTP） |
 
 四条路的写操作都经 `NoteService`，语义一致：保存去重、改前带 `rev`、删除要确认。
 `NOTE_HOME` 首次初始化会写一份 `AGENTS.md`（只写一次，你改过就不再覆盖），

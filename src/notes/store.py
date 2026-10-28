@@ -25,6 +25,43 @@ from .model import Note
 
 DEFAULT_HOME = "~/agent-notes"
 LOCK_STALE_SECONDS = 30.0
+
+
+def _identity(path: Path) -> tuple[int, int] | None:
+    """目录身份：(inode, mtime_ns)。拿不到就返回 None。
+
+    inode 用来区分「我建的锁」和「别人后来重建的锁」。极少数文件系统
+    （FAT/exFAT）不提供 inode，退化成只看 mtime_ns —— 精度仍是纳秒级。
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns)
+
+
+def _break_stale(lock_dir: Path) -> None:
+    """清掉陈旧锁：先改名再删，避免删掉别人刚重建的锁。
+
+    直接 rmtree 有竞态窗口：A 判定陈旧的同一瞬间，B 释放并重新 mkdir，
+    A 的 rmtree 删掉的是 B 的新锁，于是 A、B 同时持锁写入同一篇笔记。
+    rename 是原子的，改完再核对一次身份；抢错了就原样放回去，这次不清理。
+    """
+    before = _identity(lock_dir)
+    if before is None:
+        return
+    morgue = lock_dir.with_name(f".lock.stale-{os.getpid()}-{time.monotonic_ns()}")
+    try:
+        os.rename(lock_dir, morgue)
+    except OSError:
+        return  # 别人已经处理掉了
+    if _identity(morgue) != before:
+        try:
+            os.rename(morgue, lock_dir)
+        except OSError:
+            pass
+        return
+    shutil.rmtree(morgue, ignore_errors=True)
 # 重建要读全盘：Windows 上单次 open 的固定开销远大于解析本身，少量线程即可摊掉
 REBUILD_WORKERS = 4
 
@@ -105,7 +142,11 @@ class NoteStore:
 
     @contextmanager
     def lock(self, timeout: float = 5.0):
-        """跨进程互斥：目录创建是原子操作，比平台相关的文件锁更好移植。"""
+        """跨进程互斥：目录创建是原子操作，比平台相关的文件锁更好移植。
+
+        释放时核对身份：这把锁可能已经被判定超时、被别人清掉并重建，
+        此时直接 rmtree 删的是别人的锁，于是两边同时认为自己持有。
+        """
         lock_dir = self.home / ".lock"
         deadline = time.monotonic() + timeout
         while True:
@@ -114,18 +155,21 @@ class NoteStore:
                 break
             except FileExistsError:
                 try:
+                    # 这里必须用 time.time()：比的是文件 mtime，那是墙钟
                     if time.time() - lock_dir.stat().st_mtime > LOCK_STALE_SECONDS:
-                        shutil.rmtree(lock_dir, ignore_errors=True)
+                        _break_stale(lock_dir)
                         continue
                 except OSError:
                     pass
                 if time.monotonic() > deadline:
                     raise StoreBusy("另一个写入正在进行，请稍后重试") from None
                 time.sleep(0.05)
+        mine = _identity(lock_dir)
         try:
             yield
         finally:
-            shutil.rmtree(lock_dir, ignore_errors=True)
+            if mine is not None and _identity(lock_dir) == mine:
+                shutil.rmtree(lock_dir, ignore_errors=True)
 
     # ---- 索引缓存 ----
 

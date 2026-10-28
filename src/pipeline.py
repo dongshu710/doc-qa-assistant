@@ -220,7 +220,7 @@ class RAGPipeline:
         保证两条路径的前置判断完全一致。
         """
         trace_id = uuid.uuid4().hex[:12]
-        t0 = time.time()
+        t0 = time.monotonic()
         raw_query = query or ""
         clean = _normalize(raw_query)
         history = self.sessions.history(session_id)
@@ -556,21 +556,21 @@ class RAGPipeline:
         while True:
             with self._rebuild_lock:
                 target = self._rebuild["target"]
-            started = time.time()
+            started = time.monotonic()
             try:
                 chunks, retriever, keywords, parsed, reused = self._build_index(target)
                 total = self._swap_index(target, chunks, retriever, keywords)
                 with self._rebuild_lock:
                     self._rebuild.update({
                         "builds": self._rebuild["builds"] + 1,
-                        "last_at": _now_iso(), "last_ms": round((time.time() - started) * 1000, 1),
+                        "last_at": _now_iso(), "last_ms": round((time.monotonic() - started) * 1000, 1),
                         "last_error": None, "chunks": total,
                         "parsed_docs": parsed, "reused_docs": reused,
                     })
             except Exception as exc:  # noqa: BLE001 —— 后台失败只记录，不能让线程静默死掉
                 with self._rebuild_lock:
                     self._rebuild.update({
-                        "last_at": _now_iso(), "last_ms": round((time.time() - started) * 1000, 1),
+                        "last_at": _now_iso(), "last_ms": round((time.monotonic() - started) * 1000, 1),
                         "last_error": f"{type(exc).__name__}: {exc}"[:300],
                     })
             with self._rebuild_lock:
@@ -620,7 +620,7 @@ class RAGPipeline:
         session_id = result.get("session_id")
         if session_id and result.get("answer"):
             self.sessions.append(session_id, result.get("query") or "", result["answer"])
-        result["latency_ms"] = round((time.time() - t0) * 1000, 1)
+        result["latency_ms"] = round((time.monotonic() - t0) * 1000, 1)
         result["ts"] = datetime.now(timezone.utc).isoformat()
         # 日志失败不影响主流程；超限轮转，避免单文件无限增长拖慢 /api/metrics
         jsonl.append_line(self.log_path, json.dumps(result, ensure_ascii=False),

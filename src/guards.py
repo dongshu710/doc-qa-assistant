@@ -92,7 +92,7 @@ class IdempotencyCache:
     def get(self, key: str) -> dict | None:
         if not key:
             return None
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             item = self._items.get(key)
             if not item:
@@ -110,7 +110,7 @@ class IdempotencyCache:
             if len(self._items) >= self.max_items:
                 oldest = min(self._items.items(), key=lambda kv: kv[1][0])[0]
                 self._items.pop(oldest, None)
-            self._items[key] = (time.time() + self.ttl_s, value)
+            self._items[key] = (time.monotonic() + self.ttl_s, value)
 
 
 class CostBudget:
@@ -122,6 +122,9 @@ class CostBudget:
         self._lock = threading.Lock()
         self._date = _today()
         self._used = 0
+        # 写盘失败必须留痕：磁盘满时预算一直是 0，超限永远拦不住
+        self.persist_failures = 0
+        self.persist_error: str | None = None
         self._load()
 
     def _load(self) -> None:
@@ -140,8 +143,12 @@ class CostBudget:
             return
         try:
             _atomic_write(self.path, {"date": self._date, "tokens": self._used, "updated_at": _now_iso()})
-        except OSError:
-            pass
+            self.persist_error = None
+        except OSError as exc:
+            # 不抛：预算写不进去不该把问答打死；但计数与原因要能被健康检查看到，
+            # 否则重启后用量归零，日上限形同不存在。
+            self.persist_failures += 1
+            self.persist_error = f"{type(exc).__name__}: {exc}"[:300]
 
     def _roll(self) -> None:
         today = _today()
@@ -411,6 +418,7 @@ class AuditLog:
         self.service = service
         self.instance = instance or f"{socket.gethostname()}:{os.getpid()}"
         self.last_error: str | None = None
+        self.write_failures = 0
         self._lock = threading.Lock()
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -430,11 +438,13 @@ class AuditLog:
                     sys.stdout.flush()
             except OSError as exc:
                 self.last_error = str(exc)
+                self.write_failures += 1
         if self.sink in ("stdout",):
             return
         # 追加写 + 超限轮转：单文件大小有上界，尾读才有稳定的上界
         if not jsonl.append_line(self.path, line, self.max_bytes, self.keep):
             self.last_error = f"write failed: {self.path}"
+            self.write_failures += 1
 
     def tail(self, limit: int = 20) -> list[dict]:
         """尾部 N 条（新 → 旧）。只读文件尾，不随日志总量变慢。"""
@@ -447,6 +457,9 @@ class RuntimeConfig:
     def __init__(self, path: str, canary_percent: int = 0, canary_model: str = ""):
         self.path = path
         self._lock = threading.RLock()
+        # 灰度比例写不进去 = 重启后回到环境变量默认值，用户以为改了其实没改
+        self.persist_failures = 0
+        self.persist_error: str | None = None
         self._data = {
             "revision": 0,
             "canary_percent": max(0, min(100, int(canary_percent))),
@@ -476,8 +489,10 @@ class RuntimeConfig:
     def _save(self) -> None:
         try:
             _atomic_write(self.path, self._data)
-        except OSError:
-            pass
+            self.persist_error = None
+        except OSError as exc:
+            self.persist_failures += 1
+            self.persist_error = f"{type(exc).__name__}: {exc}"[:300]
 
     def _snapshot(self) -> dict:
         return {
@@ -603,6 +618,16 @@ class Guards:
             "rate_limit_burst": self.rate.burst,
             "budget": self.cost.status(),
             "canary": self.runtime.status(),
+            # 这几处原来都是 except OSError: pass：磁盘满时预算归零、灰度改成默认值、
+            # 审计日志静默丢失，而外部看一切正常。计数放这里，健康检查能自动报警。
+            "persist": {
+                "cost": {"failures": self.cost.fallback.persist_failures,
+                         "error": self.cost.fallback.persist_error},
+                "canary": {"failures": self.runtime.persist_failures,
+                           "error": self.runtime.persist_error},
+                "audit": {"failures": self.audit.write_failures,
+                          "error": self.audit.last_error},
+            },
         }
 
     def close(self) -> None:

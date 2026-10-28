@@ -35,6 +35,7 @@ INCLUDE_FILES = (
     "LICENSE",
     "CHANGELOG.md",
     "VERSION",
+    "pyproject.toml",
     "requirements.txt",
     ".env.example",
     "start.bat",

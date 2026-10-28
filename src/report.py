@@ -187,7 +187,7 @@ def collect(pipe=None, root: Path | None = None, use_cache: bool = True) -> dict
 
     ttl = max(0, int(os.getenv("REPORT_CACHE_TTL", "60") or "60"))
     key = _collect_key(pipe, tests_dir) if (use_cache and ttl) else None
-    now = time.time()
+    now = time.monotonic()
     if key is not None:
         with _COLLECT_LOCK:
             entry = _COLLECT_CACHE.get(key)
@@ -348,170 +348,190 @@ ARCH_SVG = """
 """
 
 
-def render(data: dict, standalone: bool = False) -> str:
-    """渲染汇报页。standalone=True 时隐藏「下载」按钮（导出文件本身）。"""
+def kpi_rows(data: dict) -> list[tuple[str, str]]:
+    """KPI 字段表：标签固定、取值随数据。单独成函数是为了能直接断言。"""
     k = data["knowledge"]
     cases = data["cases"]
     metrics = data["metrics"]
     l1 = data["l1"]
-    l3 = data.get("l3")
-    cfg = data["config"]
-
-    best_l1 = max(l1, key=lambda x: (x["pass_rate"] or 0)) if l1 else None
+    l3_avg = (data.get("l3") or {}).get("avg") or {}
+    best = max(l1, key=lambda x: (x["pass_rate"] or 0)) if l1 else None
     cov = metrics.get("avg_citation_coverage")
     p95 = (metrics.get("latency_ms") or {}).get("p95")
-    l3_avg = (l3 or {}).get("avg") or {}
+    return [
+        ("知识库规模", f"{k['chunks']} 块 / {len(k['files'])} 份"),
+        ("评测用例", str(cases["total"])),
+        ("L1 通过率", f"{round((best['pass_rate'] or 0) * 100)}%" if best else "-"),
+        ("L3 忠实度", str(l3_avg.get("faithfulness") or "-")),
+        ("引用覆盖率", str(cov) if cov is not None else "-"),
+        ("P95 延迟（近 500 条）", f"{round(p95)}ms" if p95 else "-"),
+    ]
 
-    # ---------- KPI ----------
-    kpis = "".join([
-        _kpi(f"{k['chunks']} 块 / {len(k['files'])} 份", "知识库规模"),
-        _kpi(cases["total"], "评测用例"),
-        _kpi(f"{round((best_l1['pass_rate'] or 0) * 100)}%" if best_l1 else "-", "L1 通过率"),
-        _kpi(l3_avg.get("faithfulness") or "-", "L3 忠实度"),
-        _kpi(cov if cov is not None else "-", "引用覆盖率"),
-        _kpi(f"{round(p95)}ms" if p95 else "-", "P95 延迟（近 500 条）"),
-    ])
 
-    # ---------- L1 表 ----------
-    l1_rows = ""
+def _block_l1(l1: list[dict]) -> str:
+    """L1 各轮次通过率表。"""
+    rows = ""
     for r in l1:
         cats = r["by_category"]
         detail = " · ".join(f"{c} {v['passed']}/{v['total']}" for c, v in cats.items())
         ok = (r["pass_rate"] or 0) >= 0.9
-        l1_rows += (
+        rows += (
             f"<tr><td>{_esc(r['label'])}</td><td>{r['total']}</td>"
             f"<td class=\"{'ok' if ok else 'bad'}\">{round((r['pass_rate'] or 0) * 100)}%</td>"
             f"<td class=\"muted\">{_esc(detail)}</td></tr>"
         )
-    l1_table = (
-        '<div class="table-wrap"><table><thead><tr><th>评测轮次</th><th>用例</th><th>通过率</th><th>分类明细</th></tr></thead>'
-        f"<tbody>{l1_rows}</tbody></table></div>"
-        if l1_rows else '<div class="muted">尚未生成 L1 报告</div>'
+    if not rows:
+        return '<div class="muted">尚未生成 L1 报告</div>'
+    return ('<div class="table-wrap"><table><thead><tr><th>评测轮次</th><th>用例</th>'
+            f'<th>通过率</th><th>分类明细</th></tr></thead><tbody>{rows}</tbody></table></div>')
+
+
+_DIM_CN = {"faithfulness": "忠实度", "relevance": "相关性", "completeness": "完整性"}
+
+
+def _cal_text(items: list[dict]) -> str:
+    parts = []
+    for c in items:
+        if c.get("skipped"):
+            parts.append(f"{c.get('label')}：跳过")
+            continue
+        mark = "—" if c.get("caught") is None else ("✓" if c.get("caught") else "✗")
+        parts.append(f"{c.get('label')} {_DIM_CN.get(c.get('dim'), c.get('dim'))}={c.get('score')}{mark}")
+    return "；".join(parts) or "未运行"
+
+
+def _num_text(v) -> str:
+    if v is None:
+        return "—"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return _esc(v)
+    s = f"{round(n, 2):g}"
+    return s if "." in s else s + ".0"
+
+
+def _block_l3(l3: dict | None) -> str:
+    """L3 语义评分（三维度 + 门禁 + 区分力校准）。"""
+    if not (l3 and l3.get("avg")):
+        return '<div class="muted">尚未运行 L3（需要可用的模型 Key）。</div>'
+    l3_avg = l3["avg"]
+    gate = l3.get("gate") or {}
+    badge = ('<span class="ok">门禁通过</span>' if gate.get("passed")
+             else f'<span class="bad">门禁未过：{_esc("；".join(gate.get("reasons") or []))}</span>')
+    cal_txt = _cal_text(l3.get("calibration") or [])
+    tiles = "".join(
+        f'<div class="rp-score"><div class="k">{label}</div>'
+        f'<div class="v">{_num_text(l3_avg.get(key))}<small>/ 5</small></div>'
+        f'<div class="bar"><i style="width:{int((l3_avg.get(key) or 0) * 20)}%"></i></div></div>'
+        for label, key in (("忠实度", "faithfulness"), ("相关性", "relevance"), ("完整性", "completeness"))
+    )
+    tokens = l3.get("total_tokens")
+    return (
+        '<div class="rp-l3">'
+        f'<div class="rp-scores">{tiles}</div>'
+        '<div class="rp-l3-note">'
+        f'<div class="row" style="flex-wrap:wrap;gap:7px;margin-bottom:9px">{badge}'
+        f'<span class="pill">语义通过率 {round((l3.get("pass_rate") or 0) * 100)}%</span></div>'
+        f'<div>样本 <b>{l3.get("answer_cases")}</b> 条答案类 + <b>{l3.get("safety_cases")}</b> 条拒答类；'
+        f'编造告警 <b>{len(l3.get("hallucinations") or [])}</b> 条；裁判消耗 '
+        f'<b>{"—" if tokens is None else tokens}</b> tokens。</div>'
+        f'<div style="margin-top:7px">裁判：<b>{_esc(l3.get("judge_model") or l3.get("judge_channel") or "同源")}</b></div>'
+        f'<div style="margin-top:7px"><b>区分力校准</b>（植入错误答案后是否降分）：{_esc(cal_txt)}</div>'
+        "</div></div>"
     )
 
-    # ---------- L3 ----------
-    if l3 and l3.get("avg"):
-        gate = l3.get("gate") or {}
-        badge = ('<span class="ok">门禁通过</span>' if gate.get("passed")
-                 else f'<span class="bad">门禁未过：{_esc("；".join(gate.get("reasons") or []))}</span>')
-        cal = l3.get("calibration") or []
-        dim_cn = {"faithfulness": "忠实度", "relevance": "相关性", "completeness": "完整性"}
 
-        def _cal_text(items: list[dict]) -> str:
-            parts = []
-            for c in items:
-                if c.get("skipped"):
-                    parts.append(f"{c.get('label')}：跳过")
-                    continue
-                mark = "—" if c.get("caught") is None else ("✓" if c.get("caught") else "✗")
-                parts.append(f"{c.get('label')} {dim_cn.get(c.get('dim'), c.get('dim'))}={c.get('score')}{mark}")
-            return "；".join(parts) or "未运行"
-
-        cal_txt = _cal_text(cal)
-        def _num(v) -> str:
-            if v is None:
-                return "—"
-            try:
-                n = float(v)
-            except (TypeError, ValueError):
-                return _esc(v)
-            s = f"{round(n, 2):g}"
-            return s if "." in s else s + ".0"
-
-        tiles = "".join(
-            f'<div class="rp-score"><div class="k">{label}</div>'
-            f'<div class="v">{_num(l3_avg.get(key))}<small>/ 5</small></div>'
-            f'<div class="bar"><i style="width:{int((l3_avg.get(key) or 0) * 20)}%"></i></div></div>'
-            for label, key in (("忠实度", "faithfulness"), ("相关性", "relevance"), ("完整性", "completeness"))
+def _block_hard(hard: dict, l3_hard: dict) -> str:
+    """难题集 L1 + 同源 / 异构裁判对比。"""
+    if not hard.get("total"):
+        return ""
+    same = l3_hard.get("same")
+    cross = l3_hard.get("cross")
+    cols = []
+    if same:
+        cols.append((f"同源裁判（{same.get('judge_model') or '同源'}）", same))
+    if cross:
+        cols.append((f"异构裁判（{cross.get('judge_model') or '其他模型'}）", cross))
+    head = "<tr><th>指标</th>" + "".join(f"<th>{_esc(n)}</th>" for n, _ in cols) + "</tr>" if cols else ""
+    rows = ""
+    for label, key in (("忠实度", "faithfulness"), ("相关性", "relevance"), ("完整性", "completeness")):
+        cells = "".join(
+            f"<td>{_score_badge((c.get('avg') or {}).get(key))}</td>" for _, c in cols
         )
-        tokens = l3.get("total_tokens")
-        l3_block = (
-            '<div class="rp-l3">'
-            f'<div class="rp-scores">{tiles}</div>'
-            '<div class="rp-l3-note">'
-            f'<div class="row" style="flex-wrap:wrap;gap:7px;margin-bottom:9px">{badge}'
-            f'<span class="pill">语义通过率 {round((l3.get("pass_rate") or 0) * 100)}%</span></div>'
-            f'<div>样本 <b>{l3.get("answer_cases")}</b> 条答案类 + <b>{l3.get("safety_cases")}</b> 条拒答类；'
-            f'编造告警 <b>{len(l3.get("hallucinations") or [])}</b> 条；裁判消耗 '
-            f'<b>{"—" if tokens is None else tokens}</b> tokens。</div>'
-            f'<div style="margin-top:7px">裁判：<b>{_esc(l3.get("judge_model") or l3.get("judge_channel") or "同源")}</b></div>'
-            f'<div style="margin-top:7px"><b>区分力校准</b>（植入错误答案后是否降分）：{_esc(cal_txt)}</div>'
-            "</div></div>"
-        )
-    else:
-        l3_block = '<div class="muted">尚未运行 L3（需要可用的模型 Key）。</div>'
+        rows += f"<tr><td>{label}</td>{cells}</tr>"
+    if cols:
+        rows += "<tr><td>语义通过率</td>" + "".join(
+            f"<td>{round((c.get('pass_rate') or 0) * 100)}%</td>" for _, c in cols
+        ) + "</tr>"
+        rows += "<tr><td>编造告警</td>" + "".join(
+            f"<td>{len(c.get('hallucinations') or [])} 条</td>" for _, c in cols
+        ) + "</tr>"
+    cats = " · ".join(f"{c} {v['passed']}/{v['total']}" for c, v in (hard.get("by_category") or {}).items())
+    return (
+        '<section class="sec card" id="s-hard"><div class="sec-head"><span class="n">06</span><h2>难题集与裁判对比</h2>'
+        f'<span class="note">{hard.get("total")} 条：多跳 / 数值边界 / 跨文件口径 / 资料空白</span></div>'
+        f'<p class="muted" style="font-size:13px;margin:0 0 10px">L1 确定性断言：'
+        f'<b>{hard.get("total") - sum(1 for r in hard.get("results", []) if not r.get("passed"))}/{hard.get("total")}'
+        f' = {round((hard.get("pass_rate") or 0) * 100)}%</b>（{_esc(cats)}）</p>'
+        + (f'<div class="table-wrap"><table>{head}<tbody>{rows}</tbody></table></div>' if cols else "")
+        + '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
+        '同一批答案、同一套 rubric，只换裁判模型。两者分数差距即「裁判偏好」的量级——'
+        '所以 L3 分数只作趋势对比，门禁取更严的一侧。'
+        + ("" if cols else "（尚未运行难题集 L3，先执行 tests/eval_l3.py --report tests/report_hard.json）")
+        + "</p></section>"
+    )
 
-    # ---------- 难题集 + 异构裁判 ----------
-    hard = data.get("hard") or {}
-    l3_hard = data.get("l3_hard") or {}
-    hard_block = ""
-    if hard.get("total"):
-        same = l3_hard.get("same")
-        cross = l3_hard.get("cross")
-        cols = []
-        if same:
-            cols.append((f"同源裁判（{same.get('judge_model') or '同源'}）", same))
-        if cross:
-            cols.append((f"异构裁判（{cross.get('judge_model') or '其他模型'}）", cross))
-        head = "<tr><th>指标</th>" + "".join(f"<th>{_esc(n)}</th>" for n, _ in cols) + "</tr>" if cols else ""
-        rows = ""
-        for label, key in (("忠实度", "faithfulness"), ("相关性", "relevance"), ("完整性", "completeness")):
-            cells = "".join(
-                f"<td>{_score_badge((c.get('avg') or {}).get(key))}</td>" for _, c in cols
-            )
-            rows += f"<tr><td>{label}</td>{cells}</tr>"
-        if cols:
-            rows += "<tr><td>语义通过率</td>" + "".join(
-                f"<td>{round((c.get('pass_rate') or 0) * 100)}%</td>" for _, c in cols
-            ) + "</tr>"
-            rows += "<tr><td>编造告警</td>" + "".join(
-                f"<td>{len(c.get('hallucinations') or [])} 条</td>" for _, c in cols
-            ) + "</tr>"
-        cats = " · ".join(f"{c} {v['passed']}/{v['total']}" for c, v in (hard.get("by_category") or {}).items())
-        hard_block = (
-            '<section class="sec card" id="s-hard"><div class="sec-head"><span class="n">06</span><h2>难题集与裁判对比</h2>'
-            f'<span class="note">{hard.get("total")} 条：多跳 / 数值边界 / 跨文件口径 / 资料空白</span></div>'
-            f'<p class="muted" style="font-size:13px;margin:0 0 10px">L1 确定性断言：'
-            f'<b>{hard.get("total") - sum(1 for r in hard.get("results", []) if not r.get("passed"))}/{hard.get("total")}'
-            f' = {round((hard.get("pass_rate") or 0) * 100)}%</b>（{_esc(cats)}）</p>'
-            + (f'<div class="table-wrap"><table>{head}<tbody>{rows}</tbody></table></div>' if cols else "")
-            + '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
-            '同一批答案、同一套 rubric，只换裁判模型。两者分数差距即「裁判偏好」的量级——'
-            '所以 L3 分数只作趋势对比，门禁取更严的一侧。'
-            + ("" if cols else "（尚未运行难题集 L3，先执行 tests/eval_l3.py --report tests/report_hard.json）")
-            + "</p></section>"
-        )
 
-    # ---------- 检索策略对比 ----------
-    ret = data.get("retrieval") or {}
-    ret_block = ""
-    if ret.get("configs"):
-        rows = ""
-        for name, rconf in ret["configs"].items():
-            r1, r4 = rconf.get("recall_at_1"), rconf.get("recall_at_4")
-            mrr = rconf.get("mrr")
-            rows += (
-                f"<tr><td>{_esc(name)}</td>"
-                f"<td>{'—' if r1 is None else format(r1, '.1%')}</td>"
-                f"<td>{'—' if r4 is None else format(r4, '.1%')}</td>"
-                f"<td>{'—' if mrr is None else format(mrr, '.3f')}</td>"
-                f'<td class="muted">{_esc("、".join(rconf.get("misses") or []) or "—")}</td></tr>'
-            )
-        ret_cases = ret.get("cases") or max((c.get("cases") or 0) for c in ret["configs"].values())
-        vec = ret["configs"].get("vector") or {}
-        vec_txt = ""
-        if vec:
-            vec_txt = (f"默认使用 vector（字符 n-gram 向量 + 重排）：R@1 {format(vec.get('recall_at_1') or 0, '.1%')}、"
-                       f"R@4 {format(vec.get('recall_at_4') or 0, '.1%')}、MRR {format(vec.get('mrr') or 0, '.3f')}。")
-        ret_block = (
-            '<section class="sec card" id="s-ret"><div class="sec-head"><span class="n">05</span><h2>检索策略对比</h2>'
-            f'<span class="note">Recall@1 / Recall@4 / MRR · {ret_cases} 条带召回标签的难题</span></div>'
-            '<div class="table-wrap"><table><thead><tr><th>策略</th><th>R@1</th><th>R@4</th><th>MRR</th><th>未命中</th></tr></thead>'
-            f"<tbody>{rows}</tbody></table></div>"
-            '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
-            f"{vec_txt}未命中项多为同义改写（如「测评 R3 想买 R5」），由查询扩展补充召回；"
-            "样本量较小，结果用于版本间对比。</p></section>"
+def _block_retrieval(ret: dict) -> str:
+    """检索策略对比表。"""
+    if not ret.get("configs"):
+        return ""
+    rows = ""
+    for name, rconf in ret["configs"].items():
+        r1, r4 = rconf.get("recall_at_1"), rconf.get("recall_at_4")
+        mrr = rconf.get("mrr")
+        rows += (
+            f"<tr><td>{_esc(name)}</td>"
+            f"<td>{'—' if r1 is None else format(r1, '.1%')}</td>"
+            f"<td>{'—' if r4 is None else format(r4, '.1%')}</td>"
+            f"<td>{'—' if mrr is None else format(mrr, '.3f')}</td>"
+            f'<td class="muted">{_esc("、".join(rconf.get("misses") or []) or "—")}</td></tr>'
         )
+    ret_cases = ret.get("cases") or max((c.get("cases") or 0) for c in ret["configs"].values())
+    vec = ret["configs"].get("vector") or {}
+    vec_txt = ""
+    if vec:
+        vec_txt = (f"默认使用 vector（字符 n-gram 向量 + 重排）：R@1 {format(vec.get('recall_at_1') or 0, '.1%')}、"
+                   f"R@4 {format(vec.get('recall_at_4') or 0, '.1%')}、MRR {format(vec.get('mrr') or 0, '.3f')}。")
+    return (
+        '<section class="sec card" id="s-ret"><div class="sec-head"><span class="n">05</span><h2>检索策略对比</h2>'
+        f'<span class="note">Recall@1 / Recall@4 / MRR · {ret_cases} 条带召回标签的难题</span></div>'
+        '<div class="table-wrap"><table><thead><tr><th>策略</th><th>R@1</th><th>R@4</th><th>MRR</th><th>未命中</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></div>"
+        '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
+        f"{vec_txt}未命中项多为同义改写（如「测评 R3 想买 R5」），由查询扩展补充召回；"
+        "样本量较小，结果用于版本间对比。</p></section>"
+    )
+
+
+def render(data: dict, standalone: bool = False) -> str:
+    """渲染汇报页。standalone=True 时隐藏「下载」按钮（导出文件本身）。
+
+    每个区块单独一个函数（`_block_*`），这里只做组装——原来 363 行的函数里
+    「算数据」和「拼 HTML」缠在一起，改一处配色都要滚三屏。
+    """
+    k = data["knowledge"]
+    cases = data["cases"]
+    metrics = data["metrics"]
+    l1 = data["l1"]
+    cfg = data["config"]
+
+    kpis = "".join(_kpi(value, label) for label, value in kpi_rows(data))
+    l1_table = _block_l1(l1)
+    l3_block = _block_l3(data.get("l3"))
+    hard_block = _block_hard(data.get("hard") or {}, data.get("l3_hard") or {})
+    ret_block = _block_retrieval(data.get("retrieval") or {})
 
     _kb_total = max(1, k["chunks"])
     kb_rows = "".join(

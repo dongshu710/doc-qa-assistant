@@ -2,6 +2,90 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.23.0] - 2026-10-28
+
+把 `docs/ROADMAP.md` 与 `docs/AUDIT-2026-10-27.md` 里**还剩没做**的项逐条收口，
+其中三项在动手前先做了实测，结论与原来的判断不完全一致（下面写明）。
+
+### 打包：终于能 `pip install`（ROADMAP #4）
+
+- 新增 `pyproject.toml`：`dependencies = []`（运行时仍只有标准库），
+  `requires-python >= 3.11`，版本用 `dynamic = {file = ["VERSION"]}` 从同一份 VERSION 读。
+- 三个入口：`agent-notes-mcp`（MCP）、`jiyi-server`（Web）、`jiyi-client`（终端）。
+- `src/version.py` 装成包后改从 `importlib.metadata` 取版本；开发态仍读仓库根 VERSION。
+- 已在隔离 venv 里真装过一遍验证：版本 1.22.0 一致、三个命令可执行、
+  `src/web/*` 静态资源随包安装、MCP 能完成 `initialize` 握手。
+- `tools/build_release.py` 的根文件清单加入 `pyproject.toml`。
+
+### MCP：多客户端写入 + HTTP 传输（ROADMAP #6 / #7）
+
+- `settings_ops.mcp_targets()`：Claude Desktop / Cursor / Cline / Windsurf 的配置位置，
+  按平台推导。**只认已知客户端，接口不接受调用方传路径**——这个接口会写别人的配置文件，
+  开放任意路径等于在本地服务上开了个写文件的洞。
+- `/api/settings/mcp/install` 增加 `client` 参数；设置面板给出下拉选择，写入前仍先备份。
+- 新增 `POST /mcp`：MCP over HTTP，复用同一份 `handle()` 与 NoteService，走 `_guard` 与
+  `routing.py` 的 `api` 级鉴权（配了 `API_KEYS` 就要 Key）。通知类请求回 202 无正文，
+  支持 JSON-RPC 批量，`GET /mcp` 明确 405 而不是含糊的 404。
+- `mcp_server.handle_payload()` 抽出来给两条传输共用，stdio 与 HTTP 的错误码完全一致。
+
+### 可靠性：三个静默失败点（ROADMAP #9 / #10）
+
+- **陈旧锁清理竞态**：原来判定超时后直接 `rmtree`，正好撞上别人释放并重建时，
+  删掉的是别人的新锁，于是两边同时持锁写同一篇笔记。改为 `os.rename` 成唯一名字、
+  核对 (inode, mtime_ns) 再删，抢错就原样放回；释放锁也只删自己那把。
+- **落盘失败可见**：`CostBudget._save`、`RuntimeConfig._save`、`AuditLog.write` 三处
+  原来是 `except OSError: pass`。磁盘满时预算一直是 0（日上限形同不存在）、
+  灰度改完重启回默认值、审计日志在丢，而界面一切正常。现在计数与原因进
+  `/api/health` 的 `runtime.warnings`。
+- **`_repo_url()` 每次请求读 `.git/config`**：改为按 `(mtime_ns, size)` 缓存。
+
+### 计时：单调钟（ROADMAP #8）
+
+甄别了 `src/` 下 36 处 `time.time()`：用于 TTL、超时预算、耗时的 30 处改成
+`time.monotonic()`；与文件 mtime 比较、写进 ISO 时间戳的 5 处保留墙钟
+（`kbstore` 锁年龄、`notes/store` 锁年龄、`Turn.ts`、`update.check` 的时间戳）。
+会话 TTL 与 `Turn.ts` 拆成两个钟——前者防对时跳变，后者将来要给人看。
+
+### 可维护性：两个超长函数（ROADMAP #11）
+
+- `report.render` 363 → 217 行：拆出 `kpi_rows()` 字段表与 `_block_l1/_block_l3/
+  _block_hard/_block_retrieval` 四个区块函数，`render` 只做组装。
+  **重构前后用同一份数据渲染，输出逐字节一致**（57,319 B / 56,737 B 两种模式）。
+- `openapi.build_spec` 280 → 25 行：按主题拆成 `_info/_tags/_paths_qa/_paths_ops/
+  _paths_kb/_components`，两种鉴权模式下 21 条路径的输出 JSON 完全等价。
+
+### 分块重叠（AUDIT C2 的另一半）——实测后默认关闭
+
+- `_split_section` 增加 `overlap`，**只作用于「超长条款被句号切开」这条路径**：
+  按「第X条」切出来的块本身完整，再加重叠只会让相邻块互相污染分数。
+- A/B 实测：当前语料 31 块全部 ≤320 字，`overlap=0/40/80/120` 的块数与
+  Recall@1/@4、MRR **完全一致**（72.7% / 90.9% / 0.883~0.900）。
+  说明现有语料根本走不到这条分支，所以默认值保持 0，用 `CHUNK_OVERLAP` 显式开启。
+- 顺带修掉一个会导致「改了配置没生效」的坑：增量缓存的签名原来只有 `(mtime, size)`，
+  改 overlap 后文件没动就会复用旧分块。签名已带上 `(max_chars, overlap)`。
+
+### 关键词规则外置（AUDIT C4）——实测后决定不做
+
+原建议是「985 行规则外置成 YAML」。先量化再决定：
+
+| 构成 | 行数 | 占比 |
+|---|---|---|
+| 算法（抽取 + 四道闸门） | 830 | 84.3% |
+| 词表与正则（22 个常量） | 36 | 3.7% |
+
+产品条款不在这个文件里——它在 `data/knowledge/*.md`，改条款走知识库上传与审批，
+**本来就不用发版**。需要发版的只有停用词这类工程参数，把 36 行搬进配置文件
+换来的是「多一层加载 + 校验 + 回退」，收益抵不上风险；而且项目零依赖，没有 YAML 解析器。
+
+改为给词表拍指纹：`tests/test_keyword_lexicon.py` 比对 24 个常量的类型/长度/哈希，
+词表一改就失败，必须显式 `--update` 更新基线，`git diff` 里能看见改了什么。
+
+### 测试
+
+新增 `test_lock`(18)、`test_report_render`(26)、`test_packaging`(16)、
+`test_mcp_http`(19)、`test_chunking`(18)、`test_keyword_lexicon`(7)；
+全量 **52 个 Python 测试脚本** + 4 组 Playwright e2e + `check_frontend` 全绿。
+
 ## [1.22.0] - 2026-10-28
 
 把上一版明确留下的两件事做掉：**`server.py` 拆文件**（B7 的后半）与

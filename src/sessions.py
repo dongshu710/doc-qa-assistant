@@ -36,7 +36,7 @@ class SessionStore:
     def history(self, session_id: str | None) -> list[Turn]:
         if not session_id:
             return []
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             item = self._items.get(session_id)
             if not item:
@@ -51,11 +51,14 @@ class SessionStore:
     def append(self, session_id: str | None, query: str, answer: str) -> None:
         if not session_id or not query:
             return
-        now = time.time()
+        # 两个钟各司其职：Turn.ts 将来要给人看（导出/展示），必须是墙钟；
+        # 过期时间只能看单调钟，否则用户改系统时间会让会话瞬间过期或永不过期。
+        wall = time.time()
+        now = time.monotonic()
         with self._lock:
             item = self._items.get(session_id)
             turns = list(item[1]) if item else []
-            turns.append(Turn(query=query[:300], answer=(answer or "")[:500], ts=now))
+            turns.append(Turn(query=query[:300], answer=(answer or "")[:500], ts=wall))
             self._items[session_id] = (now + self.ttl_s, turns[-self.max_turns:])
             self._items.move_to_end(session_id)
             while len(self._items) > self.max_sessions:
@@ -68,7 +71,7 @@ class SessionStore:
             self._items.pop(session_id, None)
 
     def status(self) -> dict:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             alive = sum(1 for expires, _ in self._items.values() if expires > now)
         return {"sessions": alive, "max_sessions": self.max_sessions,

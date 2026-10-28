@@ -189,6 +189,33 @@ def handle(service: NoteService, request: dict) -> dict | None:
     raise RpcError(-32601, f"不支持的方法：{method}")
 
 
+def handle_payload(service: NoteService, request) -> dict | None:
+    """一条 JSON-RPC 消息 → 响应；通知或无需响应时返回 None。
+
+    stdio 与 HTTP 两条传输共用这一份：错误码和字段必须完全一致，
+    否则同一个客户端换个传输方式就要重新调一遍。
+    """
+    try:
+        result = handle(service, request)
+    except RpcError as exc:
+        error = {"code": exc.code, "message": exc.message}
+        if exc.data is not None:
+            error["data"] = exc.data
+        if isinstance(request, dict) and "id" in request:
+            return {"jsonrpc": "2.0", "id": request.get("id"), "error": error}
+        return None
+    except Exception as exc:  # noqa: BLE001 —— 一条坏消息不能拖垮整个会话
+        log(f"handler crashed: {type(exc).__name__}: {exc}")
+        traceback.print_exc(file=sys.stderr)
+        if isinstance(request, dict) and "id" in request:
+            return {"jsonrpc": "2.0", "id": request.get("id"),
+                    "error": {"code": -32603, "message": f"服务端异常：{type(exc).__name__}"}}
+        return None
+    if result is None or not isinstance(request, dict) or "id" not in request:
+        return None
+    return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
+
+
 def serve(service: NoteService, stdin=None, stdout=None) -> int:
     """逐行读 JSON-RPC：stdio 传输用换行分隔，一条消息一行。"""
     inp = stdin or sys.stdin
@@ -203,25 +230,9 @@ def serve(service: NoteService, stdin=None, stdout=None) -> int:
             _write(out, {"jsonrpc": "2.0", "id": None,
                          "error": {"code": -32700, "message": f"JSON 解析失败：{exc.msg}"}})
             continue
-        try:
-            result = handle(service, request)
-        except RpcError as exc:
-            error = {"code": exc.code, "message": exc.message}
-            if exc.data is not None:
-                error["data"] = exc.data
-            if isinstance(request, dict) and "id" in request:
-                _write(out, {"jsonrpc": "2.0", "id": request.get("id"), "error": error})
-            continue
-        except Exception as exc:  # noqa: BLE001 —— 一条坏消息不能拖垮整个会话
-            log(f"handler crashed: {type(exc).__name__}: {exc}")
-            traceback.print_exc(file=sys.stderr)
-            if isinstance(request, dict) and "id" in request:
-                _write(out, {"jsonrpc": "2.0", "id": request.get("id"),
-                             "error": {"code": -32603, "message": f"服务端异常：{type(exc).__name__}"}})
-            continue
-        if result is None or not isinstance(request, dict) or "id" not in request:
-            continue
-        _write(out, {"jsonrpc": "2.0", "id": request.get("id"), "result": result})
+        response = handle_payload(service, request)
+        if response is not None:
+            _write(out, response)
     return 0
 
 

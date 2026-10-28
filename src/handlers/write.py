@@ -85,7 +85,7 @@ def make_write(deps):
     _runtime_warnings = deps._runtime_warnings
     _setup_state = deps._setup_state
     _apply_setup = deps._apply_setup
-    _claude_config_path = deps._claude_config_path
+    _mcp_targets = deps._mcp_targets
     _picker_command = deps._picker_command
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes
@@ -107,6 +107,15 @@ def make_write(deps):
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
             if self._guard("POST", path):
+                return
+            if path == "/mcp":
+                # MCP over HTTP：JSON-RPC 直接 POST，复用同一份 tools 与 NoteService
+                body, err = self._read_note_body(allow_list=True)
+                if err:
+                    self._json({"jsonrpc": "2.0", "id": None,
+                                "error": {"code": -32700, "message": err}}, 400)
+                    return
+                self._mcp_http(body)
                 return
             if path.startswith("/api/storage/"):
                 body, err = self._read_note_body()
@@ -510,7 +519,7 @@ def make_write(deps):
                     sleep_s = max(0.0, min(10.0, float(payload.get("sleep") or 0)))
                 except (TypeError, ValueError):
                     sleep_s = 0.0
-                started = time.time()
+                started = time.monotonic()
                 results, skipped = evaluator.run_cases(
                     pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=kb_dir())
                 summary = evaluator.summarize(results, skipped)
@@ -520,7 +529,7 @@ def make_write(deps):
                     "channel": pipe.settings.channel,
                     "model": pipe.settings.model,
                     **summary,
-                    "duration_ms": int((time.time() - started) * 1000),
+                    "duration_ms": int((time.monotonic() - started) * 1000),
                     "results": results,
                 }
                 with open(run_report_path, "w", encoding="utf-8") as f:
@@ -661,7 +670,7 @@ def make_write(deps):
                     send("final", pre["cached"])
                     return
 
-                started = time.time()
+                started = time.monotonic()
                 events: queue.Queue = queue.Queue()
                 # 生成放到独立线程：主线程要能在「模型还没吐第一个字」时发心跳，
                 # 否则浏览器/代理会以为连接死了，而实际只是检索慢或模型排队。
@@ -681,7 +690,7 @@ def make_write(deps):
                 try:
                     send_comment("connected")
                     while True:
-                        if time.time() - started > SSE_MAX_SECONDS:
+                        if time.monotonic() - started > SSE_MAX_SECONDS:
                             send("error", {"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"})
                             break
                         try:
@@ -721,7 +730,7 @@ def make_write(deps):
                                                           "X-Request-Id": pre["request_id"]})
                 return
 
-            started = time.time()
+            started = time.monotonic()
             result = pipe.ask(pre["query"], model=pre["model"],
                               force_extractive=pre["budget_blocked"],
                               session_id=pre["session_id"])
@@ -812,7 +821,7 @@ def make_write(deps):
                 metrics.inc("rag_local_answer_total")
             metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
             metrics.observe("rag_ask_duration_seconds",
-                            result.get("latency_ms", 0) / 1000.0 or (time.time() - started))
+                            result.get("latency_ms", 0) / 1000.0 or (time.monotonic() - started))
             metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
             metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
             if cost_usd:

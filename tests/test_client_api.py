@@ -146,6 +146,20 @@ def main() -> int:
             check("恢复成功", int(restored.get("restored") or 0) >= 2, str(restored))
             check("内容回到备份时", "补充一行" in client.read_file(target)["content"])
 
+            print("MCP 客户端清单与写入")
+            settings = client.settings()
+            targets = settings.get("mcp_targets") or []
+            check("设置里带客户端清单", isinstance(targets, list) and len(targets) >= 1, str(targets)[:120])
+            check("每项都有 id/name/path",
+                  all({"id", "name", "path"} <= set(t) for t in targets), str(targets)[:120])
+            try:
+                client._request("POST", "/api/settings/mcp/install",
+                                body={"client": "不存在的客户端"})
+                check("未知客户端应被拒", False, "居然写成功了")
+            except ClientError as exc:
+                check("未知客户端 400", exc.status == 400, str(exc.status))
+                check("提示里列出可选客户端", "claude" in str(exc), str(exc)[:120])
+
             print("终端客户端（python -m src.client）")
             import subprocess
             base = ["-m", "src.client", "--base", f"http://127.0.0.1:{port}"]

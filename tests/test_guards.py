@@ -62,6 +62,53 @@ def test_runtime_config() -> None:
     print("runtime config / rollback OK")
 
 
+def test_persist_failure_visible() -> None:
+    """写盘失败必须留痕。
+
+    原来 CostBudget._save、RuntimeConfig._save、AuditLog.write 三处都是
+    `except OSError: pass`：磁盘满时预算一直是 0（日上限形同不存在）、
+    灰度改完重启回默认值、审计日志静默丢失，而外部看一切正常。
+    """
+    from types import SimpleNamespace
+
+    from src.guards import AuditLog, Guards
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 把目标路径占成目录：写入必然失败，又不会真的弄坏磁盘
+        blocked = Path(tmp) / "blocked"
+        blocked.mkdir()
+
+        budget = CostBudget(daily_limit=100, path=str(blocked))
+        budget.add(10)
+        assert budget.persist_failures == 1, budget.persist_failures
+        assert budget.persist_error, "只计数不记原因，排查时还是瞎猜"
+
+        runtime = RuntimeConfig(str(blocked), 0, "")
+        runtime.update(canary_percent=5, canary_model="m")
+        assert runtime.persist_failures >= 1
+        assert runtime.persist_error
+
+        audit = AuditLog(str(blocked))
+        audit.write("test.event", note="x")
+        assert audit.write_failures >= 1
+        assert audit.last_error
+
+        settings = SimpleNamespace(
+            redis_url="", redis_prefix="rag", rate_limit_rps=5, rate_limit_burst=10,
+            idempotency_ttl_s=300, daily_token_budget=100, log_sink="file",
+            log_max_bytes=0, log_keep=3, canary_percent=0, canary_model="",
+            redis_timeout_s=1.5,
+        )
+        guards = Guards(settings, str(Path(tmp) / "logs"))
+        guards.cost.fallback.path = str(blocked)   # 让这一份也写不进去
+        guards.cost.add(5)
+        persist = guards.status()["persist"]
+        assert persist["cost"]["failures"] == 1, persist
+        assert persist["cost"]["error"], persist
+        assert persist["audit"]["failures"] == 0, persist
+    print("persist failure visible OK")
+
+
 def test_suggest() -> None:
     chunks = load_corpus(str(ROOT / "data" / "knowledge"))
     items = examples(chunks, 4)
@@ -76,5 +123,6 @@ if __name__ == "__main__":
     test_idempotency()
     test_cost_budget()
     test_runtime_config()
+    test_persist_failure_visible()
     test_suggest()
     print("GUARDS OK")

@@ -123,6 +123,38 @@ def main() -> int:
     check("带 NOTE_HOME", server["env"]["NOTE_HOME"] == "D:/notes")
     check("可被 JSON 序列化", bool(json.dumps(cfg)))
 
+    print("mcp_targets：只认已知客户端，路径按平台推")
+    win = settings_ops.mcp_targets(home="C:/Users/u", os_name="nt", appdata="C:/Users/u/AppData/Roaming")
+    ids = [t["id"] for t in win]
+    check("Windows 给出四个客户端", ids == ["claude", "cursor", "cline", "windsurf"], str(ids))
+    by_id = {t["id"]: t for t in win}
+    check("Claude 读 APPDATA",
+          by_id["claude"]["path"].replace("\\", "/").endswith("AppData/Roaming/Claude/claude_desktop_config.json"),
+          by_id["claude"]["path"])
+    check("Cursor 在用户目录下 .cursor/mcp.json",
+          by_id["cursor"]["path"].replace("\\", "/").endswith("/.cursor/mcp.json"),
+          by_id["cursor"]["path"])
+    check("Cline 走 VS Code globalStorage",
+          "saoudrizwan.claude-dev" in by_id["cline"]["path"], by_id["cline"]["path"])
+    check("路径都是字符串", all(isinstance(t["path"], str) and t["path"] for t in win))
+
+    mac = settings_ops.mcp_targets(home="/Users/u", os_name="darwin")
+    mac_claude = {t["id"]: t["path"] for t in mac}["claude"]
+    check("macOS 用 Application Support",
+          mac_claude.replace("\\", "/").endswith("Library/Application Support/Claude/claude_desktop_config.json"),
+          mac_claude)
+
+    linux = settings_ops.mcp_targets(home="/home/u", os_name="posix")
+    linux_claude = {t["id"]: t["path"] for t in linux}["claude"]
+    check("Linux 用 ~/.config", linux_claude.replace("\\", "/").endswith(".config/Claude/claude_desktop_config.json"),
+          linux_claude)
+
+    check("exists 字段是布尔", all(isinstance(t["exists"], bool) for t in win))
+    # 绝不接受调用方传路径：函数签名里没有 path 参数
+    import inspect
+    params = list(inspect.signature(settings_ops.mcp_targets).parameters)
+    check("签名里没有可注入的任意路径", "path" not in params, str(params))
+
     print(f"\n{passed} 项通过，{len(failures)} 项失败")
     if failures:
         print("失败项：" + "、".join(failures))

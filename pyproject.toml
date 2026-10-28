@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-notes"
+dynamic = ["version"]
+description = "零依赖的本地 RAG 问答与智能体笔记服务（问答、引用校验、知识库版本审批、笔记整理、MCP）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "项目维护者" }]
+keywords = ["rag", "notes", "mcp", "knowledge-base", "zero-dependency", "sse"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Text Processing :: Indexing",
+]
+# 刻意留空：运行时只用标准库。装了 numpy / faiss 会自动加速，但绝不强求。
+dependencies = []
+
+[project.scripts]
+agent-notes-mcp = "src.notes.mcp_server:main"
+jiyi-server = "src.server:main"
+jiyi-client = "src.client_cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dongshu710/doc-qa-assistant"
+
+[tool.setuptools]
+# 项目内部一直用 `from src.xxx import ...`，包名保持 src 以免与现有 import 分叉。
+packages = ["src", "src.handlers", "src.notes"]
+
+[tool.setuptools.dynamic]
+# 版本号唯一来源仍是仓库根的 VERSION，避免发版时两处各改一遍。
+version = { file = ["VERSION"] }
+
+[tool.setuptools.package-data]
+src = ["web/*", "art.txt"]

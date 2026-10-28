@@ -26,6 +26,16 @@ stdio 传输，由客户端拉起进程：
 
 Windows 上把 `python` 换成解释器绝对路径，`cwd` 用反斜杠或正斜杠都行。
 
+也可以不拉进程，直接 POST 到已经在跑的主服务（v1.23 起）：
+
+```bash
+POST /mcp   Content-Type: application/json
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+```
+
+两条传输共用同一份 `handle()`，错误码与工具完全一致；通知类请求回 `202` 无正文，
+支持 JSON-RPC 批量，`GET /mcp` 回 `405`。配了 `API_KEYS` 时 `/mcp` 与其他 `/api/*` 一样要带 Key。
+
 可用工具 7 个：`save_conversation` / `search_notes` / `get_note` / `update_note` /
 `delete_note` / `note_stats` / `export_notes`。
 资源 2 个：`notes://schema`（格式契约）、`notes://index`（全部笔记的清单）。

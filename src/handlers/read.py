@@ -85,7 +85,7 @@ def make_read(deps):
     _runtime_warnings = deps._runtime_warnings
     _setup_state = deps._setup_state
     _apply_setup = deps._apply_setup
-    _claude_config_path = deps._claude_config_path
+    _mcp_targets = deps._mcp_targets
     _picker_command = deps._picker_command
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes
@@ -109,6 +109,13 @@ def make_read(deps):
             path = parsed.path
             qs = parse_qs(parsed.query)
             if self._guard("GET", path):
+                return
+
+            if path == "/mcp":
+                # 本实现是无状态的 JSON-RPC，不提供 SSE 下行流；明确告诉客户端别试
+                self._json({"error": "method_not_allowed",
+                            "message": "MCP 走 POST /mcp（JSON-RPC），不支持 GET 长连接"},
+                           405, {"Allow": "POST", **(self._cors_headers() or {})})
                 return
 
             if path == "/tools.json":

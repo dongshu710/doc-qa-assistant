@@ -136,18 +136,34 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
             note_ref["error"] = f"{type(exc).__name__}: {exc}"
             return {"ok": False, "message": note_ref["error"]}
 
+    _repo_cache = {"stamp": None, "url": ""}
+
     def _repo_url() -> str:
-        """从 .git/config 读 origin，换 fork 也不用改代码；读不到就给个能点的默认值。"""
+        """从 .git/config 读 origin，换 fork 也不用改代码；读不到就给个能点的默认值。
+
+        按 (mtime_ns, size) 缓存：`/api/settings` 每次都要算下载地址，
+        而 `.git/config` 几乎不变，没必要每个请求都读一遍盘。
+        """
+        config_path = pathlib.Path(project_root) / ".git" / "config"
         try:
-            text = (pathlib.Path(project_root) / ".git" / "config").read_text(encoding="utf-8")
+            stat = config_path.stat()
+        except OSError:
+            return ""
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        if _repo_cache["stamp"] == stamp:
+            return _repo_cache["url"]
+        try:
+            text = config_path.read_text(encoding="utf-8")
         except OSError:
             return ""
         found = re.search(r"url\s*=\s*(\S+)", text)
-        if not found:
-            return ""
-        url = found.group(1)
-        match = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?$", url)
-        return f"https://github.com/{match.group(1)}/{match.group(2)}" if match else ""
+        url = ""
+        if found:
+            match = re.search(r"github\.com[:/]([^/]+)/([^/\s]+?)(?:\.git)?$", found.group(1))
+            if match:
+                url = f"https://github.com/{match.group(1)}/{match.group(2)}"
+        _repo_cache.update(stamp=stamp, url=url)
+        return url
 
     def _downloads() -> dict:
         """两种下载入口：整包（问答+笔记）与插件包（只有笔记）。页面按钮直接指到这里。"""
@@ -219,6 +235,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
                 "backup": appconfig.backup_state(count),
             },
             "mcp": _mcp_config(),
+            "mcp_targets": _mcp_targets(),
             "repo_url": _repo_url(),
             "downloads": _downloads(),
             "storage": storage,
@@ -244,6 +261,14 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
                 out.append(f"{name} 已退回进程内状态（累计 {hits} 次），多实例下不再一致")
         if status.get("redis_error"):
             out.append(f"Redis 不可用：{status['redis_error']}")
+        # 写盘失败原来被 except OSError: pass 吞掉：磁盘满了界面一切正常，
+        # 但预算归零、灰度回到默认值、审计日志在丢。
+        persist = status.get("persist") or {}
+        for name, label in (("cost", "每日用量预算"), ("canary", "灰度配置"), ("audit", "审计日志")):
+            item = persist.get(name) or {}
+            if item.get("failures"):
+                out.append(f"{label}写盘失败 {item['failures']} 次"
+                           f"（{item.get('error') or '未知原因'}），重启后会回退到默认值")
         detail = pipe.retrieval_detail or {}
         if detail.get("fallback_error"):
             out.append(f"检索未按配置运行：{detail['fallback_error']}")
@@ -315,15 +340,13 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         return {"ok": True, "home": str(target), "created": created,
                 "notes": _count_notes(str(target))}, 200
 
-    def _claude_config_path() -> pathlib.Path | None:
-        appdata = os.environ.get("APPDATA")
-        if os.name == "nt" and appdata:
-            return pathlib.Path(appdata) / "Claude" / "claude_desktop_config.json"
-        if sys.platform == "darwin":
-            return pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-        if sys.platform.startswith("linux"):
-            return pathlib.Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
-        return None
+    def _mcp_targets() -> list[dict]:
+        """各 MCP 客户端的配置位置；实现放在 settings_ops 以便单测。
+
+        只返回已知客户端，不接受调用方传路径——这个接口会写别人的配置文件，
+        开放任意路径等于开了个本地任意写文件的洞。
+        """
+        return settings_ops.mcp_targets()
 
     pick_lock = threading.Lock()      # 连点两次不能弹两个框
 
@@ -370,7 +393,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
             if not cmd:
                 return 200, {"ok": False, "error": "unsupported",
                              "message": "这个系统没有可用的目录选择器，请手动填路径"}
-            started = time.time()
+            started = time.monotonic()
             try:
                 proc = subprocess.run(cmd, capture_output=True, text=True,
                                       encoding="utf-8", errors="replace", timeout=180)
@@ -382,7 +405,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
             if proc.returncode != 0 or not path:
                 return 200, {"ok": False, "error": "cancelled", "message": "已取消"}
             return 200, {"ok": True, "path": path,
-                         "elapsed_ms": int((time.time() - started) * 1000)}
+                         "elapsed_ms": int((time.monotonic() - started) * 1000)}
         finally:
             pick_lock.release()
 
@@ -405,7 +428,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         _storage_report=_storage_report, _clear_index=_clear_index,
         _total_bytes=_total_bytes, _settings_payload=_settings_payload,
         _runtime_warnings=_runtime_warnings, _setup_state=_setup_state,
-        _apply_setup=_apply_setup, _claude_config_path=_claude_config_path,
+        _apply_setup=_apply_setup, _mcp_targets=_mcp_targets,
         _picker_command=_picker_command, _pick_folder=_pick_folder,
         _count_notes=_count_notes, _copy_notes=_copy_notes,
     )

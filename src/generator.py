@@ -249,7 +249,7 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
     `history` 只影响模型能看到的上文（最近一轮），检索与引用校验仍按当前问题。
     """
     settings = load_settings()
-    t0 = time.time()
+    t0 = time.monotonic()
 
     if force_extractive or not api_key():
         return {
@@ -257,14 +257,14 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
             "answer": extractive_answer(query, hits),
             "degraded": False,
             "error": None,
-            "latency_ms": round((time.time() - t0) * 1000, 1),
+            "latency_ms": round((time.monotonic() - t0) * 1000, 1),
             "usage": {},
         }
 
     last_err = None
     deadline = t0 + settings.wall_clock_budget_s
     for attempt in range(settings.llm_max_retries + 1):
-        if time.time() > deadline:
+        if time.monotonic() > deadline:
             last_err = TimeoutError("超出墙钟预算")
             break
         try:
@@ -274,7 +274,7 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
                 "answer": answer,
                 "degraded": False,
                 "error": None,
-                "latency_ms": round((time.time() - t0) * 1000, 1),
+                "latency_ms": round((time.monotonic() - t0) * 1000, 1),
                 "usage": usage,
             }
         except Exception as exc:  # noqa: BLE001 —— 先分类再决定
@@ -284,7 +284,7 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
             backoff = min(settings.llm_backoff_max_s, settings.llm_backoff_base_s * (2 ** attempt))
             retry_after = _retry_after(exc)
             wait = max(backoff, retry_after) if retry_after else backoff
-            wait = min(wait, max(0.0, deadline - time.time()))  # 不超过墙钟预算
+            wait = min(wait, max(0.0, deadline - time.monotonic()))  # 不超过墙钟预算
             if wait <= 0:
                 break
             time.sleep(wait + random.uniform(0, 0.3))
@@ -295,6 +295,6 @@ def generate(query: str, hits, model: str | None = None, force_extractive: bool 
         "answer": extractive_answer(query, hits),
         "degraded": True,
         "error": str(last_err),
-        "latency_ms": round((time.time() - t0) * 1000, 1),
+        "latency_ms": round((time.monotonic() - t0) * 1000, 1),
         "usage": {},
     }

@@ -85,7 +85,7 @@ def make_resources(deps):
     _runtime_warnings = deps._runtime_warnings
     _setup_state = deps._setup_state
     _apply_setup = deps._apply_setup
-    _claude_config_path = deps._claude_config_path
+    _mcp_targets = deps._mcp_targets
     _picker_command = deps._picker_command
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes
@@ -114,20 +114,21 @@ def make_resources(deps):
                                path=self.path[:200], reason=err)
             return {"ok": False, "error": "unauthorized",
                     "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"}
-        def _read_note_body(self) -> tuple[dict | None, str | None]:
+        def _read_note_body(self, allow_list: bool = False) -> tuple[dict | list | None, str | None]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 return None, "Content-Length 不合法"
             if length <= 0:
-                return {}, None
+                return ([] if allow_list else {}), None
             if length > NOTES_MAX_BYTES:
                 return None, f"请求体超过 {NOTES_MAX_BYTES} 字节"
             try:
                 data = json.loads(self.rfile.read(length).decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 return None, "请求体不是合法 JSON"
-            if not isinstance(data, dict):
+            # JSON-RPC 允许批量（数组），其余接口只收对象
+            if not isinstance(data, dict) and not (allow_list and isinstance(data, list)):
                 return None, "请求体必须是 JSON 对象"
             return data, None
         def _notes(self, method: str, path: str, query: dict, body: dict | None) -> None:
@@ -336,6 +337,44 @@ def make_resources(deps):
                             "message": f"存储区读写失败：{exc}"}, 500, cors)
                 return
             self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
+        def _mcp_http(self, body) -> None:
+            """MCP over HTTP：JSON-RPC 直接 POST 到 /mcp。
+
+            为什么不另起进程：笔记服务、鉴权、限流、审计都在主服务里，
+            再开一个端口等于把它们重做一遍，用户还要记两个地址。
+            规范里的 SSE 流式响应这里不做——每个请求都是短事务，
+            一次性 JSON 对智能体更省事。
+            """
+            from ..notes import mcp_server
+
+            cors = self._cors_headers()
+            service = note_ref["service"]
+            if service is None:
+                self._json({"jsonrpc": "2.0",
+                            "id": body.get("id") if isinstance(body, dict) else None,
+                            "error": {"code": -32603,
+                                      "message": f"笔记存储不可用：{note_ref['error']}"}},
+                           503, cors)
+                return
+            if isinstance(body, list):
+                # 批量请求：逐条处理，只要有一条需要响应就返回数组
+                replies = [r for r in (mcp_server.handle_payload(service, item) for item in body) if r]
+                if not replies:
+                    self.send_response(202)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self._json(replies, 200, cors)
+                return
+            response = mcp_server.handle_payload(service, body)
+            if response is None:
+                # 通知（notifications/initialized 等）按规范回 202 且无正文
+                self.send_response(202)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self._json(response, 200, cors)
+
         def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:
             """设置面板的全部后端动作：读、改、测连接、导出/写入插件配置、打开目录。
 
@@ -459,16 +498,23 @@ def make_resources(deps):
                     self._json(_probe_llm(cfg), 200, cors)
                     return
                 if path == "/api/settings/mcp":
-                    target = _claude_config_path()
+                    targets = _mcp_targets()
                     self._json({"ok": True, "config": _mcp_config(),
-                                "target": str(target) if target else ""}, 200, cors)
+                                "targets": targets,
+                                "target": next((t["path"] for t in targets if t["exists"]), "")},
+                               200, cors)
                     return
                 if path == "/api/settings/mcp/install" and method == "POST":
-                    target = _claude_config_path()
-                    if target is None:
+                    wanted = str((body or {}).get("client") or "claude").strip().lower()
+                    known = {t["id"]: t for t in _mcp_targets()}
+                    item = known.get(wanted)
+                    if item is None:
+                        # 只认已知客户端：允许调用方给路径，就等于允许往任意文件里写
                         self._json({"ok": False, "error": "unsupported",
-                                    "message": "这个系统没有已知的 Claude Desktop 配置路径，请手动复制 JSON"}, 400, cors)
+                                    "message": f"不认识的客户端「{wanted}」，可选："
+                                               + "、".join(known) + "；也可以手动复制 JSON"}, 400, cors)
                         return
+                    target = pathlib.Path(item["path"])
                     data: dict = {}
                     if target.exists():
                         try:
@@ -485,9 +531,10 @@ def make_resources(deps):
                     data.setdefault("mcpServers", {})["agent-notes"] = _mcp_config()["mcpServers"]["agent-notes"]
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    guards.audit.write("settings.mcp_install", client=self._client(), target=str(target))
-                    self._json({"ok": True, "target": str(target),
-                                "message": "已写入。重启 Claude Desktop 后生效"}, 200, cors)
+                    guards.audit.write("settings.mcp_install", client=self._client(),
+                                       target=str(target), app=wanted)
+                    self._json({"ok": True, "target": str(target), "client": wanted,
+                                "message": f"已写入 {item['name']}。重启该客户端后生效"}, 200, cors)
                     return
                 if path == "/api/settings/open" and method == "POST":
                     service = note_ref["service"]

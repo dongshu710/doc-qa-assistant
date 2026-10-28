@@ -19,11 +19,25 @@ class Chunk:
     chunk_index: int
 
 
-def _split_section(body: str, max_chars: int = 320) -> list[str]:
-    """把一节正文按「第X条」切成语义完整的块；超长条款再按句号兜底。"""
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, "") or default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _split_section(body: str, max_chars: int = 320, overlap: int = 0) -> list[str]:
+    """把一节正文按「第X条」切成语义完整的块；超长条款再按句号兜底。
+
+    `overlap` 只作用于「超长条款被句号切开」这条路径：按「第X条」切出来的
+    每一块本身就是完整条款，再加重叠只会让相邻块互相污染分数。
+    被句号切开的地方则常见「该产品」「上述期限」这类跨块指代，带上上一块
+    的尾巴能救回来。
+    """
     pieces = [p.strip() for p in re.split(r"(?=第[一二三四五六七八九十百零\d]+条)", body) if p.strip()]
     if not pieces:
         pieces = [body.strip()]
+    span = min(max(0, overlap), max_chars // 4)   # 重叠不能吃掉整块
     out: list[str] = []
     for p in pieces:
         if len(p) <= max_chars:
@@ -35,7 +49,7 @@ def _split_section(body: str, max_chars: int = 320) -> list[str]:
                     continue
                 if len(buf) + len(s) > max_chars and buf:
                     out.append(buf)
-                    buf = s
+                    buf = (buf[-span:] if span else "") + s
                 else:
                     buf += s
             if buf:
@@ -43,7 +57,8 @@ def _split_section(body: str, max_chars: int = 320) -> list[str]:
     return [x for x in out if x]
 
 
-def parse_document(raw: str, fname: str) -> list[Chunk]:
+def parse_document(raw: str, fname: str, max_chars: int = 320,
+                   overlap: int = 0) -> list[Chunk]:
     """解析单份文档。拆出来是为了让增量重建只重读变更过的文件。"""
     chunks: list[Chunk] = []
     doc_id = fname.rsplit(".", 1)[0]
@@ -56,7 +71,7 @@ def parse_document(raw: str, fname: str) -> list[Chunk]:
         nonlocal buf, idx
         body = "\n".join(buf).strip()
         if body:
-            for piece in _split_section(body):
+            for piece in _split_section(body, max_chars, overlap):
                 chunks.append(Chunk(doc, doc_title, section_name, piece, idx))
                 idx += 1
         buf = []
@@ -77,13 +92,19 @@ def parse_document(raw: str, fname: str) -> list[Chunk]:
 
 
 def load_corpus(knowledge_dir: str, cache: dict | None = None,
-                on_parse: Callable[[str], None] | None = None) -> list[Chunk]:
+                on_parse: Callable[[str], None] | None = None,
+                max_chars: int | None = None, overlap: int | None = None) -> list[Chunk]:
     """加载整库。
 
-    `cache` 用于增量重建：fname -> (mtime_ns, size, chunks)。签名不变的文件
+    `cache` 用于增量重建：fname -> (签名, size, chunks)。签名不变的文件
     直接复用上次解析结果，只重读变更/新增的文件；被删除的文档从缓存里清掉。
     解析结果只依赖文件内容，复用对象不会让新旧索引互相污染（Chunk 只读）。
+
+    签名里带上切分参数：改了 `CHUNK_OVERLAP` 但文件没动时，如果只看 mtime/size，
+    旧分块会被静默复用——「改了配置没生效」比报错更难查。
     """
+    max_chars = _env_int("CHUNK_MAX_CHARS", 320) if max_chars is None else max_chars
+    overlap = _env_int("CHUNK_OVERLAP", 0) if overlap is None else overlap
     chunks: list[Chunk] = []
     if not os.path.isdir(knowledge_dir):
         raise FileNotFoundError(f"知识库目录不存在: {knowledge_dir}")
@@ -97,7 +118,7 @@ def load_corpus(knowledge_dir: str, cache: dict | None = None,
             stat = os.stat(path)
         except OSError:
             continue
-        signature = (stat.st_mtime_ns, stat.st_size)
+        signature = (stat.st_mtime_ns, stat.st_size, max_chars, overlap)
         seen.add(fname)
         cached = cache.get(fname) if cache is not None else None
         if cached and cached[0] == signature:
@@ -105,7 +126,7 @@ def load_corpus(knowledge_dir: str, cache: dict | None = None,
             continue
         with open(path, encoding="utf-8") as f:
             raw = f.read()
-        parsed = parse_document(raw, fname)
+        parsed = parse_document(raw, fname, max_chars, overlap)
         if cache is not None:
             cache[fname] = (signature, stat.st_size, parsed)
         if on_parse:
