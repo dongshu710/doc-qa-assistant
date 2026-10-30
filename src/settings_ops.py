@@ -273,6 +273,7 @@ def storage_report(notes_home: str, kb_root: str, index_dir: str,
         (kb / "versions") if kb else home / "-",
         config_path or home / "-",
         home / "threads",
+        home / "assets",
     )
     now = time.monotonic()
     hit = _STORAGE_CACHE.get(key)
@@ -288,7 +289,8 @@ def storage_report(notes_home: str, kb_root: str, index_dir: str,
 
     # 五个根目录互不相干，并行扫：Windows 上单次 stat 被杀毒软件拖到 8~9 ms 级，
     # 串行扫四个树就是把等待时间加起来。
-    targets = {"notes": home / "notes", "threads": home / "threads", "index": home / "index"}
+    targets = {"notes": home / "notes", "threads": home / "threads", "index": home / "index",
+               "assets": home / "assets"}
     if kb:
         targets["kb"] = kb
     if config_path:
@@ -315,6 +317,7 @@ def storage_report(notes_home: str, kb_root: str, index_dir: str,
         "notes": {**results.get("notes", {"bytes": 0, "files": 0}), "path": str(home / "notes")},
         "threads": {**results.get("threads", {"bytes": 0, "files": 0}), "path": str(home / "threads")},
         "index": {**results.get("index", {"bytes": 0, "files": 0}), "path": str(home / "index")},
+        "assets": {**results.get("assets", {"bytes": 0, "files": 0}), "path": str(home / "assets")},
         "kb": {**results.get("kb", {"bytes": 0, "files": 0}), "path": str(kb_root or ""),
                "versions": versions},
         "config": {**results.get("config", {"bytes": 0, "files": 0}), "path": str(config_path or "")},

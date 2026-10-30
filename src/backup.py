@@ -4,7 +4,9 @@
 用户误删或换机时需要的是「整个存储区回到昨天」，不是一堆散文件。
 
 范围与取舍：
-- 收 `notes/ threads/ exports/`；不收 `index/`（可由笔记重建）、`assets/`（可能很大）；
+- 收 `notes/ threads/ exports/ assets/`；不收 `index/`（可由笔记重建）；
+- 附件单独设上限（单文件 8 MB、总量 128 MB），超限就跳过并在结果的 `warnings`
+  里说明——附件把包撑爆，比「附件没进包但笔记都在」糟得多；
 - 备份写进 `<home>/exports/backups/`，并在打包时排除该目录，避免自己套自己；
 - 恢复只接受该目录里的包，解压前逐条校验成员路径（挡 zip slip），
   并且先自动做一份 pre-restore 备份——恢复本身也可能是误操作。
@@ -17,10 +19,14 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-INCLUDE = ("notes", "threads", "exports")
+INCLUDE = ("notes", "threads", "exports", "assets")
 SKIP_PARTS = {("exports", "backups")}
 MAX_FILES = 20000
 MAX_BYTES = 512 * 1024 * 1024
+# 附件单独设限：内容是去重过的，但仍可能堆到几十 MB。
+# 超限就跳并留痕，而不是让整个备份失败——备份的第一目标是「笔记能回来」。
+ASSET_MAX_FILE_BYTES = 8 * 1024 * 1024
+ASSET_MAX_TOTAL_BYTES = 128 * 1024 * 1024
 
 
 class BackupError(ValueError):
@@ -71,6 +77,9 @@ def create(home, note: str = "") -> dict:
         seq += 1
     files = 0
     total = 0
+    asset_bytes = 0
+    skipped = 0
+    skipped_bytes = 0
     manifest = {
         "schema": "backup/v1",
         "created": datetime.now().isoformat(timespec="seconds"),
@@ -87,8 +96,17 @@ def create(home, note: str = "") -> dict:
                         size = path.stat().st_size
                     except OSError:
                         continue
+                    if root == "assets" and (size > ASSET_MAX_FILE_BYTES
+                                             or asset_bytes + size > ASSET_MAX_TOTAL_BYTES):
+                        # 跳附件而不是让整个包失败：丢了几张图还能重传，
+                        # 备份做不出来则什么都没有
+                        skipped += 1
+                        skipped_bytes += size
+                        continue
                     if size > MAX_BYTES or files >= MAX_FILES:
                         raise BackupError("存储区过大，请分批备份（单包上限 20000 个文件 / 512 MB）", 413)
+                    if root == "assets":
+                        asset_bytes += size
                     zf.write(path, rel.as_posix())
                     files += 1
                     total += size
@@ -101,10 +119,21 @@ def create(home, note: str = "") -> dict:
         raise BackupError(f"打包失败：{exc}", 500) from exc
     if not files:
         target.unlink(missing_ok=True)
+        if skipped:
+            raise BackupError(f"存储区里只有附件，且 {skipped} 个全部超过附件备份上限"
+                              f"（单文件 8 MB / 总量 128 MB）", 413)
         raise BackupError("存储区里还没有可备份的内容", 400)
     size = target.stat().st_size
+    # 跳过附件必须说出来：用户照着「备份成功」的字样去恢复，才发现图没了
+    warnings = []
+    if skipped:
+        warnings.append(
+            f"{skipped} 个附件未进包（共 {skipped_bytes // 1024} KB）："
+            f"单文件上限 {ASSET_MAX_FILE_BYTES // (1024 * 1024)} MB、"
+            f"附件总量上限 {ASSET_MAX_TOTAL_BYTES // (1024 * 1024)} MB；超出的请单独保存")
     return {"name": name, "path": str(target), "bytes": size, "files": files,
-            "source_bytes": total, "created": manifest["created"]}
+            "source_bytes": total, "created": manifest["created"],
+            "skipped": skipped, "warnings": warnings}
 
 
 def list_backups(home) -> list[dict]:

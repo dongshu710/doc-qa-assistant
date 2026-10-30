@@ -189,6 +189,35 @@ def make_base(deps):
         def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers,
                        cache="no-store")
+        def _send_bytes(self, code: int, data: bytes, content_type: str,
+                        extra_headers: dict | None = None,
+                        cache: str = "private, max-age=300") -> None:
+            """二进制响应。
+
+            不复用 `_send`：那条路径会把 body 当字符串做 UTF-8 编码、还要判断能否 gzip，
+            图片走一遍会直接坏掉。
+
+            SVG 单独加 CSP + sandbox：用户在地址栏直接打开 `/assets/x.svg` 时，
+            文件里的 `<script>` 是**同源**执行的——等于给了它调用本服务接口的权限。
+            `<img>` 里不会执行，但「直接在浏览器打开」是最常见的操作，必须挡住。
+            """
+            headers = {"Content-Type": content_type,
+                       "Content-Length": str(len(data)),
+                       "Cache-Control": cache,
+                       "X-Content-Type-Options": "nosniff"}
+            if content_type.startswith("image/svg"):
+                headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+            for key, value in (extra_headers or {}).items():
+                headers[key] = str(value)
+            self.send_response(code)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            if self.command != "HEAD":
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
         def _no_content(self, code: int = 202) -> None:
             """无正文响应。MCP 规范里通知类请求必须回 202 且不带 body，
             编造成 `200 {}` 会让客户端以为收到了一条合法响应。

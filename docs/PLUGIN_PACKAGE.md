@@ -44,7 +44,7 @@ Windows 示例：
 "NOTE_HOME": "D:\\agent-notes"
 ```
 
-改完重启客户端（或重载连接器）。列表里出现 `agent-notes` 且能看到 7 个工具，就通了。
+改完重启客户端（或重载连接器）。列表里出现 `agent-notes` 且能看到 9 个工具，就通了。
 
 ## 三、它会做什么
 
@@ -57,8 +57,11 @@ Windows 示例：
 | `note_stats` | 篇数、标签分布、最近更新时间 |
 | `export_notes` | 导出全部（HTML / JSON） |
 | `delete_note` | 删一篇，需显式 `confirm` |
+| `save_attachment` | 把图片/文件挂到某篇笔记下，返回可粘进正文的 markdown |
+| `list_attachments` | 列出某篇笔记下已挂的附件 |
 
-外加两个资源：`notes://schema`（笔记格式说明）、`notes://index`（索引清单）。
+外加两个资源：`notes://schema`（笔记格式说明）、`notes://index`（索引清单），
+以及每个附件一条 `notes://asset/<笔记 id>/<文件名>`（文本走 `text`，其余走 `blob`）。
 
 笔记格式固定为六段正文（摘要 / 要点 / 决策 / 待办 / 原文摘录 / 元信息），
 front matter 里带 `hash`，同样内容重复保存不会写第二篇。

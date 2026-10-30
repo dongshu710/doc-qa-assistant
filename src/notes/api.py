@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
+from urllib.parse import quote, unquote
 
-from . import export as export_mod
+from . import assets as assets_mod, export as export_mod
 from .model import NoteError
 from .service import NoteConflict, NoteService
 from .store import NoteNotFound, StoreBusy
@@ -61,6 +62,9 @@ def dispatch(service: NoteService | None, method: str, path: str,
             if isinstance(body, dict) and body.get("semantic") is not None:
                 semantic = str(body["semantic"]).lower()
             return 200, {"ok": True, **service.rebuild_search(semantic)}, {}
+        parts = [item for item in rest.split("/") if item]
+        if len(parts) >= 2 and parts[1] == "assets":
+            return _assets(service, parts, method, query, body)
         if not ITEM_ID.match(rest):
             raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{rest}")
         note_id = rest
@@ -88,11 +92,83 @@ def dispatch(service: NoteService | None, method: str, path: str,
                        rev=exc.rev) from exc
     except StoreBusy as exc:
         raise ApiError(503, "busy", str(exc), headers={"Retry-After": "1"}) from exc
+    except assets_mod.AssetError as exc:
+        # 错误码沿用笔记接口已有的词汇，不为附件另立一套：
+        # 客户端按 error 分支，多一个同义码只是多一处漏判
+        code = {404: "not_found", 413: "payload_too_large"}.get(exc.status, "invalid_argument")
+        raise ApiError(exc.status, code, str(exc)) from exc
     except NoteError as exc:
         raise ApiError(400, "invalid_argument", str(exc)) from exc
 
 
+def _assets(service: NoteService, parts: list[str], method: str,
+            query: dict, body: dict | None) -> tuple[int, dict, dict]:
+    """附件：`/api/notes/{id}/assets[/{name}]`。
+
+    单个文件的 GET 返回 `__binary__` 标记，由 handler 层换成原始字节写出。
+    为什么不在这一层直接写 HTTP：dispatch 是协议无关的（MCP 也复用它的语义），
+    一旦这里开始碰 `wfile`，以后想给 MCP 加附件就得再写一份。
+    """
+    note_id = parts[0]
+    if not ITEM_ID.match(note_id):
+        raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{note_id}")
+    if len(parts) == 2:
+        if method == "GET":
+            rows = service.list_assets(note_id)
+            total = sum(int(row.get("size") or 0) for row in rows)
+            return 200, {"ok": True, "count": len(rows), "bytes": total, "items": rows}, {}
+        if method == "POST":
+            return _upload_asset(service, note_id, body)
+        raise ApiError(405, "method_not_allowed", "附件集合支持 GET / POST",
+                       headers={"Allow": "GET, POST, OPTIONS"})
+    if len(parts) == 3:
+        # 必须先解码：URL 里的中文文件名是百分号编码的（`架构图.png` → `%E6%9E%B6...`），
+        # 不解码就永远 404，而中文文件名在这里是常态不是边缘情况。
+        # 先解码再交给 resolve 校验——顺序反了会把 `%2F` 当成普通字符放过穿越。
+        name = unquote(parts[2])
+        if method == "GET":
+            data, mime = service.read_asset(note_id, name)
+            return 200, {"__binary__": True, "content": data, "mime": mime}, {
+                "Content-Disposition": _disposition(name, mime)}
+        if method == "DELETE":
+            confirm = (_one(query, "confirm") or "").lower() in ("1", "true", "yes")
+            if isinstance(body, dict) and body.get("confirm") is True:
+                confirm = True
+            if not confirm:
+                raise ApiError(400, "confirm_required",
+                               "删除附件需要确认：加 ?confirm=1 或请求体 {\"confirm\": true}；"
+                               "这个删除不进回收站")
+            return 200, {"ok": True, **service.delete_asset(note_id, name)}, {}
+        raise ApiError(405, "method_not_allowed", "单个附件支持 GET / DELETE",
+                       headers={"Allow": "GET, DELETE, OPTIONS"})
+    raise ApiError(404, "not_found", "接口不存在")
+
+
+def _upload_asset(service: NoteService, note_id: str, body: dict | None) -> tuple[int, dict, dict]:
+    if not isinstance(body, dict):
+        raise ApiError(400, "invalid_argument", "请求体必须是 JSON 对象")
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ApiError(400, "invalid_argument", "需要 name（文件名，带扩展名，例如 架构图.png）")
+    # 解码的容错口径统一放在 assets 里：HTTP 与 MCP 两条路共用一份，
+    # 免得「前端给 data URL、后端只要裸 base64」这类差异各自长一套
+    payload = assets_mod.decode_data(body.get("data"))
+    # 返回的 markdown 片段可以直接粘进正文，省得调用方再拼一次路径
+    return 201, {"ok": True, **service.save_asset(note_id, name, payload)}, {}
+
+
+def _disposition(name: str, mime: str) -> str:
+    """图片与 PDF 内联显示，其余当附件下载。
+
+    HTML 不在允许上传的类型里，但即便如此也不给 `inline`——同源下的 HTML
+    就是一个能调本服务接口的页面。
+    """
+    inline = mime.startswith("image/") or mime == "application/pdf"
+    return f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quote(name)}"
+
+
 def _create(service: NoteService, body: dict | None) -> tuple[int, dict, dict]:
+    """新建笔记。`commit=false` 只渲染不落盘，用于「先给人看一眼再存」。"""
     if not isinstance(body, dict):
         raise ApiError(400, "invalid_argument", "请求体必须是 JSON 对象")
     commit = body.get("commit", True)
@@ -121,7 +197,7 @@ def _export(service: NoteService, query: dict) -> dict:
         notes = [service.get(row["id"]) for row in rows]
     title = _one(query, "title") or "我的笔记"
     if fmt == "html":
-        text = export_mod.render_html(notes, title=title)
+        text = export_mod.render_html(notes, title=title, home=service.store.home)
         mime, ext = "text/html", "html"
     else:
         text = json.dumps(export_mod.bundle(notes), ensure_ascii=False, indent=2)

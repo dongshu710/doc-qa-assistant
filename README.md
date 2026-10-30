@@ -1174,6 +1174,10 @@ python -m src.notes rebuild                  # 索引丢了/外部文件多时�
 | DELETE | `/api/notes/{id}?confirm=1` | 移入 `.trash`，可找回 |
 | GET | `/api/notes/stats` | 数量与标签分布 |
 | GET | `/api/notes/export` | 导出：`?format=html\|json`，可带 `tag` / `since` / `id`，返回内容本身 |
+| POST | `/api/notes/{id}/assets` | 上传附件：`{"name":"架构图.png","data":"<base64>"}`，返回可粘贴的 markdown |
+| GET | `/api/notes/{id}/assets` | 列出这篇笔记的附件 |
+| GET | `/api/notes/{id}/assets/{name}` | 附件原文（图片可直接放进 `img src`） |
+| DELETE | `/api/notes/{id}/assets/{name}?confirm=1` | 删除附件，**不进回收站** |
 
 ```bash
 # 保存（不带 commit=false 就直接落盘）
@@ -1190,10 +1194,10 @@ curl -s -X PATCH http://127.0.0.1:8000/api/notes/<id> -H 'Content-Type: applicat
 配了 `API_KEYS` 时，笔记接口同样要求 `Authorization: Bearer <key>` 或 `X-API-Key`；
 `NOTES_CORS=*`（或逗号分隔的来源白名单）才会放行浏览器跨域，默认关闭。
 
-`GET /tools.json` 直接给出 7 个 OpenAI function calling 工具声明
+`GET /tools.json` 直接给出 9 个 OpenAI function calling 工具声明
 （`save_conversation` / `search_notes` / `get_note` / `update_note` / `delete_note` /
-`note_stats` / `export_notes`），任何支持 function calling 的智能体塞进 `tools` 数组即可用，
-不需要读文档。
+`note_stats` / `export_notes` / `save_attachment` / `list_attachments`），
+任何支持 function calling 的智能体塞进 `tools` 数组即可用，不需要读文档。
 
 #### 笔记检索：词面 + 语义两档（v1.25）
 
@@ -1216,6 +1220,32 @@ GET /api/notes?q=部署&semantic=off                # 只按字面匹配
   或 `python -m src.notes rebuild`（按建库预算 600s 跑）。
 - 索引文件用 float32 + base64 存向量（1024 维约 5.5 KB/篇），不用 numpy。
 
+#### 笔记附件（v1.26）
+
+图片与文件挂在单篇笔记下，跟着笔记一起显示、一起导出、一起备份。
+
+```bash
+# 上传：内容是 base64；也可以直接给 data:image/png;base64,xxx
+curl -s -X POST http://127.0.0.1:8000/api/notes/<id>/assets \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"架构图.png\",\"data\":\"$(base64 图.png | tr -d '\n')\"}"
+
+# 返回里带着可直接粘进正文的片段：
+# {"display":"架构图.png","ref":"assets/<id>/3f2a1b4c-架构图.png",
+#  "markdown":"![架构图.png](assets/<id>/3f2a1b4c-架构图.png)"}
+```
+
+- **落盘**：`<存储区>/assets/<笔记 id>/<内容哈希前 8 位>-<文件名>`。哈希前缀用来判重——
+  同内容只占一份，同名不同内容互不覆盖（改了一版图还能回去）。
+- **收什么**：图片与常见文档（png/jpg/gif/webp/svg、pdf、txt/md/csv/json/log、
+  docx/xlsx/pptx/zip）。**可执行文件、脚本、快捷方式一律拒收**，单个 ≤ 8 MB。
+- **导出内联**：HTML 导出把附件内联成 data URI，单文件断网可读；附件丢失或超过 2 MB
+  时原位标一句说明，**不会静默少一张图**。正文里没提到的附件会单独列一节。
+- **备份**：附件进备份包，但单独设限（单文件 8 MB / 总量 128 MB）；超限的跳过并在
+  响应的 `warnings` 里说明——附件把备份撑爆，比「附件没进包但笔记都在」糟得多。
+- **MCP**：`save_attachment` / `list_attachments` 两个工具；附件原文按
+  `notes://asset/<笔记 id>/<文件名>` 读（文本走 `text`，其余走 `blob`）。
+
 ### MCP：支持 MCP 的客户端直接接（v1.12）
 
 stdio 传输，客户端拉起进程即可，不需要端口与证书：
@@ -1233,8 +1263,9 @@ stdio 传输，客户端拉起进程即可，不需要端口与证书：
 }
 ```
 
-- **7 个工具**：`save_conversation` / `search_notes` / `get_note` / `update_note` /
-  `delete_note` / `note_stats` / `export_notes`，参数与 HTTP 完全同源（都从 `tools.py` 生成）。
+- **9 个工具**：`save_conversation` / `search_notes` / `get_note` / `update_note` /
+  `delete_note` / `note_stats` / `export_notes` / `save_attachment` / `list_attachments`，
+  参数与 HTTP 完全同源（都从 `tools.py` 生成）。
 - **2 个资源**：`notes://schema`（格式契约，改文件前先读）、`notes://index`（全部笔记清单）。
 - **协议细节**：JSON-RPC 2.0 逐行传输；`initialize` 会回显客户端协议版本（不认识则回落到
   `2025-06-18 / 2025-03-26 / 2024-11-05` 中最新的一个）；未知方法返 `-32601`、坏 JSON 返 `-32700`

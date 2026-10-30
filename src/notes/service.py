@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from . import assets as assets_mod
 from . import digest_llm, digest_rule
 from .model import KINDS, STATUSES, Note, NoteError
 from .search import TEXT_MAX, NoteSearcher
@@ -232,8 +233,29 @@ class NoteService:
             "external": note.external, "hash": note.hash,
             "rev": self.store.rev(note.id),
             "sections": [{"title": item.title, "body": item.body} for item in note.sections],
+            "assets": assets_mod.list_for(self.store.home, note.id),
             "markdown": note.to_markdown(),
         }
+
+    # ---- 附件 ----
+
+    def save_asset(self, note_id: str, filename: str, data: bytes) -> dict:
+        """存附件前先确认笔记存在：孤儿附件既搜不到也导不出，等于往磁盘里扔垃圾。"""
+        self.store.get(note_id)
+        saved = assets_mod.save(self.store.home, note_id, filename, data)
+        return {**saved, "note_id": note_id}
+
+    def list_assets(self, note_id: str) -> list[dict]:
+        self.store.get(note_id)
+        return assets_mod.list_for(self.store.home, note_id)
+
+    def read_asset(self, note_id: str, name: str) -> tuple[bytes, str]:
+        self.store.get(note_id)
+        return assets_mod.read(self.store.home, note_id, name)
+
+    def delete_asset(self, note_id: str, name: str) -> dict:
+        self.store.get(note_id)
+        return assets_mod.delete(self.store.home, note_id, name)
 
     def rel_path(self, note_id: str) -> str:
         """相对存储区的路径。只给界面用（页内改原文），不参与导出。"""
@@ -261,7 +283,10 @@ class NoteService:
             note = _read_note(self.store.home / str(entry.get("path") or ""))
         except (OSError, KeyError, ValueError):
             return ""      # 单篇读不出来就跳过，不许拖垮整次检索
-        return _doc_text(note)
+        # 附件名也进检索文本：用户常按「那份架构图 / 那个 pdf」找笔记
+        names = [str(item.get("display") or item.get("name") or "")
+                 for item in assets_mod.list_for(self.store.home, note.id)]
+        return _doc_text(note, names)
 
     def search(self, query: str = "", tags=None, kind=None, status=None, since=None,
                limit: int = 20, semantic: str = "auto") -> dict:
@@ -306,12 +331,15 @@ def _clip_messages(messages: list[Msg], per_message: int = 4000) -> list[Msg]:
     return [Msg(msg.role, msg.text[:per_message]) for msg in messages]
 
 
-def _doc_text(note: Note) -> str:
+def _doc_text(note: Note, asset_names: list[str] | None = None) -> str:
     """检索文本的组装口径。
 
     标题与标签放在最前面：2-gram 检索里位置不参与打分，但把它们拼进同一段文本后，
     「标签：税务」这样的前缀能让 2-gram「税务」自然出现在正文之前，
     也让向量模型优先看到主题词。截断到 `TEXT_MAX`，避免一篇长笔记把预算吃光。
+
+    附件名单独成一段：它们是独立的检索入口（「那张架构图」）。
+    塞进正文里会和引用语法 `![...](assets/...)` 的哈希路径混在一起，反而更难命中。
     """
     parts = [f"标题：{note.title}"]
     if note.tags:
@@ -321,6 +349,8 @@ def _doc_text(note: Note) -> str:
     summary = note.summary
     if summary:
         parts.append("摘要：" + summary)
+    if asset_names:
+        parts.append("附件：" + " ".join(name for name in asset_names if name))
     for section in note.sections:
         parts.append(section.title)
         parts.append(section.body)

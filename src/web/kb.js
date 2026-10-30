@@ -495,6 +495,82 @@ function renderEditor(d){
       +'<textarea data-name="'+esc(s.title)+'" rows="'+(s.title==='摘要'?3:4)+'">'+esc(s.body)+'</textarea></div>';
   }).join('');
   $('neHint').textContent='rev '+d.rev+' · 改完点保存';
+  // PATCH 的响应里不带 assets，接不住就沿用旧的，别把已上传的附件显示没了
+  NOTE.cur.assets=d.assets||NOTE.cur.assets||[];
+  renderAssets(NOTE.cur.assets);
+}
+
+var ASSET_MAX_BYTES=8*1024*1024;
+
+function fmtBytes(n){
+  n=Number(n)||0;
+  if(n<1024) return n+' B';
+  if(n<1024*1024) return Math.round(n/1024)+' KB';
+  return (n/1048576).toFixed(1)+' MB';
+}
+
+function assetUrl(name){
+  return '/api/notes/'+encodeURIComponent(NOTE.cur.id)+'/assets/'+encodeURIComponent(name);
+}
+
+function renderAssets(rows){
+  var list=$('neAssetList'); if(!list) return;
+  rows=rows||[];
+  if(!rows.length){
+    list.innerHTML='<div class="ne-assets-empty">还没有附件。图片会随笔记一起导出。</div>';
+    if($('neAssetHint')) $('neAssetHint').textContent='';
+    return;
+  }
+  var total=0; rows.forEach(function(a){ total+=Number(a.size)||0; });
+  if($('neAssetHint')) $('neAssetHint').textContent=rows.length+' 个 · '+fmtBytes(total);
+  list.innerHTML=rows.map(function(a){
+    var url=assetUrl(a.name), label=a.display||a.name;
+    // 图片直接显示缩略图：附件存在的意义就是被看见，只给文件名等于没给
+    var thumb=a.image
+      ? '<img class="ne-thumb" src="'+url+'" alt="'+esc(label)+'" loading="lazy">'
+      : '<span class="ne-thumb file">'+esc(String(a.name).split('.').pop().toUpperCase())+'</span>';
+    return '<div class="ne-asset">'+thumb
+      +'<span class="ne-asset-name" title="'+esc(a.name)+'">'+esc(label)+'</span>'
+      +'<button type="button" class="btn ghost sm" data-act="insert" data-ref="'+esc(a.ref)
+      +'" data-img="'+(a.image?1:0)+'" data-label="'+esc(label)+'">插入正文</button>'
+      +'<a class="btn ghost sm" href="'+url+'" target="_blank" rel="noreferrer">打开</a>'
+      +'<button type="button" class="ne-del" data-act="del" data-name="'+esc(a.name)
+      +'" data-label="'+esc(label)+'" aria-label="删除附件">×</button></div>';
+  }).join('');
+}
+
+function insertIntoBody(text){
+  // 点按钮会把焦点抢走，所以记住最后一次聚焦的正文框，而不是用 activeElement
+  var t=NOTE.lastTA;
+  if(!t||!t.isConnected) t=$('neSections').querySelector('textarea');
+  if(!t){ toast('先打开一篇笔记再加附件',true); return; }
+  var a=t.selectionStart==null?t.value.length:t.selectionStart;
+  var b=t.selectionEnd==null?a:t.selectionEnd;
+  var before=t.value.slice(0,a), after=t.value.slice(b);
+  if(before&&!/\n$/.test(before)) before+='\n';
+  t.value=before+text+after;
+  t.selectionStart=t.selectionEnd=before.length+text.length;
+  t.focus();
+  t.dispatchEvent(new Event('input',{bubbles:true}));
+}
+
+function uploadAsset(file){
+  if(file.size>ASSET_MAX_BYTES){ toast('「'+file.name+'」超过 8 MB',true); return; }
+  var reader=new FileReader();
+  reader.onload=function(){
+    noteFetch('/api/notes/'+encodeURIComponent(NOTE.cur.id)+'/assets',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:file.name,data:String(reader.result||'')})
+    }).then(function(d){
+      var assets=(NOTE.cur.assets||[]).filter(function(a){return a.name!==d.name;});
+      assets.push({name:d.name,display:d.display,size:d.size,mime:d.mime,image:d.image,ref:d.ref});
+      NOTE.cur.assets=assets; renderAssets(assets);
+      insertIntoBody(d.markdown||'');
+      toast('已上传：'+(d.display||file.name));
+    }).catch(function(e){ toast('上传失败：'+(e.message||e),true); });
+  };
+  reader.onerror=function(){ toast('读取文件失败',true); };
+  reader.readAsDataURL(file);
 }
 
 function collectChanges(){
@@ -567,6 +643,35 @@ $('noteList').onclick=function(ev){
 };
 $('neSave').onclick=saveNote;
 $('neDelete').onclick=deleteNote;
+$('neSections').addEventListener('focusin',function(ev){
+  if(ev.target&&ev.target.tagName==='TEXTAREA') NOTE.lastTA=ev.target;
+});
+$('nePickAsset').onclick=function(){ $('neAssetFile').value=''; $('neAssetFile').click(); };
+$('neAssetFile').onchange=function(ev){
+  var f=ev.target.files&&ev.target.files[0];
+  ev.target.value='';                     // 清掉才能连续选同一个文件
+  if(!f){ return; }
+  if(!NOTE.cur){ toast('先打开一篇笔记',true); return; }
+  uploadAsset(f);
+};
+$('neAssetList').onclick=function(ev){
+  var btn=ev.target.closest('[data-act]'); if(!btn||!NOTE.cur) return;
+  var act=btn.dataset.act, name=btn.dataset.name, label=btn.dataset.label||name;
+  if(act==='insert'){
+    insertIntoBody(btn.dataset.img==='1'
+      ? '!['+label+']('+btn.dataset.ref+')'
+      : '['+label+']('+btn.dataset.ref+')');
+    return;
+  }
+  if(act==='del'){
+    if(!confirm('删除附件「'+label+'」？不会进回收站，正文里的引用会失效。')) return;
+    noteFetch('/api/notes/'+encodeURIComponent(NOTE.cur.id)+'/assets/'+encodeURIComponent(name)
+      +'?confirm=1',{method:'DELETE'}).then(function(){
+      NOTE.cur.assets=(NOTE.cur.assets||[]).filter(function(a){return a.name!==name;});
+      renderAssets(NOTE.cur.assets); toast('已删除附件');
+    }).catch(function(e){ toast('删除失败：'+(e.message||e),true); });
+  }
+};
 $('noteExportHtml').onclick=function(){ exportNotes('html'); };
 $('noteExportJson').onclick=function(){ exportNotes('json'); };
 $('neRuleNote') && ($('neRuleNote').onclick=null);

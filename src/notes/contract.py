@@ -89,6 +89,14 @@ def _err_response(desc: str) -> dict:
     return {"description": desc, "content": {"application/json": {"schema": ERROR_REF}}}
 
 
+def _id_param() -> list[dict]:
+    return [{"name": "id", "in": "path", "required": True, "schema": {"type": "string"}}]
+
+
+def _name_param() -> list[dict]:
+    return [{"name": "name", "in": "path", "required": True, "schema": {"type": "string"}}]
+
+
 def notes_paths() -> dict:
     return {
         "/api/notes": {
@@ -178,6 +186,113 @@ def notes_paths() -> dict:
                 "tags": ["笔记"],
                 "summary": "数量与标签分布",
                 "responses": {"200": {"description": "统计结果"}},
+            },
+        },
+        "/api/notes/export": {
+            "get": {
+                "tags": ["笔记"],
+                "summary": "导出笔记；返回内容本身，不写服务器磁盘",
+                "parameters": [
+                    {"name": "format", "in": "query",
+                     "schema": {"type": "string", "enum": ["html", "json"], "default": "html"}},
+                    {"name": "id", "in": "query", "style": "form", "explode": True,
+                     "schema": {"type": "array", "items": {"type": "string"}},
+                     "description": "只导出这几篇；可重复"},
+                    {"name": "tag", "in": "query", "style": "form", "explode": True,
+                     "schema": {"type": "array", "items": {"type": "string"}}},
+                    {"name": "kind", "in": "query", "schema": {"type": "string", "enum": KINDS}},
+                    {"name": "status", "in": "query", "schema": {"type": "string", "enum": STATUSES}},
+                    {"name": "since", "in": "query", "schema": {"type": "string"}},
+                ],
+                "responses": {
+                    "200": {"description": "导出结果，content 为完整文件内容",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "ok": {"type": "boolean"},
+                                    "format": {"type": "string"},
+                                    "filename": {"type": "string"},
+                                    "content": {"type": "string"},
+                                },
+                            }}}},
+                },
+            },
+        },
+        "/api/notes/rebuild": {
+            "post": {
+                "tags": ["笔记"],
+                "summary": "重建检索索引（笔记多、或刚配好 embedding 时用）",
+                "requestBody": _body({
+                    "type": "object",
+                    "properties": {
+                        "semantic": {"type": "string", "enum": ["auto", "off"], "default": "auto"},
+                    },
+                }),
+                "responses": {"200": {"description": "重建结果"}},
+            },
+        },
+        "/api/notes/{id}/assets": {
+            "get": {
+                "tags": ["笔记"],
+                "summary": "列出这篇笔记的附件",
+                "parameters": _id_param(),
+                "responses": {
+                    "200": {"description": "附件列表，每项带可直接粘进正文的 markdown",
+                            "content": {"application/json": {"schema": {
+                                "type": "object",
+                                "properties": {
+                                    "ok": {"type": "boolean"},
+                                    "count": {"type": "integer"},
+                                    "bytes": {"type": "integer"},
+                                    "items": {"type": "array", "items": {"type": "object"}},
+                                },
+                            }}}},
+                    "404": _err_response("笔记不存在"),
+                },
+            },
+            "post": {
+                "tags": ["笔记"],
+                "summary": "上传附件；图片/文件 ≤ 8 MB，可执行类型一律拒收",
+                "parameters": _id_param(),
+                "requestBody": _body({
+                    "type": "object",
+                    "required": ["name", "data"],
+                    "properties": {
+                        "name": {"type": "string", "description": "文件名，必须带扩展名"},
+                        "data": {"type": "string",
+                                 "description": "文件内容的 base64，可带 data:...;base64, 前缀"},
+                    },
+                }),
+                "responses": {
+                    "201": {"description": "已保存，返回可粘贴的 markdown 片段"},
+                    "400": _err_response("文件名或内容不合法"),
+                    "413": _err_response("文件超过 8 MB"),
+                },
+            },
+        },
+        "/api/notes/{id}/assets/{name}": {
+            "get": {
+                "tags": ["笔记"],
+                "summary": "读取附件原文；图片可直接放进 img src",
+                "parameters": _id_param() + _name_param(),
+                "responses": {
+                    "200": {"description": "附件二进制",
+                            "content": {"application/octet-stream": {
+                                "schema": {"type": "string", "format": "binary"}}}},
+                    "404": _err_response("附件不存在"),
+                },
+            },
+            "delete": {
+                "tags": ["笔记"],
+                "summary": "删除附件（需 confirm=1，不进回收站）",
+                "parameters": _id_param() + _name_param() + [
+                    {"name": "confirm", "in": "query", "schema": {"type": "string"},
+                     "description": "必须为 1"},
+                ],
+                "responses": {
+                    "200": {"description": "已删除"},
+                    "400": _err_response("缺少 confirm"),
+                },
             },
         },
     }

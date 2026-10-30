@@ -139,6 +139,14 @@
           <label>创建<input id="neCreated" readonly></label>
         </div>
         <div class="ne-sections" id="neSections"></div>
+        <div class="ne-assets">
+          <div class="ne-assets-head"><b>附件</b><span class="ne-hint" id="neAssetHint"></span>
+            <button class="btn ghost sm" id="nePickAsset" type="button">添加图片或文件</button>
+          </div>
+          <div class="ne-assets-list" id="neAssetList"></div>
+        </div>
+        <input type="file" id="neAssetFile" hidden
+               accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx,.zip">
         <div class="ne-foot">
           <span class="ne-hint" id="neHint"></span>
           <button class="btn ghost sm" id="neAddSec" type="button">加小节</button>

@@ -36,9 +36,10 @@ POST /mcp   Content-Type: application/json
 两条传输共用同一份 `handle()`，错误码与工具完全一致；通知类请求回 `202` 无正文，
 支持 JSON-RPC 批量，`GET /mcp` 回 `405`。配了 `API_KEYS` 时 `/mcp` 与其他 `/api/*` 一样要带 Key。
 
-可用工具 7 个：`save_conversation` / `search_notes` / `get_note` / `update_note` /
-`delete_note` / `note_stats` / `export_notes`。
-资源 2 个：`notes://schema`（格式契约）、`notes://index`（全部笔记的清单）。
+可用工具 9 个：`save_conversation` / `search_notes` / `get_note` / `update_note` /
+`delete_note` / `note_stats` / `export_notes` / `save_attachment` / `list_attachments`。
+资源 2 类：`notes://schema`（格式契约）、`notes://index`（全部笔记的清单），
+外加每个附件一条 `notes://asset/<笔记 id>/<文件名>`。
 
 ## 二、HTTP（任何能发请求的智能体）
 

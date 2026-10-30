@@ -46,8 +46,9 @@ from ..theme import FILES_PAGE
 from ..threadstore import ThreadError, ThreadStore
 from ..version import __version__
 from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
-                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
+from .common import (ALLOWED_EXT, ASSET_BODY_MAX, DOC_B64_MAX_BYTES, DOC_MAX_BYTES,
+                     MAX_BODY_BYTES, NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
+                     UPLOAD_MAX_BYTES,
                      _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
 
@@ -132,7 +133,10 @@ def make_write(deps):
                 self._settings("POST", path, parse_qs(urlparse(self.path).query), body)
                 return
             if path == "/api/notes" or path.startswith("/api/notes/"):
-                body, err = self._read_note_body()
+                # 上传附件走 base64，请求体会比普通笔记大一个数量级；
+                # 只有这条路径放宽，其它笔记接口仍按 2 MB 卡。
+                wide = "/assets" in path
+                body, err = self._read_note_body(max_bytes=ASSET_BODY_MAX if wide else None)
                 if err:
                     self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                     return

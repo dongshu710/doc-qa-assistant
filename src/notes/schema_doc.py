@@ -19,7 +19,7 @@ SCHEMA_DOC = f"""# 笔记文件契约（{SCHEMA}）
 NOTE_HOME（默认 ~/agent-notes）
 ├─ notes/YYYY/MM/<id>.md    笔记正文，路径即时间线
 ├─ index/notes.jsonl        派生索引，删了会自动重建
-├─ assets/<id>/             附件（可选）
+├─ assets/<id>/<哈希>-<名字>  附件（可选）
 └─ .trash/                  软删除，可找回
 ```
 
@@ -68,7 +68,11 @@ HOME_README = """# 这里是你的个人笔记库
 
 - `notes/YYYY/MM/*.md` —— 真正的内容。一篇笔记一个文件。
 - `index/notes.jsonl` —— 加速用的索引。删掉没关系，下次读取会自动重建。
-- `assets/` —— 附件。
+- `assets/<笔记 id>/<内容哈希前 8 位>-<文件名>` —— 附件。哈希前缀用于判重
+  （同内容只占一份，同名不同内容互不覆盖），展示名是后半段。
+  正文里这样引用：`![架构图](assets/<id>/<哈希>-架构图.png)`，图片用 `!` 前缀，
+  其它文件用 `[说明](assets/<id>/<哈希>-合同.pdf)`。
+  只收图片与常见文档，可执行文件一律不收，单个 ≤ 8 MB。
 - `exports/` —— 导出的单文件（HTML / JSON）。
 - `.trash/` —— 删掉的笔记还在这里，改名移回 `notes/` 就能恢复。
 

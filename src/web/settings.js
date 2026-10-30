@@ -180,11 +180,12 @@
   }
   function renderStorage(st){
     st=st||{};
-    var notes=(st.notes||{}), idx=(st.index||{}), threads=(st.threads||{});
-    // 只报四件事：文档多大、会话多大、缓存多大、磁盘还剩多少。
-    // 面积条不画了——三个数字并排比「占比」更好读，也不用解释颜色。
+    var notes=(st.notes||{}), idx=(st.index||{}), threads=(st.threads||{}), assets=(st.assets||{});
+    // 只报几件事：文档 / 会话 / 附件多大、缓存多大、磁盘还剩多少。
+    // 面积条不画了——几个数字并排比「占比」更好读，也不用解释颜色。
     if($('stNotes')) $('stNotes').textContent=sizeText(notes.bytes)+(notes.files?(' · '+notes.files+' 篇'):'');
     if($('stThreads')) $('stThreads').textContent=sizeText(threads.bytes)+(threads.files?(' · '+threads.files+' 条'):'');
+    if($('stAssets')) $('stAssets').textContent=sizeText(assets.bytes)+(assets.files?(' · '+assets.files+' 个'):'');
     if($('stIndex')) $('stIndex').textContent=sizeText(Number(idx.bytes||0)+Number((st.embedding||{}).bytes||0));
     if($('stFree')) $('stFree').textContent=sizeText((st.disk||{}).free);
     if($('stKeep')) $('stKeep').value=String(st.keep_versions==null?30:st.keep_versions);
@@ -211,6 +212,21 @@
         +'；当前保留 '+d.keep+' 版。',false);
     }).catch(function(e){
       note('stMsg','清理失败：'+((e&&e.message)||e),true);
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
+  });
+
+  if($('stBackup')) $('stBackup').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    btn.disabled=true; btn.textContent='备份中…';
+    api('POST','/api/storage/backup',{}).then(function(d){
+      if(!d||!d.ok){ note('stMsg',(d&&d.message)||'备份失败',true); return; }
+      var msg='已备份 '+(d.files||0)+' 个文件（'+sizeText(d.bytes||0)+'）';
+      // 附件超限是「跳过」而不是失败，不显示出来用户会照着成功提示去恢复，才发现图没了
+      var warn=(d.warnings||[]).join('；');
+      note('stMsg',warn?(msg+'，但附件没进全：'+warn):(msg+'。'),!!warn);
+      load();
+    }).catch(function(e){
+      note('stMsg','备份失败：'+((e&&e.message)||e),true);
     }).finally(function(){ btn.disabled=false; btn.textContent=label; });
   });
 

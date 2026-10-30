@@ -196,6 +196,42 @@ TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_attachment",
+            "description": ("把一张图片或一个文件挂到指定笔记下（截图、图表、合同扫描件、导出的数据文件）。"
+                            "存完把返回的 markdown 片段粘进笔记正文，附件就会跟着笔记一起显示与导出。"
+                            "单个文件 ≤ 8 MB，只收常见图片与文档类型，可执行文件一律拒绝。"),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string",
+                           "description": "笔记 id，先 save_conversation 或 search_notes 拿到"},
+                    "name": {"type": "string",
+                             "description": "文件名，必须带扩展名，例如 架构图.png"},
+                    "data": {"type": "string",
+                             "description": "文件内容的 base64 编码（可带 data:...;base64, 前缀）"},
+                },
+                "required": ["id", "name", "data"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_attachments",
+            "description": ("列出某篇笔记下已挂的附件（名称、大小、类型、可直接粘贴的 markdown 片段）。"
+                            "想知道「这篇笔记有没有图」时用，不要猜。"),
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -210,6 +246,9 @@ def tools_payload(version: str, base_url: str = "") -> dict:
             "get": "GET /api/notes/{id}",
             "update": "PATCH /api/notes/{id}",
             "delete": "DELETE /api/notes/{id}?confirm=1",
+            "list_attachments": "GET /api/notes/{id}/assets",
+            "save_attachment": "POST /api/notes/{id}/assets",
+            "read_attachment": "GET /api/notes/{id}/assets/{name}",
         },
         "auth": "若服务端配置了 API_KEYS，需要 Authorization: Bearer <key> 或 X-API-Key",
         "tools": TOOLS,

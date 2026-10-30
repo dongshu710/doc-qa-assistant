@@ -73,10 +73,11 @@ def main() -> int:
     # 3) 工具清单与 JSON Schema
     listed = run(service, {"jsonrpc": "2.0", "id": 3, "method": "tools/list"})[0]["result"]["tools"]
     names = [item["name"] for item in listed]
-    check("工具数量为 7", len(listed) == 7, str(names))
+    check("工具数量为 9", len(listed) == 9, str(names))
     check("工具名齐全", set(names) == {"save_conversation", "search_notes", "get_note",
                                        "update_note", "delete_note", "note_stats",
-                                       "export_notes"}, str(names))
+                                       "export_notes", "save_attachment",
+                                       "list_attachments"}, str(names))
     save_schema = next(item for item in listed if item["name"] == "save_conversation")["inputSchema"]
     check("save_conversation 有 inputSchema 且必填 messages",
           save_schema["type"] == "object" and save_schema["required"] == ["messages"])

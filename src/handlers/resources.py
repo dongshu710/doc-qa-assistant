@@ -46,7 +46,7 @@ from ..theme import FILES_PAGE
 from ..threadstore import ThreadError, ThreadStore
 from ..version import __version__
 from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
+from .common import (ALLOWED_EXT, ASSET_BODY_MAX, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
                      NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
                      _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
@@ -115,15 +115,17 @@ def make_resources(deps):
                                path=self.path[:200], reason=err)
             return {"ok": False, "error": "unauthorized",
                     "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"}
-        def _read_note_body(self, allow_list: bool = False) -> tuple[dict | list | None, str | None]:
+        def _read_note_body(self, allow_list: bool = False,
+                            max_bytes: int | None = None) -> tuple[dict | list | None, str | None]:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 return None, "Content-Length 不合法"
             if length <= 0:
                 return ([] if allow_list else {}), None
-            if length > NOTES_MAX_BYTES:
-                return None, f"请求体超过 {NOTES_MAX_BYTES} 字节"
+            limit = max_bytes or NOTES_MAX_BYTES
+            if length > limit:
+                return None, f"请求体超过 {limit} 字节"
             try:
                 data = json.loads(self.rfile.read(length).decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
@@ -171,6 +173,12 @@ def make_resources(deps):
                                    path=path[:120], error=f"{type(exc).__name__}: {exc}")
                 self._json({"ok": False, "error": "internal_error",
                             "message": self._error_text(exc)}, 500, cors)
+                return
+            if isinstance(payload, dict) and payload.get("__binary__"):
+                # 附件原文：dispatch 只交出字节与 mime，写响应统一在这里，
+                # 免得「返回内容与返回元数据」两种形态散落两处
+                self._send_bytes(status, payload["content"], payload["mime"],
+                                 {**cors, **extra})
                 return
             if method != "GET":
                 guards.audit.write(f"notes.{method.lower()}", client=self._client(),

@@ -26,6 +26,10 @@ NOTES_MAX_BYTES = 2 * 1024 * 1024        # 一段对话可能很长：笔记接�
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
 DOC_MAX_BYTES = 6 * 1024 * 1024         # 单个 PDF/DOCX 上限（解码后）
 DOC_B64_MAX_BYTES = DOC_MAX_BYTES * 4 // 3 + 4096
+# 附件的原始上限是 8 MB（`notes/assets.py` 的 MAX_BYTES），走 base64 后膨胀 4/3，
+# 再留一点 JSON 包装的余量。请求体上限必须比它大，否则合法附件会在读取阶段就被拒。
+ASSET_MAX_BYTES = 8 * 1024 * 1024
+ASSET_BODY_MAX = ASSET_MAX_BYTES * 4 // 3 + 64 * 1024
 SSE_HEARTBEAT_S = 15.0                  # 流式回答的空闲心跳间隔
 SSE_MAX_SECONDS = 300.0                 # 单次流式回答的总时长上限
 ALLOWED_EXT = (".md", ".txt")

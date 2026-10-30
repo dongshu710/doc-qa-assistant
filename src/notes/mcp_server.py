@@ -6,13 +6,14 @@ stdout 是协议通道，任何调试输出必须走 stderr——否则客户端
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
 import traceback
 from typing import Any
 
-from . import export as export_mod
+from . import assets as assets_mod, export as export_mod
 from .model import NoteError
 from .service import NoteConflict, NoteService
 from .store import NoteNotFound, StoreBusy
@@ -73,6 +74,20 @@ def read_resource(service: NoteService, uri: str) -> dict:
         note_id = uri[len("notes://note/"):]
         data = service.get(note_id)
         return {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": data["markdown"]}]}
+    if uri.startswith("notes://asset/"):
+        note_id, _, name = uri[len("notes://asset/"):].partition("/")
+        if not note_id or not name:
+            raise RpcError(-32602, "附件资源格式：notes://asset/<note_id>/<name>")
+        data, mime = service.read_asset(note_id, name)
+        # 二进制走 blob、文本走 text：客户端据此决定还要不要自己再做一次 base64 解码。
+        # 按扩展名而不是 mime 判断——csv 的 mime 是 application/vnd.ms-excel，
+        # 照 mime 判断会把它当二进制，读的人拿到一串 base64
+        item = {"uri": uri, "mimeType": mime}
+        if assets_mod.is_text(name):
+            item["text"] = data.decode("utf-8", "replace")
+        else:
+            item["blob"] = base64.b64encode(data).decode("ascii")
+        return {"contents": [item]}
     raise RpcError(-32602, f"未知资源：{uri}")
 
 
@@ -133,6 +148,19 @@ def call_tool(service: NoteService, name: str, args: dict) -> str:
                                                 "since": args.get("since")},
                                        title=str(args.get("title") or "我的笔记"))
             return _brief(result)
+        if name == "list_attachments":
+            rows = service.list_assets(str(args.get("id") or ""))
+            return _brief({"count": len(rows), "items": rows})
+        if name == "save_attachment":
+            note_id = str(args.get("id") or "")
+            filename = str(args.get("name") or "").strip()
+            if not note_id or not filename:
+                raise NoteError("需要 id（笔记 id）与 name（文件名）")
+            saved = service.save_asset(note_id, filename, assets_mod.decode_data(args.get("data")))
+            return _brief({key: saved[key] for key in ("name", "display", "note_id", "size",
+                                                       "mime", "image", "markdown")})
+    except assets_mod.AssetError as exc:
+        raise NoteError(f"附件操作失败：{exc}") from exc
     except NoteNotFound as exc:
         raise NoteError(f"笔记不存在：{exc.note_id}") from exc
     except NoteConflict as exc:
