@@ -1195,6 +1195,27 @@ curl -s -X PATCH http://127.0.0.1:8000/api/notes/<id> -H 'Content-Type: applicat
 `note_stats` / `export_notes`），任何支持 function calling 的智能体塞进 `tools` 数组即可用，
 不需要读文档。
 
+#### 笔记检索：词面 + 语义两档（v1.25）
+
+```bash
+GET /api/notes?q=发版前要准备什么&limit=10        # 按内容找
+GET /api/notes?q=部署&tag=上线&kind=decision       # 先按条件筛，再按相关度排
+GET /api/notes?q=部署&semantic=off                # 只按字面匹配
+```
+
+- **字面档（永远可用）**：BM25 打分。文本切成中文 2-gram + 英文词，标题/标签/摘要/各节正文都进索引。
+  零依赖、不联网，中文短查询（「部署方案」「上次那个结论」）召回够用。
+- **语义档（配了 embedding 才有）**：`EMBEDDING_PROVIDER` 不是 `none` 时，额外把每篇笔记压成向量，
+  与 BM25 分数归一后加权融合（词面 0.55 / 语义 0.45）。「发版」能搜到只写了「部署」的笔记，
+  这一档才做得到。
+- **响应自带说明**：`search.mode` 是 `lexical` 还是 `hybrid`，`degraded` 给出降级原因，
+  `pending` 是还没进索引的篇数。**不会假装走了语义**——默认配置下它就是字面检索。
+- **索引是派生的**：落在 `<存储区>/index/search.jsonl`，删掉会自动重建。
+  查询时只补算变更过的那几篇（每轮有上限与时间预算），所以第一次在大库上搜索只会补一部分，
+  其余标在 `pending` 里下次继续。要一次建全就用 `POST /api/notes/rebuild`
+  或 `python -m src.notes rebuild`（按建库预算 600s 跑）。
+- 索引文件用 float32 + base64 存向量（1024 维约 5.5 KB/篇），不用 numpy。
+
 ### MCP：支持 MCP 的客户端直接接（v1.12）
 
 stdio 传输，客户端拉起进程即可，不需要端口与证书：

@@ -81,16 +81,23 @@ TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "search_notes",
-            "description": ("在用户已保存的笔记里按标签、类型或日期筛选。"
-                            "当用户问「上次那个结论在哪 / 我之前存过什么」时先用它定位，不要凭空回忆。"),
+            "description": ("在用户已保存的笔记里检索。给 `query` 就按内容找（词面 + 语义），"
+                            "只给 tag/kind/since 就按条件筛。"
+                            "当用户问「上次那个结论在哪 / 我之前存过什么」时先用它定位，不要凭空回忆；"
+                            "结果里的 `search.mode` 说明这次是语义排的还是只排了字面。"),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "query": {"type": "string",
+                              "description": "要找的内容，自然语言即可，例如「部署方案的结论」"},
                     "tag": {"type": "array", "items": {"type": "string"},
                             "description": "标签，多个标签取交集"},
                     "kind": {"type": "string", "enum": ["decision", "howto", "reference", "qa", "log"]},
                     "status": {"type": "string", "enum": ["draft", "final", "archived"]},
                     "since": {"type": "string", "description": "起始日期，格式 YYYY-MM-DD"},
+                    "semantic": {"type": "string", "enum": ["auto", "off"], "default": "auto",
+                                 "description": ("auto=配了 embedding 就叠加语义召回；"
+                                                 "off=只按字面匹配（更快，且不依赖外部服务）")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
                 },
                 "additionalProperties": False,

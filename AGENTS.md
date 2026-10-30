@@ -152,7 +152,8 @@ python -m src.notes export --out exports/all.html
 
 ## 行为约定
 
-- **先查再写**：用户问「上次那个结论」时先 `search_notes`，不要凭记忆编。
+- **先查再写**：用户问「上次那个结论」时先 `search_notes`（`query` 直接写自然语言，
+  不必猜当时打的标签），不要凭记忆编。结果里的 `search.mode` 告诉你这次是语义排的还是只排了字面。
 - **写前先读**：`update_note` 必须带 `get_note` 返回的 `rev`，否则拒绝——这是为了保护用户的手改。
 - **删除要确认**：`delete_note` 需要显式 `confirm=true`；不确定就先问用户。
 - **不要保存寒暄**：只存结论、步骤、决定、待办。

@@ -90,10 +90,14 @@ def call_tool(service: NoteService, name: str, args: dict) -> str:
                                                   "messages", "truncated")}
                           | {"markdown": result["markdown"][:4000]})
         if name == "search_notes":
-            rows = service.list(tags=args.get("tag") or None, kind=args.get("kind"),
-                                status=args.get("status"), since=args.get("since"),
-                                limit=int(args.get("limit") or 10))
-            return _brief({"count": len(rows), "items": rows})
+            result = service.search(
+                str(args.get("query") or ""),
+                tags=args.get("tag") or None, kind=args.get("kind"),
+                status=args.get("status"), since=args.get("since"),
+                limit=int(args.get("limit") or 10),
+                semantic=str(args.get("semantic") or "auto").lower())
+            return _brief({"count": len(result["items"]), "items": result["items"],
+                           "search": result["search"]})
         if name == "get_note":
             data = service.get(str(args.get("id") or ""))
             section = str(args.get("section") or "").strip()

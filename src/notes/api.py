@@ -52,6 +52,15 @@ def dispatch(service: NoteService | None, method: str, path: str,
                 raise ApiError(405, "method_not_allowed", "stats 只支持 GET",
                                headers={"Allow": "GET, OPTIONS"})
             return 200, {"ok": True, **service.stats()}, {}
+        if rest == "rebuild":
+            # 检索索引是派生的，删了能重建；重建是显式动作，不受「查询时懒补」的额度限制
+            if method != "POST":
+                raise ApiError(405, "method_not_allowed", "rebuild 只支持 POST",
+                               headers={"Allow": "POST, OPTIONS"})
+            semantic = "auto"
+            if isinstance(body, dict) and body.get("semantic") is not None:
+                semantic = str(body["semantic"]).lower()
+            return 200, {"ok": True, **service.rebuild_search(semantic)}, {}
         if not ITEM_ID.match(rest):
             raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{rest}")
         note_id = rest
@@ -130,10 +139,13 @@ def _list(service: NoteService, query: dict) -> dict:
     if limit < 0:
         raise ApiError(400, "invalid_argument", "limit 不能为负，至少给 1（想取全部请用导出）")
     limit = min(limit, 200)
-    rows = service.list(tags=query.get("tag") or None, kind=_one(query, "kind"),
-                        status=_one(query, "status"), since=_one(query, "since"),
-                        limit=limit)
-    return {"ok": True, "count": len(rows), "items": rows}
+    # `q` 与 `query` 都收：前者给页面，后者更贴近「搜一下」的自然说法
+    text = _one(query, "q") or _one(query, "query") or ""
+    result = service.search(text, tags=query.get("tag") or None, kind=_one(query, "kind"),
+                            status=_one(query, "status"), since=_one(query, "since"),
+                            limit=limit, semantic=(_one(query, "semantic") or "auto").lower())
+    rows = result["items"]
+    return {"ok": True, "count": len(rows), "items": rows, "search": result["search"]}
 
 
 def _patch(service: NoteService, note_id: str, body: dict | None, query: dict) -> dict:

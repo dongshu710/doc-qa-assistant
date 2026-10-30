@@ -38,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     save.add_argument("--json", action="store_true", help="输出 JSON")
 
     listing = sub.add_parser("list", help="列出笔记")
+    listing.add_argument("--q", "--query", dest="q", default="", help="按内容检索（词面 + 语义）")
+    listing.add_argument("--semantic", choices=["auto", "off"], default="auto",
+                         help="auto=配了 embedding 就叠加语义；off=只按字面匹配")
     listing.add_argument("--tag", action="append", default=[], help="按标签过滤，可重复")
     listing.add_argument("--kind", choices=["decision", "howto", "reference", "qa", "log"])
     listing.add_argument("--status", choices=["draft", "final", "archived"])
@@ -78,7 +81,14 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_export(service, args)
         if args.command == "rebuild":
             total = service.store.rebuild()
-            print(f"索引已重建：{total} 篇" if not getattr(args, "json", False) else json.dumps({"ok": True, "notes": total}))
+            # 元数据索引与检索索引一起重建：只重建前者会让「笔记在、但搜不到」多出一类怪状况
+            search = service.rebuild_search()
+            if getattr(args, "json", False):
+                print(json.dumps({"ok": True, "notes": total, "search": search}, ensure_ascii=False))
+            else:
+                print(f"索引已重建：{total} 篇（检索索引 {search['notes']} 条）")
+                if search.get("degraded"):
+                    print(f"语义向量未写入：{search['degraded']}")
             return 0
         if args.command == "stats":
             data = service.stats()
@@ -143,19 +153,37 @@ def _cmd_save(service: NoteService, args) -> int:
 
 
 def _cmd_list(service: NoteService, args) -> int:
-    rows = service.list(tags=args.tag or None, kind=args.kind, status=args.status,
-                        since=args.since, limit=args.limit)
+    result = service.search(args.q, tags=args.tag or None, kind=args.kind, status=args.status,
+                            since=args.since, limit=args.limit, semantic=args.semantic)
+    rows = result["items"]
+    meta = result["search"]
     if args.json:
+        # stdout 只放结果数组：脚本要能直接 json.loads。检索元信息走 stderr，
+        # 既不破坏既有契约，也不会让人错过「这次其实没走语义」。
         print(json.dumps(rows, ensure_ascii=False, indent=2))
+        _warn_search(meta, args.semantic)
         return 0
     if not rows:
         print("没有匹配的笔记")
+        _warn_search(meta, args.semantic)
         return 0
     for row in rows:
         tags = f"  [{','.join(row.get('tags') or [])}]" if row.get("tags") else ""
-        print(f"{row.get('id')}  {str(row.get('created') or '')[:10]}  {row.get('title')}{tags}")
+        score = f"  {row['score']:.3f}" if "score" in row else ""
+        print(f"{row.get('id')}  {str(row.get('created') or '')[:10]}  {row.get('title')}{tags}{score}")
     print(f"\n共 {len(rows)} 篇")
+    _warn_search(meta, args.semantic)
     return 0
+
+
+def _warn_search(meta: dict, semantic: str) -> None:
+    """把「这次检索的局限」打到 stderr。只在真的有限制时才出声。"""
+    if meta.get("mode") == "lexical" and semantic != "off":
+        print("提示：仅字面匹配（未配置 embedding，语义召回不可用）", file=sys.stderr)
+    if meta.get("degraded"):
+        print(f"降级原因：{meta['degraded']}", file=sys.stderr)
+    if meta.get("pending"):
+        print(f"还有 {meta['pending']} 篇未进检索索引，下次查询会继续补", file=sys.stderr)
 
 
 def _cmd_get(service: NoteService, args) -> int:

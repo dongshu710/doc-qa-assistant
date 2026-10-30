@@ -12,11 +12,13 @@ from dataclasses import dataclass
 
 from . import digest_llm, digest_rule
 from .model import KINDS, STATUSES, Note, NoteError
+from .search import TEXT_MAX, NoteSearcher
 from .select import (MAX_CHARS_DEFAULT, Msg, SelectError, clip, fingerprint,
                      normalize, pick, render_transcript)
-from .store import NoteStore, SaveResult, _now_text, new_id
+from .store import NoteStore, SaveResult, _now_text, _read_note, new_id
 
 DIGEST_MODES = ("rule", "auto", "llm")
+SEMANTIC_MODES = ("auto", "off")
 
 
 class NoteConflict(RuntimeError):
@@ -43,6 +45,10 @@ class NoteService:
         self.digest_mode = (digest_mode or os.environ.get("NOTE_DIGEST") or "rule").strip().lower()
         # 注入点：测试与自定义部署可以换成自己的模型调用，不必改这里的分支
         self.chat_call = None
+        # 检索用的向量通道：默认走 settings 里的 embedding 配置；
+        # 测试注入一个 `texts -> vectors` 的函数即可，不必真联网。
+        self.embed_call = None
+        self._search: NoteSearcher | None = None
 
     # ---- 组装 ----
 
@@ -236,6 +242,58 @@ class NoteService:
     def list(self, **filters) -> list[dict]:
         return self.store.list(**filters)
 
+    # ---- 检索 ----
+
+    def searcher(self) -> NoteSearcher:
+        """惰性构造检索索引；每次取用都把当前的 embed 注入同步过去。
+
+        为什么不构造时固定：测试与宿主会在创建 service 之后再设 `embed_call`，
+        构造时捕获会一直用旧的（通常是 None），表现为「注入了但还是没语义」。
+        """
+        if self._search is None:
+            self._search = NoteSearcher(self.store.home, self._search_text, lock=self.store.lock)
+        self._search._embed_call = self.embed_call   # noqa: SLF001 —— 故意做成可随时替换
+        return self._search
+
+    def _search_text(self, entry: dict) -> str:
+        """把一篇笔记压成检索文本。读 .md 而不是索引：正文只存在文件里。"""
+        try:
+            note = _read_note(self.store.home / str(entry.get("path") or ""))
+        except (OSError, KeyError, ValueError):
+            return ""      # 单篇读不出来就跳过，不许拖垮整次检索
+        return _doc_text(note)
+
+    def search(self, query: str = "", tags=None, kind=None, status=None, since=None,
+               limit: int = 20, semantic: str = "auto") -> dict:
+        """先按标签/类型/日期筛出候选，再按 `query` 排序。
+
+        为什么先筛后排：用户说「上周那篇讲部署的」时，日期与标签是硬约束。
+        先在全库上按向量排完再过滤，既慢，又会把「日期对不上」的笔记顶到前面。
+        """
+        if semantic not in SEMANTIC_MODES:
+            raise NoteError(f"semantic 只能是 {' / '.join(SEMANTIC_MODES)}")
+        query = (query or "").strip()
+        candidates = self.list(tags=tags, kind=kind, status=status, since=since, limit=0)
+        if not query:
+            return {"items": candidates[:limit] if limit else candidates,
+                    "search": {"mode": "filter", "degraded": "", "indexed": 0,
+                               "pending": 0, "total": len(candidates)}}
+        outcome = self.searcher().search(query, candidates, semantic=semantic)
+        ranked = sorted(
+            ({"score": round(outcome.scores.get(row["id"], 0.0), 4), **row}
+             for row in candidates if outcome.scores.get(row["id"], 0.0) > 0),
+            key=lambda item: (-item["score"], str(item.get("created") or "")),
+        )
+        return {"items": ranked[:limit] if limit else ranked, "search": outcome.as_dict()}
+
+    def rebuild_search(self, semantic: str = "auto") -> dict:
+        """全量重建检索索引；`semantic=off` 时只重建文本、不碰向量。"""
+        if semantic not in SEMANTIC_MODES:
+            raise NoteError(f"semantic 只能是 {' / '.join(SEMANTIC_MODES)}")
+        rows = self.list(limit=0)
+        count, degraded = self.searcher().rebuild(rows, want_vec=semantic != "off")
+        return {"notes": count, "semantic": semantic != "off", "degraded": degraded}
+
     def delete(self, note_id: str) -> dict:
         path = self.store.delete(note_id)
         return {"id": note_id, "trashed": str(path)}
@@ -246,6 +304,27 @@ class NoteService:
 
 def _clip_messages(messages: list[Msg], per_message: int = 4000) -> list[Msg]:
     return [Msg(msg.role, msg.text[:per_message]) for msg in messages]
+
+
+def _doc_text(note: Note) -> str:
+    """检索文本的组装口径。
+
+    标题与标签放在最前面：2-gram 检索里位置不参与打分，但把它们拼进同一段文本后，
+    「标签：税务」这样的前缀能让 2-gram「税务」自然出现在正文之前，
+    也让向量模型优先看到主题词。截断到 `TEXT_MAX`，避免一篇长笔记把预算吃光。
+    """
+    parts = [f"标题：{note.title}"]
+    if note.tags:
+        parts.append("标签：" + " ".join(note.tags))
+    if note.kind:
+        parts.append(f"类型：{note.kind}")
+    summary = note.summary
+    if summary:
+        parts.append("摘要：" + summary)
+    for section in note.sections:
+        parts.append(section.title)
+        parts.append(section.body)
+    return "\n".join(parts)[:TEXT_MAX]
 
 
 def _source(raw, message_count: int) -> dict:

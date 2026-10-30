@@ -2,6 +2,44 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.25.0] - 2026-10-30
+
+ROADMAP #12：笔记终于能按**内容**检索了。之前只有标签/类型/日期筛选，
+「我记得存过、但想不起当时打的什么标签」这种情况只能先导出再自己翻。
+
+### 检索：BM25 + 可选语义（ROADMAP #12）
+
+- 新增 `src/notes/search.py`：中文 2-gram + 英文词的 BM25；配了 embedding 时，
+  两路分数各自归一后按 0.55 / 0.45 融合。不装 numpy、不装分词器。
+- `GET /api/notes?q=` 接检索，响应里的 `search` 自报 `mode`（lexical / hybrid）、
+  `degraded`、`pending`——**默认 `EMBEDDING_PROVIDER=none` 时会如实说明只跑了字面匹配**，
+  不会让人以为「搜不到」等于「没存过」。
+- `search_notes` 工具加 `query` / `semantic` 参数；CLI `list --q` 同步支持，
+  `--json` 仍只输出数组（检索元信息走 stderr，不破坏既有脚本契约）。
+- 新增 `POST /api/notes/rebuild`；`python -m src.notes rebuild` 现在一并重建检索索引。
+- 索引落在 `<存储区>/index/search.jsonl`：float32 + base64 存向量（1024 维约 5.5 KB/篇），
+  按 `(mtime_ns, size)` 判断过期。查询时增量补算，每轮限条数、限 20 秒；
+  要一次建全走 `rebuild`（600 秒预算）。
+- 三条降级路径都留痕：没配 provider → `lexical`；调用失败 → `degraded`；
+  超出本轮预算 → `pending`。**新存的笔记不会因为还没索引就搜不到**，词面分照样参与排序。
+
+### 前端
+
+- 知识库页的笔记搜索从「本地过滤标题/标签」改成走后端检索（220ms 防抖 + 请求序号
+  防后发先至），列表头显示「匹配 N 篇 · 语义 / 字面」，降级与待索引篇数也一并标出。
+
+### 测试
+
+- 新增 `tests/test_notes_search.py`：词面命中、语义融合、`semantic=off`、索引复用、
+  文件变更重算、筛选叠加、embedding 失败降级、全量重建、HTTP 契约、工具声明。
+- embedding 用注入的假通道（按主题分桶的 4 维向量），不联网也能真正验证融合逻辑，
+  而不是退化成「只测了词面」。
+
+### 实测
+
+3 篇笔记的基准集上：`q=灰度` 命中部署篇；`q=发版前要准备什么` 在 `semantic=off`
+下无结果、`auto` 下命中——两者的差就是这一版新增的能力。
+
 ## [1.24.0] - 2026-10-30
 
 收掉 1.23.0 留下的三处「还需要人记着别踩」的地方：切分重叠不再赌语料恰好都短、

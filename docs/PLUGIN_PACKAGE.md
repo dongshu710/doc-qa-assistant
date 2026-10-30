@@ -51,7 +51,7 @@ Windows 示例：
 | 工具 | 作用 |
 |---|---|
 | `save_conversation` | 把一段对话整理成一篇笔记（可先 `dry_run` 看草稿） |
-| `search_notes` | 在已存笔记里按关键词找 |
+| `search_notes` | 在已存笔记里按内容找（`query` 自然语言；也可只按标签/类型/日期筛） |
 | `get_note` | 读一篇的全文 |
 | `update_note` | 改标题 / 标签 / 状态 / 正文，需带 `base_rev` 防覆盖 |
 | `note_stats` | 篇数、标签分布、最近更新时间 |

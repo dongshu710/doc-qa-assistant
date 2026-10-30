@@ -387,7 +387,7 @@ $('reload').onclick=async function(){
 /* ---------- 笔记分区 ----------
    数据全部走 /api/notes：列表读索引，编辑走 PATCH + rev 乐观锁，
    删除只进 .trash。页面不缓存笔记内容，避免和磁盘上的手改打架。 */
-var NOTE={items:[],cur:null,loaded:false};
+var NOTE={items:[],cur:null,loaded:false,hits:null,meta:null,seq:0,timer:0};
 var KIND_LABEL={decision:'决策',howto:'做法',reference:'资料',qa:'问答',log:'记录'};
 var STATUS_LABEL={draft:'草稿',final:'定稿',archived:'归档'};
 
@@ -404,7 +404,9 @@ function noteFetch(path,opt){
 function loadNotes(){
   $('noteCount').textContent='加载中…';
   return noteFetch('/api/notes?limit=200').then(function(d){
-    NOTE.items=d.items||[]; NOTE.loaded=true; renderNoteList();
+    NOTE.items=d.items||[]; NOTE.loaded=true;
+    // 带着检索词回来时不要用旧列表盖掉搜索结果
+    if(($('noteSearch').value||'').trim()) runSearch(); else renderNoteList();
   }).catch(function(e){
     $('noteCount').textContent='加载失败';
     $('noteList').innerHTML='<div class="note-empty">'+esc(e.message||e)+'</div>';
@@ -412,25 +414,55 @@ function loadNotes(){
 }
 
 function visibleNotes(){
-  var q=($('noteSearch').value||'').trim().toLowerCase();
+  var q=($('noteSearch').value||'').trim();
   var kind=$('noteKind').value, status=$('noteStatus').value;
+  // 有检索词时以后端结果为准：列表里只有标题/标签/摘要，
+  // 正文匹配与语义召回都得由服务端算，前端做不了。
+  if(q) return NOTE.hits||[];
   return NOTE.items.filter(function(n){
     if(kind && n.kind!==kind) return false;
     if(status && n.status!==status) return false;
-    if(!q) return true;
-    var hay=[n.title||'', (n.tags||[]).join(' '), n.summary||''].join(' ').toLowerCase();
-    return hay.indexOf(q)>=0;
+    return true;
+  });
+}
+
+function runSearch(){
+  var q=($('noteSearch').value||'').trim();
+  var kind=$('noteKind').value, status=$('noteStatus').value;
+  if(!q){ NOTE.hits=null; NOTE.meta=null; renderNoteList(); return; }
+  var seq=++NOTE.seq;
+  var qs='?limit=100&q='+encodeURIComponent(q);
+  if(kind) qs+='&kind='+encodeURIComponent(kind);
+  if(status) qs+='&status='+encodeURIComponent(status);
+  noteFetch('/api/notes'+qs).then(function(d){
+    // 后发先至：连打几个字时旧请求可能后回，序号对不上就丢掉
+    if(seq!==NOTE.seq) return;
+    NOTE.hits=d.items||[]; NOTE.meta=d.search||null; renderNoteList();
+  }).catch(function(e){
+    if(seq!==NOTE.seq) return;
+    NOTE.hits=[]; NOTE.meta=null;
+    $('noteCount').textContent='检索失败';
+    $('noteList').innerHTML='<div class="note-empty">'+esc(e.message||e)+'</div>';
   });
 }
 
 function renderNoteList(){
   var rows=visibleNotes();
-  $('noteCount').textContent=NOTE.items.length
-    ? ('共 '+NOTE.items.length+' 篇'+(rows.length!==NOTE.items.length?('，匹配 '+rows.length+' 篇'):''))
-    : '还没有笔记';
+  var q=($('noteSearch').value||'').trim();
+  var meta=NOTE.meta;
+  if(q){
+    var label=(meta&&meta.mode==='hybrid')?'语义':'字面';
+    $('noteCount').textContent='匹配 '+rows.length+' 篇 · '+label
+      +(meta&&meta.degraded?'（已降级）':'')
+      +(meta&&meta.pending?('，'+meta.pending+' 篇待索引'):'');
+  }else if(NOTE.items.length){
+    $('noteCount').textContent='共 '+NOTE.items.length+' 篇'+(rows.length!==NOTE.items.length?('，匹配 '+rows.length+' 篇'):'');
+  }else{
+    $('noteCount').textContent='还没有笔记';
+  }
   if(!rows.length){
     $('noteList').innerHTML='<div class="note-empty">'
-      +(NOTE.items.length?'没有匹配的笔记':'还没有笔记。<br>在问答页点「存为笔记」，或让智能体保存一段对话。')+'</div>';
+      +((q||NOTE.items.length)?'没有匹配的笔记':'还没有笔记。<br>在问答页点「存为笔记」，或让智能体保存一段对话。')+'</div>';
     return;
   }
   $('noteList').innerHTML=rows.map(function(n){
@@ -488,7 +520,7 @@ function saveNote(){
     NOTE.cur=d; renderEditor(d);
     var row=NOTE.items.filter(function(n){return n.id===d.id;})[0];
     if(row){ row.title=d.title; row.tags=d.tags; row.kind=d.kind; row.status=d.status; row.summary=''; }
-    renderNoteList(); toast('已保存');
+    if(($('noteSearch').value||'').trim()) runSearch(); else renderNoteList(); toast('已保存');
   }).catch(function(e){
     if(String(e.message||'').indexOf('冲突')>=0){ toast('这篇已被别处改过，正在加载最新版本',true); openNote(NOTE.cur.id); }
     else{ toast('保存失败：'+(e.message||e),true); }
@@ -501,7 +533,7 @@ function deleteNote(){
   noteFetch('/api/notes/'+encodeURIComponent(NOTE.cur.id)+'?confirm=1',{method:'DELETE'}).then(function(){
     NOTE.items=NOTE.items.filter(function(n){return n.id!==NOTE.cur.id;});
     NOTE.cur=null; $('noteEditor').hidden=true; $('noteEmpty').hidden=false;
-    renderNoteList(); toast('已移入回收站');
+    if(($('noteSearch').value||'').trim()) runSearch(); else renderNoteList(); toast('已移入回收站');
   }).catch(function(e){ toast('删除失败：'+(e.message||e),true); });
 }
 
@@ -522,9 +554,13 @@ function exportNotes(fmt){
   }).catch(function(e){ toast('导出失败：'+(e.message||e),true); });
 }
 
-$('noteSearch').oninput=renderNoteList;
-$('noteKind').onchange=renderNoteList;
-$('noteStatus').onchange=renderNoteList;
+$('noteSearch').oninput=function(){
+  // 输入停顿 220ms 再发请求：逐字查会把首字前缀的噪声结果刷满列表
+  clearTimeout(NOTE.timer);
+  NOTE.timer=setTimeout(runSearch,220);
+};
+$('noteKind').onchange=runSearch;
+$('noteStatus').onchange=runSearch;
 $('noteList').onclick=function(ev){
   var item=ev.target.closest('.note-item');
   if(item) openNote(item.dataset.id);
