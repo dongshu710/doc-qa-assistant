@@ -10,6 +10,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -71,6 +72,29 @@ def post(port: int, payload, headers: dict | None = None, raw: bytes | None = No
             return exc.code, None
 
 
+def post_raw(port: int, payload, headers: dict | None = None):
+    """POST 并保留原始正文与 Content-Type：SSE 分支不能用 JSON 解析。"""
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/mcp", data=data, method="POST",
+        headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with OPENER.open(req, timeout=30) as resp:
+            return resp.status, {"content-type": resp.headers.get("Content-Type") or "",
+                                 "body": resp.read().decode("utf-8", "replace")}
+    except urllib.error.HTTPError as exc:
+        return exc.code, {"content-type": exc.headers.get("Content-Type") or "",
+                          "body": exc.read().decode("utf-8", "replace")}
+
+
+def open_stream(port: int, timeout: float = 10):
+    """打开 GET /mcp 的 SSE 流，返回 (响应对象, 首帧文本)。"""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/mcp",
+                                 headers={"Accept": "text/event-stream"})
+    resp = OPENER.open(req, timeout=timeout)
+    return resp, resp.readline().decode("utf-8", "replace")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         httpd, port = start(Path(tmpdir))
@@ -130,6 +154,43 @@ def main() -> int:
             code, body = post(port, {"jsonrpc": "2.0", "id": 12, "method": "没这个方法"})
             check("未知方法 -32601",
                   ((body or {}).get("error") or {}).get("code") == -32601, str(body)[:120])
+
+            print("SSE 下行流（Streamable HTTP）")
+            # 严格按规范的客户端会在 Accept 里只要 event-stream，此时必须回 SSE 帧
+            code, raw = post_raw(port, {"jsonrpc": "2.0", "id": 20, "method": "ping"},
+                                 headers={"Accept": "text/event-stream"})
+            check("POST 带 Accept 回 200", code == 200, str(code))
+            check("Content-Type 是 text/event-stream",
+                  "text/event-stream" in raw["content-type"], raw["content-type"])
+            check("正文是 SSE 帧而不是 JSON", raw["body"].startswith("event: message"),
+                  raw["body"][:60])
+            data_lines = [line for line in raw["body"].splitlines() if line.startswith("data: ")]
+            check("恰好一条 data 帧", len(data_lines) == 1, raw["body"][:160])
+            sse_payload = json.loads(data_lines[0][6:]) if data_lines else {}
+            check("data 里是原 JSON-RPC 响应",
+                  sse_payload.get("id") == 20 and "result" in sse_payload, str(sse_payload)[:120])
+
+            print("GET 流可用且会释放名额")
+            from src.handlers import base as handler_base
+            streams = []
+            for _ in range(3):
+                try:
+                    resp, first = open_stream(port)
+                    streams.append(resp)
+                    check("GET 流首帧是 connected 注释", first.strip() == ": connected", repr(first))
+                    check("GET 流 Content-Type 正确",
+                          "text/event-stream" in (resp.headers.get("Content-Type") or ""),
+                          str(resp.headers.get("Content-Type")))
+                except Exception as exc:  # noqa: BLE001 —— 连不上就是失败，不要吞掉
+                    check("GET 流可用", False, f"{type(exc).__name__}: {exc}")
+            for resp in streams:
+                resp.close()
+            for _ in range(60):        # 最多等 3 秒，服务端 detect 到 EOF 会立刻释放
+                if handler_base.sse_active() == 0:
+                    break
+                time.sleep(0.05)
+            check("流关闭后名额全部归还", handler_base.sse_active() == 0,
+                  str(handler_base.sse_active()))
 
             print("GET 明确拒绝")
             try:

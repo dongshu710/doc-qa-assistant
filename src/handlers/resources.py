@@ -50,6 +50,7 @@ from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYT
                      NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
                      _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
+from .base import sse_acquire, sse_release
 
 
 def make_resources(deps):
@@ -338,16 +339,18 @@ def make_resources(deps):
                 return
             self._json({"ok": False, "error": "not_found", "message": "接口不存在"}, 404, cors)
         def _mcp_http(self, body) -> None:
-            """MCP over HTTP：JSON-RPC 直接 POST 到 /mcp。
+            """MCP over HTTP（Streamable HTTP）。
 
             为什么不另起进程：笔记服务、鉴权、限流、审计都在主服务里，
             再开一个端口等于把它们重做一遍，用户还要记两个地址。
-            规范里的 SSE 流式响应这里不做——每个请求都是短事务，
-            一次性 JSON 对智能体更省事。
+            客户端在 `Accept` 里要 `text/event-stream` 时按规范回一条 SSE 消息
+            再关流——严格的 Streamable HTTP 客户端只认这一种；其余情况仍回并列 JSON，
+            对本地智能体更省事，也省一条长连接。
             """
             from ..notes import mcp_server
 
             cors = self._cors_headers()
+            sse = "text/event-stream" in (self.headers.get("Accept") or "").lower()
             service = note_ref["service"]
             if service is None:
                 self._json({"jsonrpc": "2.0",
@@ -360,20 +363,37 @@ def make_resources(deps):
                 # 批量请求：逐条处理，只要有一条需要响应就返回数组
                 replies = [r for r in (mcp_server.handle_payload(service, item) for item in body) if r]
                 if not replies:
-                    self.send_response(202)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
+                    self._no_content()
                     return
-                self._json(replies, 200, cors)
+                self._mcp_reply(replies, sse, cors)
                 return
             response = mcp_server.handle_payload(service, body)
             if response is None:
                 # 通知（notifications/initialized 等）按规范回 202 且无正文
-                self.send_response(202)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                self._no_content()
                 return
-            self._json(response, 200, cors)
+            self._mcp_reply(response, sse, cors)
+
+        def _mcp_reply(self, payload, sse: bool, cors: dict) -> None:
+            """按客户端 Accept 选传输：JSON，或「一条消息的 SSE 流」。
+
+            SSE 分支必须限流与释放配对：流会一直占着线程直到对端关闭，
+            漏一次 release 就等于永久少一个名额。
+            """
+            if not sse:
+                self._json(payload, 200, cors)
+                return
+            if not sse_acquire():
+                self._json({"jsonrpc": "2.0", "id": None,
+                            "error": {"code": -32000,
+                                      "message": "SSE 连接数已达上限：改用 application/json，或稍后重试"}},
+                           429, cors)
+                return
+            try:
+                if self._sse_open(hello=False):
+                    self._sse_event(payload)
+            finally:
+                sse_release()
 
         def _settings(self, method: str, path: str, query: dict, body: dict | None) -> None:
             """设置面板的全部后端动作：读、改、测连接、导出/写入插件配置、打开目录。

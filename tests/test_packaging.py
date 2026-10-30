@@ -82,12 +82,28 @@ def test_zero_deps() -> None:
     check("有 LICENSE 文件", (ROOT / "LICENSE").is_file())
 
 
+def test_web_assets_packaged() -> None:
+    print("前端资源会随包安装且能读到")
+    conf = load()
+    data = (conf["tool"]["setuptools"].get("package-data") or {}).get("src") or []
+    names = sorted(p.name for p in (ROOT / "src" / "web").iterdir() if p.is_file())
+    check("src/web 下有资源", bool(names), str(len(names)))
+    check("package-data 覆盖 web/*", any(item.startswith("web/") for item in data), str(data))
+    # 资源读取走 importlib.resources，装成包或进压缩包后仍然能读；
+    # 这里直接调一遍，防止哪天又被改回 open(__file__ 相对路径)
+    from src import webassets
+    check("webassets 列出的资源与磁盘一致", set(webassets.names()) == set(names),
+          str(set(names) ^ set(webassets.names())))
+    check("每个资源都读得出内容", all(webassets.load(n) for n in names))
+
+
 def main() -> int:
     test_syntax()
     test_packages()
     test_scripts()
     test_version()
     test_zero_deps()
+    test_web_assets_packaged()
     print(f"\n{'全部通过' if FAILED == 0 else f'{FAILED} 项失败'}")
     return 0 if FAILED == 0 else 1
 

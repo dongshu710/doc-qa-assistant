@@ -262,6 +262,12 @@ jiyi-client --help       # 终端客户端
 离线环境加 `--no-build-isolation` 并用系统已有的）。版本号在构建时从 `VERSION` 读取，
 与仓库里的文件不会两份各改一遍。
 
+> **完全没有网络、系统里也没有 `setuptools` 时**：`pip install .` 走 PEP 517 构建隔离，
+> 必须能取到构建后端——这一步绕不开，任何打包方案都要有一个构建工具。
+> 这种机器上别装包：走下面的「方式 C」（`PYTHONPATH`）或直接用发布 zip 解压运行，
+> 两者都只依赖标准库。`tests/test_packaging.py` 会锁住「运行时零依赖」这条线，
+> 哪天有人往 `dependencies` 里加了东西，CI 直接红。
+
 装成包以后 `src/version.py` 会改从包元数据取版本；开发态仍读仓库根的 `VERSION`。
 
 ### 方式 C：源码运行
@@ -374,7 +380,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `MIN_SCORE` | `0.30` | 检索置信度阈值（`embedding` 默认 `0.38`，`bm25` 为 `0.5`），低于此值按未命中处理 |
 | `CITATION_STRICT` | `off` | `on` 时「编号合法但内容对不上」的答案降级为抽取式，见 `citation_support_rate` |
 | `CHUNK_MAX_CHARS` | `320` | 单块上限。按「第X条」切，超长条款再按句号兜底 |
-| `CHUNK_OVERLAP` | `0` | 兜底切分时带上前一块末尾的字符数。**默认 0**：现有语料全部在 320 字内，实测 0/40/80/120 的 Recall 与 MRR 完全一致；语料里有超长条款时才需要开（改动后会重建索引，缓存签名已含该值） |
+| `CHUNK_OVERLAP` | `auto` | 兜底切分时带上前一块末尾的字符数。**默认 auto**：本节存在超过 `CHUNK_MAX_CHARS` 的超长条款（会被句号切开）时自动取 `max_chars/5`，否则为 0——不再依赖「现有语料恰好都很短」这个偶然事实。填数字即显式指定（`0` 关闭）；改动后会重建索引，缓存签名里已含该值 |
 | `DEBUG` | `off` | `on` 时接口异常回传完整消息（含路径）；默认只回异常类型 |
 | `MAX_INPUT_CHARS` | `500` | 超长输入直接 `ask_clarify` |
 | `KEYWORD_MODE` | `on` | `on` 命中结构化条目即本地直出；`off` 全部走检索 |
@@ -1222,9 +1228,16 @@ curl -s http://127.0.0.1:8000/mcp -H 'Content-Type: application/json' \
 ```
 
 与 stdio 共用同一份 `handle()`：同样的错误码、同样的工具、同样的 `NoteService`。
-通知类请求（`notifications/initialized`）回 `202` 且无正文，支持 JSON-RPC 批量，
-`GET /mcp` 明确回 `405`。配了 `API_KEYS` 之后同样要带 Key（`/mcp` 在路由表里是 `api` 级）。
-本实现是无状态的 JSON 响应，不提供 SSE 下行流——每个 MCP 请求都是短事务。
+通知类请求（`notifications/initialized`）回 `202` 且无正文，支持 JSON-RPC 批量。
+配了 `API_KEYS` 之后同样要带 Key（`/mcp` 在路由表里是 `api` 级）。
+
+**SSE（v1.24）**：请求头带 `Accept: text/event-stream` 时按 Streamable HTTP 回一条
+`event: message` 帧再关流——严格的客户端只认这一种；不带则仍回普通 JSON。
+`GET /mcp` 同样接受 `text/event-stream`，开一条只发 `: ping` 注释帧的下行流：
+本服务没有「服务端主动发起的请求」，所以**不推送任何伪造消息**，这条流只用于
+规范要求的连接与保活。两条路径都有硬上限（`SSE_MAX_SECONDS` 到点关闭、
+`MCP_SSE_MAX_CONN` 默认 4 条并发，超了回 `429`）——长连接占的是请求线程，
+不设上限几条挂死的流就能把服务拖到不响应。不带 `Accept` 的裸 `GET /mcp` 仍回 `405`。
 
 **一键写入客户端（v1.23）**：设置面板的「安装」页可以从下拉里选 Claude Desktop /
 Cursor / Cline / Windsurf，点一下把 `mcpServers` 合并进去（原文件先备份）。

@@ -19,6 +19,11 @@ class Chunk:
     chunk_index: int
 
 
+# 「自动」不是 0：0 只在当前语料恰好全短时才安全，换一份带长条款的合同就会丢跨块指代。
+# None 表示按内容自适应，真实数字才是用户显式指定的行为。
+AUTO = None
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return max(0, int(os.environ.get(name, "") or default))
@@ -26,18 +31,50 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _split_section(body: str, max_chars: int = 320, overlap: int = 0) -> list[str]:
+def _env_overlap(default=None) -> int | None:
+    """读 `CHUNK_OVERLAP`：空 / auto / none → 自适应，数字 → 显式值，坏值 → 回到默认。
+
+    坏值不能当成 0（等于悄悄关掉重叠），也不能崩——回落到 `default` 才是
+    「配置写错了，但服务照常」的正确语义。
+    """
+    raw = (os.environ.get("CHUNK_OVERLAP") or "").strip()
+    if not raw:
+        return default
+    if raw.lower() in ("auto", "none", "off-auto"):
+        return AUTO
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
+def _needs_overlap(pieces: list[str], max_chars: int) -> bool:
+    """本节是否存在「会被句号兜底切开」的超长条款。
+
+    自适应重叠的成本全在这里：只有确实会走兜底分支时才值得付。
+    """
+    return any(len(p) > max_chars for p in pieces)
+
+
+def _split_section(body: str, max_chars: int = 320, overlap: int | None = AUTO) -> list[str]:
     """把一节正文按「第X条」切成语义完整的块；超长条款再按句号兜底。
 
     `overlap` 只作用于「超长条款被句号切开」这条路径：按「第X条」切出来的
     每一块本身就是完整条款，再加重叠只会让相邻块互相污染分数。
     被句号切开的地方则常见「该产品」「上述期限」这类跨块指代，带上上一块
     的尾巴能救回来。
+
+    `overlap=None`（默认）＝按本节内容判断：有超长条款才带上上一块尾巴，
+    否则退化成 0。这样换语料不会因为「默认值恰好为 0」而静默丢上下文。
     """
     pieces = [p.strip() for p in re.split(r"(?=第[一二三四五六七八九十百零\d]+条)", body) if p.strip()]
     if not pieces:
         pieces = [body.strip()]
-    span = min(max(0, overlap), max_chars // 4)   # 重叠不能吃掉整块
+    if overlap is AUTO:
+        # 自动档取 1/5，比显式上限（1/4）保守：兜底切分本就少见，不必叠太厚
+        span = max_chars // 5 if _needs_overlap(pieces, max_chars) else 0
+    else:
+        span = min(max(0, overlap), max_chars // 4)   # 重叠不能吃掉整块
     out: list[str] = []
     for p in pieces:
         if len(p) <= max_chars:
@@ -58,7 +95,7 @@ def _split_section(body: str, max_chars: int = 320, overlap: int = 0) -> list[st
 
 
 def parse_document(raw: str, fname: str, max_chars: int = 320,
-                   overlap: int = 0) -> list[Chunk]:
+                   overlap: int | None = AUTO) -> list[Chunk]:
     """解析单份文档。拆出来是为了让增量重建只重读变更过的文件。"""
     chunks: list[Chunk] = []
     doc_id = fname.rsplit(".", 1)[0]
@@ -102,9 +139,13 @@ def load_corpus(knowledge_dir: str, cache: dict | None = None,
 
     签名里带上切分参数：改了 `CHUNK_OVERLAP` 但文件没动时，如果只看 mtime/size，
     旧分块会被静默复用——「改了配置没生效」比报错更难查。
+    `overlap=None` 表示交给环境变量（默认 auto），显式传数字则覆盖。
     """
     max_chars = _env_int("CHUNK_MAX_CHARS", 320) if max_chars is None else max_chars
-    overlap = _env_int("CHUNK_OVERLAP", 0) if overlap is None else overlap
+    overlap = _env_overlap(AUTO) if overlap is None else overlap
+    # auto 的结果取决于文档内容，而内容变了签名也会变；这里用固定标记让
+    # 「auto 与显式 0」在缓存里不互相冒充。
+    overlap_tag = "auto" if overlap is AUTO else overlap
     chunks: list[Chunk] = []
     if not os.path.isdir(knowledge_dir):
         raise FileNotFoundError(f"知识库目录不存在: {knowledge_dir}")
@@ -118,7 +159,7 @@ def load_corpus(knowledge_dir: str, cache: dict | None = None,
             stat = os.stat(path)
         except OSError:
             continue
-        signature = (stat.st_mtime_ns, stat.st_size, max_chars, overlap)
+        signature = (stat.st_mtime_ns, stat.st_size, max_chars, overlap_tag)
         seen.add(fname)
         cached = cache.get(fname) if cache is not None else None
         if cached and cached[0] == signature:

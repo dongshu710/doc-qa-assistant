@@ -2,6 +2,52 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.24.0] - 2026-10-30
+
+收掉 1.23.0 留下的三处「还需要人记着别踩」的地方：切分重叠不再赌语料恰好都短、
+MCP over HTTP 补上 SSE 分支、前端资源读取不再绑死磁盘路径。
+
+### 分块重叠改为按内容自适应（1.23.0 遗留项）
+
+- `CHUNK_OVERLAP` 默认值从 `0` 改成 `auto`：解析一节时先看有没有超过
+  `CHUNK_MAX_CHARS` 的超长条款，有才取 `max_chars/5` 的重叠，没有仍是 0。
+- 原来默认 0 成立的前提是「当前语料 31 块全部 ≤320 字」。换一份带长合同的语料，
+  「该产品 / 上述期限」这类跨块指代就会被静默丢掉——现在这个判断跟着内容走，
+  不依赖某次 A/B 的偶然结果。
+- 坏值（`CHUNK_OVERLAP=abc`）回落到 `auto` 而不是 `0`：配置写错不等于用户想关掉。
+- 缓存签名里用 `"auto"` 标记，`auto` 与显式 `0` 在增量缓存里不会互相冒充。
+
+### MCP over HTTP 支持 SSE（1.23.0 遗留项）
+
+- `POST /mcp` 在 `Accept` 含 `text/event-stream` 时回一条 `event: message` 帧再关流；
+  不带则仍是普通 JSON。严格的 Streamable HTTP 客户端只认前者。
+- `GET /mcp` 接受 `text/event-stream`：开一条只发 `: connected` 与 `: ping` 的下行流。
+  **不伪造 JSON-RPC 消息**——凭空发出去的通知会污染客户端状态，比不实现更糟。
+- 两条路径都有界：`SSE_MAX_SECONDS` 到点关闭，`MCP_SSE_MAX_CONN`（默认 4）限制并发，
+  超了回 `429`。用 `select` 等对端关闭，客户端一走立刻归还名额，不白等一个心跳周期。
+- 不带 `Accept` 的裸 `GET /mcp` 仍回 `405`。
+
+### 前端资源改走 `importlib.resources`
+
+- `src/webassets.py` 不再用 `os.path.join(__file__, "web")`，改用 `importlib.resources.files()`。
+  装成 wheel 或将来打成单文件 `.pyz` 时资源在压缩包里，`open()` 读不到。
+- `load()` 用 `read_bytes().decode()` 替代 `open(newline="")`：两者都不翻译换行，
+  但前者在包装/压缩形态下同样成立。
+
+### 文档
+
+- README 补「完全没有网络、也没有 setuptools 时怎么办」：PEP 517 的构建后端绕不开，
+  这种机器上走 `PYTHONPATH` 或发布 zip，两者只依赖标准库。
+- README / `docs/AUDIT-2026-10-27.md` 同步 `CHUNK_OVERLAP` 默认值与 `/mcp` 传输说明。
+
+### 测试
+
+- `tests/test_chunking.py`：新增自适应三条（不增块数 / 超长才叠 / 宽度取 1/5），
+  缓存签名补「auto 与显式 0 不互相冒充」；环境变量用例覆盖 `0`、`auto`、坏值三种。
+- `tests/test_mcp_http.py`：新增 SSE 五条（Content-Type、帧格式、`data` 内容）+ GET 流
+  可用与名额归还。
+- `tests/test_packaging.py`：新增「前端资源全部进包且读得到」。
+
 ## [1.23.0] - 2026-10-28
 
 把 `docs/ROADMAP.md` 与 `docs/AUDIT-2026-10-27.md` 里**还剩没做**的项逐条收口，

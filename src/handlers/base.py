@@ -51,6 +51,35 @@ from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYT
                      _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
 
+# SSE 是长连接，一条流就占住一个请求线程。BoundedHTTPServer 总共 64 个线程，
+# 几个挂死/半死的流就能把服务拖到不响应。所以单独限流：超过就回 429，
+# 让后来的客户端立刻知道「现在满了」，而不是排队等到超时。
+_SSE_LOCK = threading.Lock()
+_SSE_ACTIVE = 0
+_SSE_LIMIT = max(1, int(os.environ.get("MCP_SSE_MAX_CONN", "4") or 4))
+
+
+def sse_acquire() -> bool:
+    """占一个 SSE 名额；失败说明已达上限。"""
+    global _SSE_ACTIVE
+    with _SSE_LOCK:
+        if _SSE_ACTIVE >= _SSE_LIMIT:
+            return False
+        _SSE_ACTIVE += 1
+        return True
+
+
+def sse_release() -> None:
+    global _SSE_ACTIVE
+    with _SSE_LOCK:
+        _SSE_ACTIVE = max(0, _SSE_ACTIVE - 1)
+
+
+def sse_active() -> int:
+    """当前活跃的 SSE 流数量；健康检查与测试都靠它判断有没有泄漏。"""
+    with _SSE_LOCK:
+        return _SSE_ACTIVE
+
 
 def make_base(deps):
     # 原来这些名字是 create_server() 的闭包；拆开后由组合根显式传入。
@@ -160,6 +189,49 @@ def make_base(deps):
         def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
             self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers,
                        cache="no-store")
+        def _no_content(self, code: int = 202) -> None:
+            """无正文响应。MCP 规范里通知类请求必须回 202 且不带 body，
+            编造成 `200 {}` 会让客户端以为收到了一条合法响应。
+            """
+            self.send_response(code)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        def _sse_open(self, hello: bool = True) -> bool:
+            """开一条 SSE 流：不带 Content-Length，靠关闭连接收尾。
+
+            流式响应的长度事先未知，用 chunked 又要客户端支持分块解析；
+            `Connection: close` 对本地单进程最简单且被所有客户端接受。
+            `hello=False` 用于「发一条就关」的短流：首帧注释是长连接保活用的，
+            短流里多这么一行只会让 strict 客户端多解析一次。
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            for key, value in (self._cors_headers() or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.close_connection = True
+            return self._sse_raw(": connected\n\n") if hello else True
+        def _sse_raw(self, text: str) -> bool:
+            """写一段原始 SSE 文本；返回 False 表示对端已断开。
+
+            断开只在写的时候才暴露，所以每个发送点都要看返回值立即退出——
+            否则循环会对着一个死连接继续跑满整个时长。
+            """
+            try:
+                self.wfile.write(text.encode("utf-8"))
+                self.wfile.flush()
+                return True
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                self.close_connection = True
+                return False
+        def _sse_event(self, payload, event: str = "message") -> bool:
+            """发一条 SSE 消息。JSON 一定单行（`ensure_ascii=False` 不引入换行），
+            否则 `data:` 后面的换行会被客户端当成帧结束。
+            """
+            data = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+            return self._sse_raw(f"event: {event}\ndata: {data}\n\n")
         def _redirect(self, location: str, code: int = 302) -> None:
             """旧页面入口保留 302：书签与外部链接不 404，但不重复渲染两份内容。"""
             self.send_response(code)

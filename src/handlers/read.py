@@ -13,6 +13,7 @@ import os
 import pathlib
 import queue
 import re
+import select
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,7 @@ from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYT
                      NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
                      _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
+from .base import sse_acquire, sse_release
 
 
 def make_read(deps):
@@ -112,9 +114,13 @@ def make_read(deps):
                 return
 
             if path == "/mcp":
-                # 本实现是无状态的 JSON-RPC，不提供 SSE 下行流；明确告诉客户端别试
+                if "text/event-stream" in (self.headers.get("Accept") or "").lower():
+                    self._mcp_stream()
+                    return
+                # 没要下行流就明确指路：405 比让客户端对着 404 猜要省时间
                 self._json({"error": "method_not_allowed",
-                            "message": "MCP 走 POST /mcp（JSON-RPC），不支持 GET 长连接"},
+                            "message": "MCP 请求走 POST /mcp（JSON-RPC）；"
+                                       "需要下行流时在 Accept 里带 text/event-stream"},
                            405, {"Allow": "POST", **(self._cors_headers() or {})})
                 return
 
@@ -377,5 +383,44 @@ def make_read(deps):
                 self._json({"items": items})
             else:
                 self._json({"error": "not found"}, 404)
+
+        def _mcp_stream(self) -> None:
+            """GET /mcp：Streamable HTTP 的下行流。
+
+            本服务没有「服务端主动发起的请求」，所以这条流不做业务推送，
+            只做两件事：让严格按规范先 GET 的客户端拿到 200，以及用注释帧保活。
+            **不伪造任何 JSON-RPC 消息**——凭空发出的通知会污染客户端状态，
+            比不实现更糟。
+
+            有硬上限（SSE_MAX_SECONDS）和并发名额：长连接占的是请求线程，
+            没上限的话几条挂死的流就能把整个服务拖到不响应。
+            """
+            if not sse_acquire():
+                self._json({"error": "too_many_streams",
+                            "message": "SSE 连接数已达上限，请稍后重试"},
+                           429, self._cors_headers())
+                return
+            try:
+                if not self._sse_open():
+                    return
+                deadline = time.monotonic() + SSE_MAX_SECONDS
+                while time.monotonic() < deadline:
+                    # 用 select 等一个心跳周期：对端一关，socket 立刻可读，
+                    # 能马上释放名额；只 sleep 的话，客户端断开后还要白占
+                    # 一整个周期，连续开关几次就把并发名额耗光了。
+                    try:
+                        ready, _, _ = select.select([self.connection], [], [], SSE_HEARTBEAT_S)
+                    except (OSError, ValueError):
+                        return
+                    if ready:
+                        try:
+                            if not self.connection.recv(1):
+                                return      # 收到 EOF：客户端已经走了
+                        except OSError:
+                            return
+                    if not self._sse_raw(": ping\n\n"):
+                        return
+            finally:
+                sse_release()
 
     return ReadRoutes
