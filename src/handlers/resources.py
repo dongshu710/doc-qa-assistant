@@ -4,52 +4,20 @@
 """
 from __future__ import annotations
 
-import base64
-import binascii
-import gzip
-import hashlib
 import json
 import os
 import pathlib
-import queue
-import re
 import shutil
-import subprocess
-import sys
-import tempfile
-import threading
 import time
 import traceback
-import urllib.error
-import urllib.request
-import uuid
-from collections import Counter
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
 
-from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
-                routing, security, settings_ops, suggest)
-from .. import update as update_mod
-from ..auth import ApiKeyStore, safe_equal
+from .. import (appconfig, backup, fileops, settings_ops)
+from ..auth import safe_equal
 from ..config import api_key, load_settings
-from ..guards import Guards
-from ..metrics import summarize
-from ..metrics_exporter import Metrics
 from ..notes.api import ApiError
 from ..notes.api import dispatch as notes_dispatch
-from ..notes.service import NoteService
-from ..notes.tools import tools_payload as notes_tools_payload
-from ..openapi import build_spec
-from ..pipeline import RAGPipeline
-from ..theme import FILES_PAGE
 from ..threadstore import ThreadError, ThreadStore
-from ..version import __version__
-from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, ASSET_BODY_MAX, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
-                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
-                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
-                     _safe_doc_name, _safe_kb_name)
+from .common import (NOTES_MAX_BYTES, _open_folder, redact_settings)
 from .base import sse_acquire, sse_release
 
 
@@ -93,17 +61,9 @@ def make_resources(deps):
     _copy_notes = deps._copy_notes
 
     class ResourcesRoutes:
-        # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
-        # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
-        protocol_version = "HTTP/1.1"
-        timeout = 20
-
-        # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
-        COMPRESSIBLE = frozenset({
-            "text/html", "text/plain", "text/markdown", "text/css",
-            "application/json", "application/javascript", "text/javascript",
-            "image/svg+xml",
-        })
+        # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
+        # 这四个类通过 MRO 组合成一个 Handler，重复定义时生效的永远是最左边那份，
+        # 改另一份会静默不生效——比没有更糟。
 
         def _notes_guard(self) -> dict | None:
             """配了 API_KEYS 就必须带 Key：笔记是个人数据，不能只靠「本机」当保护。"""
@@ -425,165 +385,206 @@ def make_resources(deps):
                                 "message": "设置只能在运行服务的这台电脑上修改"}, 403, cors)
                     return
             try:
-                if path == "/api/settings/setup":
-                    if method == "GET":
-                        self._json(_setup_state(), 200, cors)
-                        return
-                    if method == "POST":
-                        payload, status = _apply_setup(str((body or {}).get("home") or ""),
-                                                       self._client())
-                        self._json(payload, status, cors)
-                        return
-                if path == "/api/settings":
-                    if method == "GET":
-                        self._json(_settings_payload(), 200, cors)
-                        return
-                    if method == "POST":
-                        before = str(note_ref["service"].store.home) if note_ref["service"] else ""
-                        appconfig.update(body or {})
-                        reopened = _reopen_notes()
-                        payload = _settings_payload()
-                        payload["notes_reloaded"] = reopened
-                        after = str(note_ref["service"].store.home) if note_ref["service"] else ""
-                        if before and after and os.path.normcase(before) != os.path.normcase(after):
-                            count = _count_notes(before)
-                            if count:
-                                # 只提示不自动搬：换个空目录是常规操作，替用户决定反而吓人
-                                payload["pending_migration"] = {"from": before, "count": count}
-                        guards.audit.write("settings.update", client=self._client(),
-                                           model=payload["llm"]["effective_model"],
-                                           notes_home=payload["notes"]["home_effective"],
-                                           store_chat=payload["notes"]["store_chat"])
-                        self._json(payload, 200, cors)
-                        return
-                if path == "/api/settings/pick-folder" and method == "POST":
-                    status, result = _pick_folder()
-                    self._json(result, status, cors)
-                    return
-                if path == "/api/settings/notes/migrate" and method == "POST":
-                    service = note_ref["service"]
-                    if service is None:
-                        self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
-                        return
-                    src = appconfig.clean_path(str((body or {}).get("from") or ""))
-                    dst = str(service.store.home)
-                    if not src or not os.path.isabs(src):
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "需要旧位置的绝对路径"}, 400, cors)
-                        return
-                    if os.path.normcase(os.path.abspath(src)) == os.path.normcase(dst):
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "新旧位置是同一个目录"}, 400, cors)
-                        return
-                    if not (pathlib.Path(src) / "notes").is_dir():
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "旧位置里没有 notes 目录，没东西可搬"}, 400, cors)
-                        return
-                    result = _copy_notes(src, dst)
-                    # 复制改的是深层子目录，指纹里的根目录 mtime 看不出变化，
-                    # 这里显式作废，切回去立刻看到新位置的数字
-                    settings_ops.invalidate_storage()
-                    guards.audit.write("settings.notes_migrate", client=self._client(),
-                                       from_path=src, to_path=dst, copied=result["copied"],
-                                       skipped=result["skipped"], failed=len(result["failed"]))
-                    self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
-                    return
-                if path == "/api/settings/storage/clean" and method == "POST":
-                    sent = body or {}
-                    keep = appconfig.keep_versions()
-                    if "keep" in sent:
-                        try:
-                            keep = max(0, int(sent.get("keep")))
-                        except (TypeError, ValueError):
-                            self._json({"ok": False, "error": "invalid_argument",
-                                        "message": "保留版本数要是 0 或正整数"}, 400, cors)
-                            return
-                    # 先把选择存下来：用户点的是「按 30 版保留」，下次开机也该按 30 版
-                    appconfig.update({"storage": {"keep_versions": str(keep)}})
-                    service = note_ref["service"]
-                    home = str(service.store.home) if service else ""
-                    before = _storage_report(fresh=True)
-                    removed = store.prune_versions(keep) if store is not None else []
-                    # 不在这里重建索引：重建会立刻把刚删的缓存写回来，用户看到的「释放 0 B」
-                    # 就是这个原因。下一次读笔记（列表或问答）时自然重建。
-                    freed_index = _clear_index(home)
-                    after = _storage_report(fresh=True)
-                    freed = max(0, _total_bytes(before) - _total_bytes(after)) + freed_index
-                    guards.audit.write("settings.storage_clean", client=self._client(),
-                                       keep=keep, removed=len(removed), freed_bytes=freed)
-                    self._json({"ok": True, "keep": keep, "removed": removed,
-                                "freed_bytes": freed, "storage": after}, 200, cors)
-                    return
-                if path == "/api/settings/test" and method == "POST":
-                    live = load_settings()
-                    sent = body or {}
-                    cfg = {
-                        "base_url": str(sent.get("base_url") or live.api_base),
-                        "model": str(sent.get("model") or live.model),
-                        # 页面回显的是掩码；留空表示「用已保存的那把钥匙」
-                        "api_key": str(sent.get("api_key") or api_key()),
-                    }
-                    self._json(_probe_llm(cfg), 200, cors)
-                    return
-                if path == "/api/settings/mcp":
-                    targets = _mcp_targets()
-                    self._json({"ok": True, "config": _mcp_config(),
-                                "targets": targets,
-                                "target": next((t["path"] for t in targets if t["exists"]), "")},
-                               200, cors)
-                    return
-                if path == "/api/settings/mcp/install" and method == "POST":
-                    wanted = str((body or {}).get("client") or "claude").strip().lower()
-                    known = {t["id"]: t for t in _mcp_targets()}
-                    item = known.get(wanted)
-                    if item is None:
-                        # 只认已知客户端：允许调用方给路径，就等于允许往任意文件里写
-                        self._json({"ok": False, "error": "unsupported",
-                                    "message": f"不认识的客户端「{wanted}」，可选："
-                                               + "、".join(known) + "；也可以手动复制 JSON"}, 400, cors)
-                        return
-                    target = pathlib.Path(item["path"])
-                    data: dict = {}
-                    if target.exists():
-                        try:
-                            data = json.loads(target.read_text(encoding="utf-8"))
-                        except (OSError, json.JSONDecodeError) as exc:
-                            # 不覆盖坏文件：对方自己改坏了，替它兜底会掩盖问题
-                            self._json({"ok": False, "error": "bad_config",
-                                        "message": f"现有配置不是合法 JSON，未改动：{exc}"}, 400, cors)
-                            return
-                        backup = target.with_name(target.name + f".bak-{time.strftime('%Y%m%d%H%M%S')}")
-                        shutil.copy2(target, backup)
-                    if not isinstance(data, dict):
-                        data = {}
-                    data.setdefault("mcpServers", {})["agent-notes"] = _mcp_config()["mcpServers"]["agent-notes"]
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    guards.audit.write("settings.mcp_install", client=self._client(),
-                                       target=str(target), app=wanted)
-                    self._json({"ok": True, "target": str(target), "client": wanted,
-                                "message": f"已写入 {item['name']}。重启该客户端后生效"}, 200, cors)
-                    return
-                if path == "/api/settings/open" and method == "POST":
-                    service = note_ref["service"]
-                    if service is None:
-                        self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
-                        return
-                    folder = str(service.store.home)
-                    try:
-                        _open_folder(folder)
-                    except OSError as exc:
-                        self._json({"ok": False, "error": "open_failed",
-                                    "message": f"打不开文件管理器：{exc}", "path": folder}, 500, cors)
-                        return
-                    self._json({"ok": True, "path": folder}, 200, cors)
-                    return
-                self._json({"ok": False, "error": "not_found"}, 404, cors)
+                if (path == "/api/settings/pick-folder"
+                        or path.startswith("/api/settings/notes/")):
+                    self._settings_notes(method, path, body, cors)
+                elif path.startswith("/api/settings/storage/"):
+                    self._settings_storage(method, path, body, cors)
+                elif (path in ("/api/settings/test", "/api/settings/open")
+                      or path.startswith("/api/settings/mcp")):
+                    self._settings_mcp(method, path, body, cors)
+                else:
+                    self._settings_core(method, path, body, cors)
+                return
             except ValueError as exc:
                 self._json({"ok": False, "error": "invalid_argument", "message": str(exc)}, 400, cors)
             except Exception as exc:  # noqa: BLE001 —— 设置面板报错也要能看见原因
                 traceback.print_exc()
                 self._json({"ok": False, "error": "internal_error",
                             "message": self._error_text(exc)}, 500, cors)
+
+        def _settings_core(self, method: str, path: str, body: dict | None,
+                             cors: dict) -> None:
+            """读取/写入设置本身，以及首启引导。"""
+            if path == "/api/settings/setup":
+                if method == "GET":
+                    self._json(_setup_state(), 200, cors)
+                    return
+                if method == "POST":
+                    payload, status = _apply_setup(str((body or {}).get("home") or ""),
+                                                   self._client())
+                    self._json(payload, status, cors)
+                    return
+            if path == "/api/settings":
+                if method == "GET":
+                    payload = _settings_payload()
+                    # 这个接口是 open 级（Key 配错时的回退通道），所以「配了 Key 却没带
+                    # 有效 Key」的调用方也能读。回退只需要知道当前配置长什么样，不需要
+                    # 家目录、MCP 配置里的绝对路径——那会连用户名一起交出去。
+                    # 开放模式（没配 Key）不脱敏：单机自用，设置页要显示路径。
+                    if api_keys.enabled and self._api_auth()[0] is None:
+                        payload = redact_settings(payload)
+                    self._json(payload, 200, cors)
+                    return
+                if method == "POST":
+                    before = str(note_ref["service"].store.home) if note_ref["service"] else ""
+                    appconfig.update(body or {})
+                    reopened = _reopen_notes()
+                    payload = _settings_payload()
+                    payload["notes_reloaded"] = reopened
+                    after = str(note_ref["service"].store.home) if note_ref["service"] else ""
+                    if before and after and os.path.normcase(before) != os.path.normcase(after):
+                        count = _count_notes(before)
+                        if count:
+                            # 只提示不自动搬：换个空目录是常规操作，替用户决定反而吓人
+                            payload["pending_migration"] = {"from": before, "count": count}
+                    guards.audit.write("settings.update", client=self._client(),
+                                       model=payload["llm"]["effective_model"],
+                                       notes_home=payload["notes"]["home_effective"],
+                                       store_chat=payload["notes"]["store_chat"])
+                    self._json(payload, 200, cors)
+                    return
+            # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
+            self._json({"error": "not found"}, 404, cors)
+
+        def _settings_notes(self, method: str, path: str, body: dict | None,
+                             cors: dict) -> None:
+            """笔记存储：选目录与迁移旧位置。"""
+            if path == "/api/settings/pick-folder" and method == "POST":
+                status, result = _pick_folder()
+                self._json(result, status, cors)
+                return
+            if path == "/api/settings/notes/migrate" and method == "POST":
+                service = note_ref["service"]
+                if service is None:
+                    self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
+                    return
+                src = appconfig.clean_path(str((body or {}).get("from") or ""))
+                dst = str(service.store.home)
+                if not src or not os.path.isabs(src):
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "需要旧位置的绝对路径"}, 400, cors)
+                    return
+                if os.path.normcase(os.path.abspath(src)) == os.path.normcase(dst):
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "新旧位置是同一个目录"}, 400, cors)
+                    return
+                if not (pathlib.Path(src) / "notes").is_dir():
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "旧位置里没有 notes 目录，没东西可搬"}, 400, cors)
+                    return
+                result = _copy_notes(src, dst)
+                # 复制改的是深层子目录，指纹里的根目录 mtime 看不出变化，
+                # 这里显式作废，切回去立刻看到新位置的数字
+                settings_ops.invalidate_storage()
+                guards.audit.write("settings.notes_migrate", client=self._client(),
+                                   from_path=src, to_path=dst, copied=result["copied"],
+                                   skipped=result["skipped"], failed=len(result["failed"]))
+                self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
+                return
+            # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
+            self._json({"error": "not found"}, 404, cors)
+
+        def _settings_storage(self, method: str, path: str, body: dict | None,
+                             cors: dict) -> None:
+            """存储清理：保留 N 个版本，其余删掉。"""
+            if path == "/api/settings/storage/clean" and method == "POST":
+                sent = body or {}
+                keep = appconfig.keep_versions()
+                if "keep" in sent:
+                    try:
+                        keep = max(0, int(sent.get("keep")))
+                    except (TypeError, ValueError):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "保留版本数要是 0 或正整数"}, 400, cors)
+                        return
+                # 先把选择存下来：用户点的是「按 30 版保留」，下次开机也该按 30 版
+                appconfig.update({"storage": {"keep_versions": str(keep)}})
+                service = note_ref["service"]
+                home = str(service.store.home) if service else ""
+                before = _storage_report(fresh=True)
+                removed = store.prune_versions(keep) if store is not None else []
+                # 不在这里重建索引：重建会立刻把刚删的缓存写回来，用户看到的「释放 0 B」
+                # 就是这个原因。下一次读笔记（列表或问答）时自然重建。
+                freed_index = _clear_index(home)
+                after = _storage_report(fresh=True)
+                freed = max(0, _total_bytes(before) - _total_bytes(after)) + freed_index
+                guards.audit.write("settings.storage_clean", client=self._client(),
+                                   keep=keep, removed=len(removed), freed_bytes=freed)
+                self._json({"ok": True, "keep": keep, "removed": removed,
+                            "freed_bytes": freed, "storage": after}, 200, cors)
+                return
+            # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
+            self._json({"error": "not found"}, 404, cors)
+
+        def _settings_mcp(self, method: str, path: str, body: dict | None,
+                             cors: dict) -> None:
+            """MCP 配置的探测、生成、写入客户端配置、打开目录。"""
+            if path == "/api/settings/test" and method == "POST":
+                live = load_settings()
+                sent = body or {}
+                cfg = {
+                    "base_url": str(sent.get("base_url") or live.api_base),
+                    "model": str(sent.get("model") or live.model),
+                    # 页面回显的是掩码；留空表示「用已保存的那把钥匙」
+                    "api_key": str(sent.get("api_key") or api_key()),
+                }
+                self._json(_probe_llm(cfg), 200, cors)
+                return
+            if path == "/api/settings/mcp":
+                targets = _mcp_targets()
+                self._json({"ok": True, "config": _mcp_config(),
+                            "targets": targets,
+                            "target": next((t["path"] for t in targets if t["exists"]), "")},
+                           200, cors)
+                return
+            if path == "/api/settings/mcp/install" and method == "POST":
+                wanted = str((body or {}).get("client") or "claude").strip().lower()
+                known = {t["id"]: t for t in _mcp_targets()}
+                item = known.get(wanted)
+                if item is None:
+                    # 只认已知客户端：允许调用方给路径，就等于允许往任意文件里写
+                    self._json({"ok": False, "error": "unsupported",
+                                "message": f"不认识的客户端「{wanted}」，可选："
+                                           + "、".join(known) + "；也可以手动复制 JSON"}, 400, cors)
+                    return
+                target = pathlib.Path(item["path"])
+                data: dict = {}
+                if target.exists():
+                    try:
+                        data = json.loads(target.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as exc:
+                        # 不覆盖坏文件：对方自己改坏了，替它兜底会掩盖问题
+                        self._json({"ok": False, "error": "bad_config",
+                                    "message": f"现有配置不是合法 JSON，未改动：{exc}"}, 400, cors)
+                        return
+                    backup = target.with_name(target.name + f".bak-{time.strftime('%Y%m%d%H%M%S')}")
+                    shutil.copy2(target, backup)
+                if not isinstance(data, dict):
+                    data = {}
+                data.setdefault("mcpServers", {})["agent-notes"] = _mcp_config()["mcpServers"]["agent-notes"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                guards.audit.write("settings.mcp_install", client=self._client(),
+                                   target=str(target), app=wanted)
+                self._json({"ok": True, "target": str(target), "client": wanted,
+                            "message": f"已写入 {item['name']}。重启该客户端后生效"}, 200, cors)
+                return
+            if path == "/api/settings/open" and method == "POST":
+                service = note_ref["service"]
+                if service is None:
+                    self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
+                    return
+                folder = str(service.store.home)
+                try:
+                    _open_folder(folder)
+                except OSError as exc:
+                    self._json({"ok": False, "error": "open_failed",
+                                "message": f"打不开文件管理器：{exc}", "path": folder}, 500, cors)
+                    return
+                self._json({"ok": True, "path": folder}, 200, cors)
+                return
+            # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
+            self._json({"error": "not found"}, 404, cors)
 
     return ResourcesRoutes

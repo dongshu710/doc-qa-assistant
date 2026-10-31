@@ -66,11 +66,59 @@ def host_allowed(host_header: str, extra: set[str] | None = None) -> bool:
     return host in (extra if extra is not None else _extra_hosts())
 
 
-def origin_allowed(origin: str, extra: set[str] | None = None) -> bool:
-    """有 Origin 就必须是本机来源；没有 Origin（非浏览器）直接放行。"""
+def _origin_port(origin: str) -> int | None:
+    try:
+        parts = urlsplit(origin)
+        if parts.port:
+            return parts.port
+    except ValueError:
+        return None
+    scheme = ""
+    try:
+        scheme = urlsplit(origin).scheme.lower()
+    except ValueError:
+        return None
+    return {"http": 80, "https": 443}.get(scheme)
+
+
+def _host_port(host_header: str, default: int) -> int | None:
+    try:
+        parts = urlsplit("//" + (host_header or "").strip())
+    except ValueError:
+        return None
+    return parts.port if parts.port is not None else default
+
+
+def origin_allowed(origin: str, extra: set[str] | None = None,
+                   host_header: str = "") -> bool:
+    """有 Origin 就必须是本机来源；没有 Origin（非浏览器）直接放行。
+
+    只比主机名是不够的：`http://localhost:9999` 与 `:8011` 主机名相同、端口不同，
+    是两个源。浏览器侧真正把我们兜住的是 `X-Jiyi-Client`（跨源自定义头会触发
+    预检，预检会被这里的 Origin 判据拦下），但那是「第二道锁」，不该拿它当唯一依据。
+
+    `host_header` 为空时退回旧行为（只比主机），供单独调用的场景与旧测试使用；
+    服务端的写路径一定会把 `Host` 传进来。
+
+    反代场景不按端口比：外部域名通常写在 `ALLOWED_HOSTS` 里，端口在代理那层已经
+    改写过（443 → 内部 8000），硬比会把正常部署判成跨站。
+    """
     if not (origin or "").strip():
         return True
-    return host_allowed(origin, extra)
+    if not host_allowed(origin, extra):
+        return False
+    if not (host_header or "").strip():
+        return True
+    origin_host = _hostname(origin)
+    if origin_host not in LOOPBACK_NAMES:
+        try:
+            if not ipaddress.ip_address(origin_host).is_loopback:
+                return True      # 走 ALLOWED_HOSTS 的域名：端口交给代理
+        except ValueError:
+            return True
+    want = _origin_port(origin)
+    got = _host_port(host_header, 443 if want == 443 else 80)
+    return want is not None and want == got
 
 
 def site_allowed(value: str) -> bool:
@@ -106,7 +154,8 @@ def write_problem(headers, has_body: bool = True, extra: set[str] | None = None)
     """
     if not host_allowed(headers.get("Host") or "", extra):
         return "host"
-    if not origin_allowed(headers.get("Origin") or "", extra):
+    if not origin_allowed(headers.get("Origin") or "", extra,
+                          host_header=headers.get("Host") or ""):
         return "origin"
     if not site_allowed(headers.get("Sec-Fetch-Site") or ""):
         return "fetch_site"

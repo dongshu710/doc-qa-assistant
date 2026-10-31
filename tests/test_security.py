@@ -105,6 +105,17 @@ def test_write_rule() -> None:
           security.write_problem({**same_site, "X-Jiyi-Client": "web"}) == "")
     check("标记值不对也拒绝",
           security.write_problem({**same_site, "X-Jiyi-Client": "evil"}) == "client_header")
+    # 只比主机名是不够的：localhost:9999 与 :8011 是两个源。
+    check("同主机不同端口 → origin",
+          security.write_problem({**same_site, "Origin": "http://127.0.0.1:9999",
+                                  "X-Jiyi-Client": "web"}) == "origin")
+    check("Host 与 Origin 端口一致才放行",
+          security.write_problem({**same_site, "X-Jiyi-Client": "web"}) == "")
+    # 反代场景：外部域名走 ALLOWED_HOSTS，端口在代理那层已改写，不硬比。
+    proxied = {"Host": "kb.example.com", "Content-Type": "application/json",
+               "Origin": "https://kb.example.com", "Sec-Fetch-Site": "same-origin",
+               "X-Jiyi-Client": "web"}
+    check("反代域名不按端口比", security.write_problem(proxied, extra={"kb.example.com"}) == "")
 
 
 # ---------------- 集成：真服务 + 恶意请求形状 ----------------
@@ -169,11 +180,14 @@ def test_http_guard() -> None:
             browser = {"Origin": f"http://127.0.0.1:{port}",
                        "Sec-Fetch-Site": "same-origin",
                        "Content-Type": "application/json"}
+            # 真实浏览器访问 :port 时 Host 一定带端口，测试也得照实写，
+            # 否则这些用例测到的是「端口不匹配」而不是它们想测的那条规则。
             code, _ = call(port, "POST", "/api/settings", body={"llm": {"model": "no-header"}},
-                           headers=browser)
+                           headers=browser, host=f"127.0.0.1:{port}")
             check("浏览器同源但缺站内标记被拒（403）", code == 403, str(code))
             code, payload = call(port, "POST", "/api/settings", body={"llm": {"model": "with-header"}},
-                                 headers={**browser, "X-Jiyi-Client": "web"})
+                                 headers={**browser, "X-Jiyi-Client": "web"},
+                                 host=f"127.0.0.1:{port}")
             check("浏览器同源且带标记放行（200）", code == 200, str(code))
             check("标记请求真的生效",
                   (payload or {}).get("llm", {}).get("model") == "with-header",

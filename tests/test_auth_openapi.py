@@ -78,6 +78,13 @@ def main() -> None:
         assert status == 401, (status, body)
         print("错误 Key → 401 OK")
 
+        # `/api/ask` 的 Key 校验在 _ask_preflight 里做，所以闸门放行；
+        # 但放行名单必须逐个列名。按前缀放过等于给未来所有 `/api/ask*`
+        # 预开后门——这条断言锁住「新路径默认要 Key」。
+        status, _, body = _call(port, "/api/ask-batch", {"query": "起购金额"})
+        assert status == 401, (status, body)
+        print("同前缀的新路径不被 ask 豁免 → 401 OK")
+
         status, _, body = _call(port, "/api/ask", {"query": "起购金额"},
                                 {"Authorization": "Bearer sk_test_123456"})
         assert status == 200 and body.get("answer"), (status, body)

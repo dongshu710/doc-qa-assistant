@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -114,7 +115,16 @@ class IdempotencyCache:
 
 
 class CostBudget:
-    """按天累计 token，落盘到 logs/cost.json。"""
+    """按天累计 token，落盘到 logs/cost.json。
+
+    计数在内存里做，落盘按「节流」推：原来是每次 `add` 都持锁 `_atomic_write`
+    （建临时文件 + replace），并发问答会被这把锁串行化——而这块数据只是
+    「今天用了多少 token」，丢最后一两秒不影响任何判断。
+    超限那一刻强制落盘：否则进程重启后用量归零，日上限形同不存在。
+    """
+
+    SAVE_INTERVAL_S = 1.0
+    SAVE_EVERY_N = 50
 
     def __init__(self, daily_limit: int = 200_000, path: str = ""):
         self.daily_limit = max(0, int(daily_limit))
@@ -122,6 +132,8 @@ class CostBudget:
         self._lock = threading.Lock()
         self._date = _today()
         self._used = 0
+        self._pending = 0          # 距上次落盘累计了几次 add
+        self._last_save = 0.0
         # 写盘失败必须留痕：磁盘满时预算一直是 0，超限永远拦不住
         self.persist_failures = 0
         self.persist_error: str | None = None
@@ -150,11 +162,32 @@ class CostBudget:
             self.persist_failures += 1
             self.persist_error = f"{type(exc).__name__}: {exc}"[:300]
 
+    def _maybe_save(self, force: bool = False) -> None:
+        """按节流落盘。调用方必须已持 `self._lock`。"""
+        if not self.path:
+            return
+        now = time.monotonic()
+        over = bool(self.daily_limit) and self._used >= self.daily_limit
+        if not (force or over or self._pending >= self.SAVE_EVERY_N
+                or now - self._last_save >= self.SAVE_INTERVAL_S):
+            return
+        self._save()
+        self._pending = 0
+        self._last_save = now
+
+    def flush(self) -> None:
+        """把还没落盘的计数写下去。进程退出、健康检查、测试断言时调用。"""
+        with self._lock:
+            self._maybe_save(force=True)
+
     def _roll(self) -> None:
         today = _today()
         if today != self._date:
             self._date = today
             self._used = 0
+            # 让下一次 add 立刻落盘：否则盘上还留着昨天的数字，
+            # 重启后会被当成「今天已经用了这么多」。
+            self._last_save = 0.0
 
     @property
     def blocked(self) -> bool:
@@ -172,7 +205,8 @@ class CostBudget:
         with self._lock:
             self._roll()
             self._used += n
-            self._save()
+            self._pending += 1
+            self._maybe_save()
             return self._used
 
     def status(self) -> dict:
@@ -409,6 +443,26 @@ class AuditLog:
     日志和没有审计日志一样危险。
     """
 
+    # 手机号 / 身份证 / 卡号。顺序有意义：18 位身份证要先于 16-19 位卡号匹配，
+    # 否则一串 18 位数字会被当成卡号打码（结果都能脱敏，但留前 3 后 4 的位置不同）。
+    _PII = (
+        re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
+        re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"),
+        re.compile(r"(?<!\d)\d{16,19}(?!\d)"),
+    )
+
+    @classmethod
+    def mask_pii(cls, text: str) -> str:
+        """审计副本里的证件类数字打码，保留前 3 后 4 便于对账。
+
+        审计是为追责与排查，但用户可能整段粘贴含身份证的问题。明文落盘之后，
+        这份日志的保留期与访问控制就得按凭证级别对待，而它实际只是操作记录。
+        `trace.jsonl` 不动：那份数据要用于评测，改了就重现不了模型看到什么。
+        """
+        for pattern in cls._PII:
+            text = pattern.sub(lambda m: m.group(0)[:3] + "****" + m.group(0)[-4:], text)
+        return text
+
     def __init__(self, path: str, sink: str = "file", service: str = "doc-qa",
                  instance: str = "", max_bytes: int = 0, keep: int = 3):
         self.path = path
@@ -426,10 +480,12 @@ class AuditLog:
         record = {"ts": _now_iso(), "event": "audit", "service": self.service,
                   "instance": self.instance, "action": action}
         for key, value in fields.items():
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                record[key] = value[:500] if isinstance(value, str) else value
+            if isinstance(value, str):
+                record[key] = self.mask_pii(value[:500])
+            elif isinstance(value, (int, float, bool)) or value is None:
+                record[key] = value
             else:
-                record[key] = str(value)[:500]
+                record[key] = self.mask_pii(str(value)[:500])
         line = json.dumps(record, ensure_ascii=False)
         if self.sink in ("stdout", "both"):
             try:

@@ -179,11 +179,33 @@ def test_rebuild(service: NoteService) -> None:
     service.embed_call = fake_embed
     result = service.rebuild_search()
     check("重建条数等于笔记数", result["notes"] == len(DOCS), str(result))
+    check("没有跳过的笔记", result.get("skipped") == 0, str(result.get("skipped")))
     index_file = service.store.home / "index" / search_mod.SEARCH_FILE
     check("索引文件已落盘", index_file.is_file(), str(index_file))
     rows = [json.loads(line) for line in index_file.read_text(encoding="utf-8").splitlines() if line]
     check("每条都带文本", all(row.get("text") for row in rows), str(len(rows)))
     check("每条都带向量", all(row.get("vec") for row in rows), str(len(rows)))
+
+
+def test_rebuild_reports_skipped(service: NoteService) -> None:
+    """读不出来的笔记必须在结果里报数：那几篇之后不会出现在任何搜索里。"""
+    print("重建时报出被跳过的笔记")
+    searcher = service.searcher()          # searcher 只构造一次，替换 provider 才有效
+    original = searcher._docs_provider
+    bad_id = str(service.list(limit=1)[0]["id"])
+
+    def broken(entry):
+        if str(entry.get("id")) == bad_id:
+            raise OSError("模拟坏文件")
+        return original(entry)
+
+    searcher._docs_provider = broken
+    try:
+        result = service.rebuild_search(semantic="off")
+    finally:
+        searcher._docs_provider = original
+    check("报出 1 篇被跳过", result.get("skipped") == 1, str(result))
+    check("条数少了这一篇", result["notes"] == len(DOCS) - 1, str(result["notes"]))
 
 
 def test_http_api(service: NoteService) -> None:
@@ -238,6 +260,7 @@ def main() -> int:
         test_filters_first(service)
         test_embed_failure(service)
         test_rebuild(service)
+        test_rebuild_reports_skipped(service)
         test_http_api(service)
         test_tool_schema()
 

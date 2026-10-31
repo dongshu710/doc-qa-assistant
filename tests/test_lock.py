@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.notes.store import (  # noqa: E402
-    LOCK_STALE_SECONDS, NoteStore, StoreBusy, _break_stale, _identity,
+    LOCK_STALE_SECONDS, NoteStore, StoreBusy, break_stale, identity,
 )
 
 FAILED = 0
@@ -49,9 +49,9 @@ def test_release_keeps_foreign_lock() -> None:
             # 模拟「我这一把被判定超时、被别人清掉并重建」
             os.rename(lock_dir, Path(tmp) / ".lock.gone")
             os.mkdir(lock_dir)
-            foreign = _identity(lock_dir)
+            foreign = identity(lock_dir)
         check("别人的锁还在", lock_dir.is_dir(), "被误删了")
-        check("没被换成别人的", _identity(lock_dir) == foreign)
+        check("没被换成别人的", identity(lock_dir) == foreign)
         # 这里只该动自己那把：改名出来的旧目录不归 store 管，删了就是越界
         check("没动别人的目录", (Path(tmp) / ".lock.gone").is_dir())
 
@@ -74,13 +74,15 @@ def test_break_stale_puts_back_foreign() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         lock_dir = Path(tmp) / ".lock"
         os.mkdir(lock_dir)
-        stale = _identity(lock_dir)
+        stale = identity(lock_dir)
 
         # 让第一次身份查询返回「刚才那把陈旧的」，rename 之后再返回真实身份，
         # 复现「判定陈旧 → 期间被重建 → 此刻 rename 拿到的是新锁」的时序。
-        import src.notes.store as store_mod
+        # patch 必须打在 locks 上：break_stale 内部调的是它自己模块里的 identity，
+        # 替换 store 的导入名不会生效。
+        import src.locks as locks_mod
         calls = {"n": 0}
-        real = store_mod._identity
+        real = locks_mod.identity
 
         def fake(path):
             calls["n"] += 1
@@ -88,17 +90,17 @@ def test_break_stale_puts_back_foreign() -> None:
                 return stale
             return real(path)
 
-        store_mod._identity = fake
+        locks_mod.identity = fake
         try:
             os.rename(lock_dir, Path(tmp) / ".lock.other")
             os.mkdir(lock_dir)
             foreign = real(lock_dir)
-            _break_stale(lock_dir)
+            break_stale(lock_dir, is_dir=True)
         finally:
-            store_mod._identity = real
+            locks_mod.identity = real
 
         check("新锁被放回原位", lock_dir.is_dir(), "被当成陈旧锁删了")
-        check("放回的是同一个目录", _identity(lock_dir) == foreign)
+        check("放回的是同一个目录", identity(lock_dir) == foreign)
 
 
 def test_busy() -> None:

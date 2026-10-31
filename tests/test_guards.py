@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.chunking import load_corpus  # noqa: E402
-from src.guards import CostBudget, IdempotencyCache, RateLimiter, RuntimeConfig  # noqa: E402
+from src.guards import (AuditLog, CostBudget, IdempotencyCache, RateLimiter,  # noqa: E402
+                        RuntimeConfig)
 from src.suggest import examples, similar  # noqa: E402
 
 
@@ -118,10 +119,55 @@ def test_suggest() -> None:
     print("suggest OK:", items[0], "|", sim[0])
 
 
+def test_cost_throttle() -> None:
+    """计数在内存里，落盘按节流推——但 flush 与超限必须立刻落。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "cost.json")
+        budget = CostBudget(daily_limit=10_000, path=path)
+        for _ in range(5):
+            budget.add(7)
+        assert budget.status()["used"] == 35, "内存里的计数必须立刻准确"
+        on_disk = CostBudget(daily_limit=10_000, path=path).status()["used"]
+        assert on_disk < 35, f"连续 add 不该每次都写盘（磁盘上是 {on_disk}）"
+        budget.flush()
+        assert CostBudget(daily_limit=10_000, path=path).status()["used"] == 35, "flush 要落全"
+        print("cost throttle OK：内存 35 / 落盘前", on_disk)
+
+
+def test_cost_over_limit_flushes() -> None:
+    """超限那一刻必须落盘：否则重启后用量归零，日上限形同不存在。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "cost.json")
+        budget = CostBudget(daily_limit=100, path=path)
+        budget.flush()                       # 先把时间戳推到现在
+        budget.add(60)
+        budget.flush()                       # 落一次，重置节流窗口
+        budget.add(50)                       # 这一刻超限
+        assert budget.blocked
+        assert CostBudget(daily_limit=100, path=path).status()["used"] == 110
+        print("cost over-limit flush OK")
+
+
+def test_audit_mask_pii() -> None:
+    """审计里的证件类数字要打码；普通数字不能被误伤到失去意义。"""
+    masked = AuditLog.mask_pii("我的手机 13812345678，身份证 11010519900307123X，卡号 6222021234567890123")
+    assert "13812345678" not in masked, masked
+    assert "11010519900307123X" not in masked, masked
+    assert "6222021234567890123" not in masked, masked
+    assert "138****5678" in masked, masked
+    assert "110****123X" in masked, masked
+    plain = "起购金额 1 元，封闭期 90 天，编号 20261031"
+    assert AuditLog.mask_pii(plain) == plain, AuditLog.mask_pii(plain)
+    print("audit mask PII OK:", masked)
+
+
 if __name__ == "__main__":
     test_rate_limiter()
     test_idempotency()
     test_cost_budget()
+    test_cost_throttle()
+    test_cost_over_limit_flushes()
+    test_audit_mask_pii()
     test_runtime_config()
     test_persist_failure_visible()
     test_suggest()

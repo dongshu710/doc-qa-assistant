@@ -6,50 +6,23 @@ from __future__ import annotations
 
 import base64
 import binascii
-import gzip
 import hashlib
 import json
 import os
-import pathlib
 import queue
-import re
 import shutil
-import subprocess
-import sys
 import tempfile
 import threading
 import time
-import traceback
-import urllib.error
-import urllib.request
 import uuid
-from collections import Counter
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
-                routing, security, settings_ops, suggest)
-from .. import update as update_mod
-from ..auth import ApiKeyStore, safe_equal
-from ..config import api_key, load_settings
-from ..guards import Guards
-from ..metrics import summarize
-from ..metrics_exporter import Metrics
-from ..notes.api import ApiError
-from ..notes.api import dispatch as notes_dispatch
-from ..notes.service import NoteService
-from ..notes.tools import tools_payload as notes_tools_payload
-from ..openapi import build_spec
-from ..pipeline import RAGPipeline
-from ..theme import FILES_PAGE
-from ..threadstore import ThreadError, ThreadStore
-from ..version import __version__
-from ..web_pages import ASK_HTML, KB_HTML
+from .. import (casegen, evaluator, ingest, jsonl, kbstore)
 from .common import (ALLOWED_EXT, ASSET_BODY_MAX, DOC_B64_MAX_BYTES, DOC_MAX_BYTES,
-                     MAX_BODY_BYTES, NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
+                     MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
                      UPLOAD_MAX_BYTES,
-                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
+                     _read_jsonl,
                      _safe_doc_name, _safe_kb_name)
 
 
@@ -93,17 +66,9 @@ def make_write(deps):
     _copy_notes = deps._copy_notes
 
     class WriteRoutes:
-        # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
-        # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
-        protocol_version = "HTTP/1.1"
-        timeout = 20
-
-        # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
-        COMPRESSIBLE = frozenset({
-            "text/html", "text/plain", "text/markdown", "text/css",
-            "application/json", "application/javascript", "text/javascript",
-            "image/svg+xml",
-        })
+        # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
+        # 这四个类通过 MRO 组合成一个 Handler，重复定义时生效的永远是最左边那份，
+        # 改另一份会静默不生效——比没有更糟。
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
@@ -186,6 +151,22 @@ def make_write(deps):
                 self._json({"error": "invalid json"}, 400)
                 return
 
+            # 按资源转交。原来是 641 行的 if 链，改任何一处都要在这条链上找位置，
+            # 且分支顺序隐含语义（谁先匹配）。现在只留这一层分派，
+            # 每组内部的顺序与条件原样保留。
+            if path.startswith("/api/admin/"):
+                self._post_admin(path, payload)
+            elif path.startswith(("/api/knowledge/", "/api/kb/")):
+                self._post_kb(path, payload)
+            elif (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
+                  or path in ("/api/feedback", "/api/reload")):
+                self._post_data(path, payload)
+            else:
+                self._post_ask(path, payload)
+            return
+
+        def _post_admin(self, path: str, payload: dict) -> None:
+            """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""
             if path == "/api/admin/config":
                 if not self._is_admin():
                     self._json({"error": "forbidden"}, 403)
@@ -215,7 +196,22 @@ def make_write(deps):
                                    rolled_back=res.get("rolled_back"), revision=res.get("revision"))
                 self._json({"ok": True, **res})
                 return
+            # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
+            # 不能让请求挂在一个没有 response 的方法里。
+            self._json({"error": "not found"}, 404)
 
+        def _post_kb(self, path: str, payload: dict) -> None:
+            """按路径再分一层，具体处理见下面的方法。"""
+            if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
+                self._post_kb_doc(path, payload)
+            elif path == "/api/knowledge/upload":
+                self._post_kb_upload(path, payload)
+            else:
+                self._post_kb_review(path, payload)
+            return
+
+        def _post_kb_upload(self, path: str, payload: dict) -> None:
+            """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
             if path == "/api/knowledge/upload":
                 name = _safe_kb_name(payload.get("name"))
                 content = str(payload.get("content") or "")
@@ -269,7 +265,11 @@ def make_write(deps):
                 guards.audit.write("kb.upload", client=self._client(), name=name,
                                    kind="text", chunks=total, chars=len(content))
                 return
+            # 组内条件互斥，走到这里说明分派给了不该给的路径。
+            self._json({"error": "not found"}, 404)
 
+        def _post_kb_doc(self, path: str, payload: dict) -> None:
+            """PDF / DOCX 上传：解码、解析、暂存，与文本走同一条审批链。"""
             if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
                 name = _safe_doc_name(payload.get("name"))
                 if not name:
@@ -391,7 +391,11 @@ def make_write(deps):
                                    kind=res.get("format") or ext.lstrip("."), chunks=total,
                                    bytes=len(data), engine=res.get("engine"))
                 return
+            # 组内条件互斥，走到这里说明分派给了不该给的路径。
+            self._json({"error": "not found"}, 404)
 
+        def _post_kb_review(self, path: str, payload: dict) -> None:
+            """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
             if path == "/api/knowledge/delete":
                 name = _safe_kb_name(payload.get("name"))
                 target = os.path.join(kb_dir(), name) if name else ""
@@ -430,7 +434,6 @@ def make_write(deps):
                 guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
                 self._json({"ok": True, "name": name, "chunks": total})
                 return
-
             if path == "/api/kb/approve":
                 if store is None or not self._is_admin():
                     self._json({"error": "forbidden"}, 403)
@@ -448,7 +451,6 @@ def make_write(deps):
                 self._json({"ok": True, "change_id": change_id, "version": res["version"],
                             **index_fields()})
                 return
-
             if path == "/api/kb/reject":
                 if store is None or not self._is_admin():
                     self._json({"error": "forbidden"}, 403)
@@ -463,7 +465,6 @@ def make_write(deps):
                 guards.audit.write("kb.reject", client=self._client(), change_id=change_id)
                 self._json({"ok": True, **res})
                 return
-
             if path == "/api/kb/rollback_doc":
                 if store is None or not self._is_admin():
                     self._json({"error": "forbidden"}, 403)
@@ -482,7 +483,20 @@ def make_write(deps):
                 self._json({"ok": True, "name": name, "from": to_version,
                             "version": res["version"], **index_fields()})
                 return
+            # 组内条件互斥，走到这里说明分派给了不该给的路径。
+            self._json({"error": "not found"}, 404)
 
+
+        def _post_data(self, path: str, payload: dict) -> None:
+            """按路径再分一层，具体处理见下面的方法。"""
+            if path.startswith("/api/cases/"):
+                self._post_cases(path, payload)
+            else:
+                self._post_ops(path, payload)
+            return
+
+        def _post_cases(self, path: str, payload: dict) -> None:
+            """用例集：从文档/反馈生成，以及跑一遍评测。"""
             if path == "/api/cases/from_doc":
                 name = _safe_kb_name(payload.get("name"))
                 if not name:
@@ -507,7 +521,6 @@ def make_write(deps):
                     return
                 self._json({"ok": True, "doc": name, **res})
                 return
-
             if path == "/api/cases/run":
                 scope = str(payload.get("scope") or "docs")
                 files = (evaluator.default_case_files() if scope == "all"
@@ -555,61 +568,6 @@ def make_write(deps):
                     "run_at": report["run_at"],
                 })
                 return
-
-            if path == "/api/feedback":
-                # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
-                # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
-                record = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "trace_id": str(payload.get("trace_id", ""))[:64],
-                    "useful": bool(payload.get("useful")),
-                    "comment": str(payload.get("comment", ""))[:500],
-                    "behavior": str(payload.get("behavior") or "")[:32],
-                    "query": str(payload.get("query") or "")[:300],
-                    "expected": str(payload.get("expected") or "")[:500],
-                    "document": str(payload.get("document") or "")[:200],
-                    "session_id": str(payload.get("session_id") or "")[:64],
-                    "kb_version": str(payload.get("kb_version") or "")[:32],
-                }
-                jsonl.append_line(feedback_path, json.dumps(record, ensure_ascii=False),
-                                  int(pipe.settings.log_max_bytes),
-                                  int(pipe.settings.log_keep))
-                guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
-                                   useful=record["useful"], behavior=record["behavior"],
-                                   has_expected=bool(record["expected"]),
-                                   document=record["document"])
-                self._json({"ok": True, "need": not record["useful"]})
-                return
-
-            if path == "/api/keywords/rebuild":
-                if not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                try:
-                    detail = pipe.rebuild_keywords(enrich=True)
-                    guards.audit.write("keywords.rebuild", client=self._client(),
-                                       entries=detail.get("entries"), llm=detail.get("llm"))
-                    self._json({"ok": True, "keywords": detail,
-                                "summary": pipe.keywords.summary()})
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": str(exc)}, 500)
-                return
-
-            if path == "/api/session/clear":
-                sid = str(payload.get("session_id") or "").strip()[:64]
-                pipe.sessions.clear(sid)
-                self._json({"ok": True, "session_id": sid, "sessions": pipe.sessions.status()})
-                return
-
-            if path == "/api/reload":
-                try:
-                    total = reload_kb()
-                    guards.audit.write("kb.reload", client=self._client(), chunks=total)
-                    self._json({"ok": True, **index_fields()})
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": str(exc)}, 500)
-                return
-
             if path == "/api/cases/from_feedback":
                 trace_id = str(payload.get("trace_id", ""))
                 rows = list(reversed(_read_jsonl(pipe.log_path, 5000)))
@@ -640,7 +598,67 @@ def make_write(deps):
                     f.write(json.dumps(case, ensure_ascii=False) + "\n")
                 self._json({"ok": True, "case": case, "total": seq})
                 return
+            # 组内条件互斥，走到这里说明分派给了不该给的路径。
+            self._json({"error": "not found"}, 404)
 
+        def _post_ops(self, path: str, payload: dict) -> None:
+            """运维动作：反馈落盘、关键词重建、清会话、索引热载。"""
+            if path == "/api/feedback":
+                # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
+                # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
+                record = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "trace_id": str(payload.get("trace_id", ""))[:64],
+                    "useful": bool(payload.get("useful")),
+                    "comment": str(payload.get("comment", ""))[:500],
+                    "behavior": str(payload.get("behavior") or "")[:32],
+                    "query": str(payload.get("query") or "")[:300],
+                    "expected": str(payload.get("expected") or "")[:500],
+                    "document": str(payload.get("document") or "")[:200],
+                    "session_id": str(payload.get("session_id") or "")[:64],
+                    "kb_version": str(payload.get("kb_version") or "")[:32],
+                }
+                jsonl.append_line(feedback_path, json.dumps(record, ensure_ascii=False),
+                                  int(pipe.settings.log_max_bytes),
+                                  int(pipe.settings.log_keep))
+                guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
+                                   useful=record["useful"], behavior=record["behavior"],
+                                   has_expected=bool(record["expected"]),
+                                   document=record["document"])
+                self._json({"ok": True, "need": not record["useful"]})
+                return
+            if path == "/api/keywords/rebuild":
+                if not self._is_admin():
+                    self._json({"error": "forbidden"}, 403)
+                    return
+                try:
+                    detail = pipe.rebuild_keywords(enrich=True)
+                    guards.audit.write("keywords.rebuild", client=self._client(),
+                                       entries=detail.get("entries"), llm=detail.get("llm"))
+                    self._json({"ok": True, "keywords": detail,
+                                "summary": pipe.keywords.summary()})
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": str(exc)}, 500)
+                return
+            if path == "/api/session/clear":
+                sid = str(payload.get("session_id") or "").strip()[:64]
+                pipe.sessions.clear(sid)
+                self._json({"ok": True, "session_id": sid, "sessions": pipe.sessions.status()})
+                return
+            if path == "/api/reload":
+                try:
+                    total = reload_kb()
+                    guards.audit.write("kb.reload", client=self._client(), chunks=total)
+                    self._json({"ok": True, **index_fields()})
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": str(exc)}, 500)
+                return
+            # 组内条件互斥，走到这里说明分派给了不该给的路径。
+            self._json({"error": "not found"}, 404)
+
+
+        def _post_ask(self, path: str, payload: dict) -> None:
+            """问答：流式与非流式共用 `_ask_preflight`，鉴权/限流/幂等一套口径。"""
             if path == "/api/ask/stream":
                 pre, err = self._ask_preflight(payload)
                 if err:
@@ -746,6 +764,10 @@ def make_write(deps):
                 "X-Request-Id": pre["request_id"],
                 "X-Answer-Path": str(result.get("path") or "rag"),
             })
+            return
+            # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
+            # 不能让请求挂在一个没有 response 的方法里。
+            self._json({"error": "not found"}, 404)
 
         # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
         # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。

@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 
 from . import assets as assets_mod
-from . import digest_llm, digest_rule
+from . import digest_llm
 from .model import KINDS, STATUSES, Note, NoteError
 from .search import TEXT_MAX, NoteSearcher
 from .select import (MAX_CHARS_DEFAULT, Msg, SelectError, clip, fingerprint,
@@ -316,8 +316,11 @@ class NoteService:
         if semantic not in SEMANTIC_MODES:
             raise NoteError(f"semantic 只能是 {' / '.join(SEMANTIC_MODES)}")
         rows = self.list(limit=0)
-        count, degraded = self.searcher().rebuild(rows, want_vec=semantic != "off")
-        return {"notes": count, "semantic": semantic != "off", "degraded": degraded}
+        count, degraded, skipped = self.searcher().rebuild(rows, want_vec=semantic != "off")
+        # skipped 一定要回给调用方：那几篇不会出现在任何搜索结果里，
+        # 而「重建完成」的提示会让人以为全都进去了。
+        return {"notes": count, "semantic": semantic != "off",
+                "degraded": degraded, "skipped": skipped}
 
     def delete(self, note_id: str) -> dict:
         path = self.store.delete(note_id)

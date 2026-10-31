@@ -2,6 +2,164 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.27.0] - 2026-10-31
+
+代码审查 P2–P5 收口：把「改任何一处都要在 600 行里找位置」的结构问题解决掉，
+顺手补上三项安全细节与两项性能/可观测缺口。没有新功能，接口与数据格式不变。
+
+### 可维护性（本次改动的主体）
+
+- **`do_POST` 641 行 → 94 行**（`src/handlers/write.py`）
+  原来 641 行里 23 个 `if path ==` 分支，问答、知识库、设置、用例全挤在一起，
+  分支顺序还隐含语义。现在只留「前缀转交 + 按资源分派」，
+  四组方法：`_post_admin` / `_post_kb` / `_post_data` / `_post_ask`；
+  知识库那组再按「文本上传 / 文档上传 / 审批」分一层。
+  搬移用脚本按行区间切片，缩进恰好一致（do_POST 体 12 空格 == 新方法体 12 空格），
+  每个分支都核对过出现次数，没有手工抄写。
+
+- **`do_GET` 277 行 → 46 行**（`src/handlers/read.py`）
+  后半是一条 23 段的 elif 链（页面 + 只读 API + 404 兜底），拆成
+  `_get_page_html` / `_get_meta` / `_get_admin` / `_get_kb_view` / `_get_api_misc`。
+  踩到一个坑值得记：原链只有一个 `else 404` 在末尾，拆开后每组都补了兜底，
+  但补给的是「无条件 404」而不是「else 分支」，于是命中分支之后又 404 一次——
+  双响应在 HTTP 层表现为 `RemoteDisconnected`，比报错更难查。
+
+- **`_settings` 189 行 → 39 行**（`src/handlers/resources.py`）
+  按设置类别拆成 core / notes / storage / mcp 四组。
+
+- **删掉重复的 HTTP 类属性**（`read/resources/write.py`）
+  `protocol_version` / `timeout` / `COMPRESSIBLE` 四个文件各定义一份，
+  而 `Handler` 的 MRO 是 (Read, Write, Resource, Base)——生效的永远是最左边那份，
+  改另一份会静默不生效。
+
+- **删掉 `_chunk_pos`**（`src/pipeline.py`）
+  它是 `id(chunk) → 位置` 的映射，而 `Chunk.chunk_index` 本来就带着自己的位置。
+  这份冗余映射还是跨代错位的来源：索引换代的瞬间查表会得到 -1，
+  引用在页面上就「点不开」。`_cite` 因此也不必再持锁。
+
+- **依赖注入改用 dataclass**（`src/handlers/app.py` 的 `AppDeps`）
+  原来是 `SimpleNamespace`：拼错字段名不报错，只在运行时 `AttributeError`，
+  症状是「某个接口 500」，离出错的地方隔着几层调用。36 个字段现在构造时校验。
+
+### 新增门禁（防止再长回去）
+
+- **`tests/test_size.py`**：函数长度硬上限 200 行（白名单只留 `report.render`
+  与 `notes.contract.notes_paths`，都是单条模板/数据字面量），超过 120 行打印提示。
+  `report.render` 从 363 拆到 217 之后两个版本又长回 215——人工 review 盯不住长度，
+  因为它每次只多几行。
+- **`tests/test_contract.py`**：OpenAPI 契约与 `dispatch` 的双向比对，
+  外加每条路由真跑一次。上一版漏登记了 `/export`、`/rebuild`、`/assets` 三个端点，
+  文档看起来完整、实际调不通的接口反而没人知道。
+- **`tests/test_post_dispatch.py`**：`do_POST` 白名单里的每条路径都必须被分派命中，
+  且不许存在从不被调用的处理方法（死代码会让人以为它还在生效）。
+
+### 安全
+
+- **`origin_allowed` 连端口一起比**（`src/security.py`）
+  `http://localhost:9999` 与 `:8011` 主机名相同、端口不同，是两个源。
+  `ALLOWED_HOSTS` 里的域名不按端口比：反代通常把 443 改写成内部端口，硬比会挡住正常部署。
+  兜底的 `X-Jiyi-Client` 仍在，但它不该是唯一依据。
+
+- **`GET /api/settings` 在配了 Key 时脱敏**（`src/handlers/common.py::redact_settings`）
+  这个接口是 open 级（Key 配错时的回退通道），回退只需要知道配置长什么样，
+  不需要家目录、MCP 配置里的绝对路径——那会连用户名一起交出去。
+  开放模式（没配 Key）不脱敏：单机自用，设置页要显示路径。
+
+- **审计日志对证件类数字打码**（`src/guards.py::AuditLog.mask_pii`）
+  手机号/身份证/卡号保留前 3 后 4，其余打码。审计是为追责与排查，
+  但用户可能整段粘贴含身份证的问题；明文落盘之后这份日志就得按凭证级别对待。
+  `trace.jsonl` 不动：那份数据用于评测，改了就重现不了模型看到什么。
+
+### 性能与可观测
+
+- **`CostBudget.add` 不再每次持锁写盘**（`src/guards.py`）
+  原来每个问答请求一次 `_atomic_write`（建临时文件 + replace），并发问答被这把锁串行。
+  现在内存计数 + 节流落盘（≥1 秒或累计 50 次），`flush()` 供退出与断言使用；
+  **超限那一刻强制落盘**——否则重启后用量归零，日上限形同不存在。
+
+- **流式回答加总时长上限**（`src/generator.py`，`LLM_STREAM_MAX_S` 默认 180 秒）
+  `urlopen(timeout=)` 管的是「socket 空闲多久算超时」，不是「总共能花多久」。
+  模型只要每几秒吐一个 token 就能拖十几分钟，占着线程与 SSE 名额。
+
+- **`rebuild` 报出被跳过的笔记**（`src/notes/search.py`）
+  读不出来的笔记原来直接 `continue`，用户在结果里看不到「有 3 篇没进索引」，
+  而下次搜索它们永远不出现、提示里一切正常。响应里新增 `skipped`。
+
+- **`_total_bytes` 补上 `assets`**（`src/handlers/app.py`）
+  1.26.0 加了附件目录但这里漏了，导致「清理前看到 200 MB、清理后还是 200 MB」。
+  当前结果其实仍正确（两边都漏），但语义已经错了。
+
+### 测试
+
+新增 `tests/test_size.py`、`tests/test_contract.py`、`tests/test_post_dispatch.py`；
+`test_guards` 补成本节流与 PII 打码、`test_settings_ops` 补路径脱敏、
+`test_notes_search` 补 `skipped` 计数、`test_security` 补端口不匹配与反代两种情形。
+59 个测试脚本全绿，`eval_run` 26/26，`check_frontend` 37/0。
+
+## [1.26.1] - 2026-10-31
+
+一次代码审查的 P0/P1 收口：两条会造成数据错乱或 500 的并发缺陷、两项入口加固、
+一次机械清理。没有新功能，但有三处**可见的行为变化**（见本节末尾）。
+
+### 修复
+
+- **关键词命中跨代引用，整次问答 500**（`src/pipeline.py`）
+  `_prepare` 里 `self.keywords` 被读了两次（`match_report` 一次、按 `chunk_index`
+  取原文一次），中间没有锁。`rebuild_keywords` 恰好在这两次之间完成替换，
+  第二次拿到的就是新索引，`chunk_index` 越界抛 `IndexError`——而那一行在 `try`
+  之外，异常直接冒到协议层，客户端只看到连接被掐断。
+  改成一次取局部快照；真检测到不同代时**放弃直出、退回检索**并写 `keyword_stale`。
+  给出「有答案、引用点不开」的结果比慢一点糟得多。
+
+- **索引换代时关键词重建会覆盖新索引**（`src/pipeline.py:rebuild_keywords`）
+  `enrich=True` 要走模型，可能几秒；这期间全量重建可能已经把 `chunks` 整代换掉，
+  旧代的关键词盖上去之后，每次命中都会用错位的 `chunk_index`。
+  改成先拿 `chunks` 快照、锁外构造、替换前核对还是不是同一代；换代了就丢弃，
+  返回 `skipped: index_rebuilt` 并计数。
+
+- **知识库写锁的陈旧清理与释放都可能误删别人的锁**（`src/kbstore.py`、新增 `src/locks.py`）
+  「判定 mtime > 30 秒 → 直接 `os.remove`」有竞态窗口：A 判定的同一瞬间 B 释放并重建，
+  A 删掉的是 B 的新锁，随后两个进程同时写版本目录。`__exit__` 同理——自己那把
+  要是已被判旧挪走，`path` 上是别人的新锁，删了等于替对方开锁。
+  改成「先改名（原子）→ 核对 `(inode, mtime_ns)` → 对得上才删」，
+  释放前也核对自己那份。笔记锁（`src/notes/store.py`）本来就是这个写法，
+  现在两处共用同一份实现。阈值从 30 秒提到 120 秒并可用 `KB_LOCK_STALE_S` 调整：
+  一次万级文件的大版本写入叠加杀软扫描可能超过 30 秒。
+
+- **模型探测接口是 SSRF 入口**（`src/settings_ops.py`）
+  `base_url` 完全由调用方给，原来只做了 `rstrip("/")`：没有协议白名单、
+  跟随 3xx 重定向、走系统代理。填一个正常域名 302 到 `169.254.169.254`
+  就能把「测试连接」当内网探测器。现在只接受 `http`/`https`、
+  **不跟随重定向**，并加 `PROBE_ALLOW_PRIVATE`（默认 `1`，放行本地 ollama；
+  对外部署设 `0` 拒绝本机/内网/链路本地）。
+
+- **`/api/ask` 的免 Key 范围过宽**（`src/handlers/base.py`）
+  写成 `not path.startswith("/api/ask")` 等于给未来所有 `/api/ask*` 预开后门——
+  新加一个没做 preflight 的 `/api/ask-batch` 就是裸接口。改成逐个列名
+  （`/api/ask`、`/api/ask/stream`）。
+
+### 清理
+
+- 删掉 262 处未使用导入（`src/handlers/` 五个文件各 40–60 处，拆分 `server.py`
+  时整份 import 头被复制了五遍）。`ruff check src/ --select F401` 现在零告警。
+
+### 行为变化
+
+1. `POST /api/settings/test` 新增错误码 `bad_url`（协议/主机名不合法）与
+   `private_host`（`PROBE_ALLOW_PRIVATE=0` 时命中内网）；3xx 现在报
+   `http_301/302/307/308` 并提示「地址发生了重定向」，不再静默跟随。
+2. 陈旧锁阈值 30 秒 → 120 秒；`KB_LOCK_STALE_S` 可覆盖。
+3. 关键词命中与索引不同代时不再直出，返回里多一个 `keyword_stale` 计数，
+   答案改走正常检索（可能慢一点，但引用完整）。
+
+### 测试
+
+新增 `tests/test_index_swap.py`：伪造跨代命中验证「退回检索而不是 500」、
+验证 `rebuild_keywords` 的换代丢弃、验证文件锁释放时不误删别人的锁。
+`tests/test_settings_ops.py` 补 8 条探测入口用例（含「302 不跟随」），
+`tests/test_auth_openapi.py` 补一条「同前缀新路径不再被 ask 豁免」。
+55 个测试脚本全绿，`eval_run` 26/26，`check_frontend` 37/0。
+
 ## [1.26.0] - 2026-10-30
 
 ROADMAP #13：笔记能挂附件了。`assets/` 目录在存储区契约里写了很久，

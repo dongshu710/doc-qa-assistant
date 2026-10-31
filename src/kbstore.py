@@ -35,6 +35,8 @@ import shutil
 import time
 from datetime import datetime, timezone
 
+from . import locks
+
 ALLOWED_EXT = (".md", ".txt")
 
 
@@ -70,12 +72,21 @@ def _safe_name(name: str) -> str:
 
 
 class _FileLock:
-    """跨进程互斥：O_EXCL 创建锁文件，超时 5s；30s 未释放视为残留。"""
+    """跨进程互斥：O_EXCL 创建锁文件，超时 5s；超过阈值未释放视为残留。
+
+    两处清理都必须是原子的（`locks.break_stale` 的做法）：
+    「判定陈旧 → 直接 remove」有个窗口——A 判定的同一瞬间 B 释放并重建，
+    A 删掉的是 B 的新锁，随后 A、B 同时写版本目录。
+    释放同理：只删身份对得上的那份，自己那把要是已被判旧挪走，
+    此刻 path 上的是别人的新锁，删了就是替对方开锁。
+    """
 
     def __init__(self, path: str, timeout_s: float = 5.0):
         self.path = path
         self.timeout_s = timeout_s
+        self.stale_s = locks.stale_threshold("KB_LOCK_STALE_S")
         self._fd: int | None = None
+        self._identity: tuple[int, int] | None = None
 
     def __enter__(self):
         deadline = time.monotonic() + self.timeout_s
@@ -84,15 +95,10 @@ class _FileLock:
             try:
                 self._fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 os.write(self._fd, str(os.getpid()).encode("ascii"))
+                self._identity = locks.identity(self.path)
                 return self
             except FileExistsError:
-                try:
-                    age = time.time() - os.path.getmtime(self.path)
-                    if age > 30:
-                        os.remove(self.path)
-                        continue
-                except OSError:
-                    pass
+                locks.break_if_stale(self.path, self.stale_s, is_dir=False)
                 if time.monotonic() >= deadline:
                     raise KnowledgeError("知识库正被其他进程修改，请稍后重试")
                 time.sleep(0.05)
@@ -103,10 +109,12 @@ class _FileLock:
                 os.close(self._fd)
             finally:
                 self._fd = None
-        try:
-            os.remove(self.path)
-        except OSError:
-            pass
+        if self._identity is not None and locks.identity(self.path) == self._identity:
+            try:
+                os.remove(self.path)
+            except OSError:
+                pass
+        self._identity = None
         return False
 
 

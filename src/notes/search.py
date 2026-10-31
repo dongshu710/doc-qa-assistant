@@ -399,19 +399,26 @@ class NoteSearcher:
         return Outcome(scores=scores, lexical=lexical, semantic=semantic_scores, mode=mode,
                        degraded=degraded, indexed=indexed, pending=pending, total=len(docs))
 
-    def rebuild(self, wanted: list[dict], want_vec: bool = True) -> tuple[int, str]:
+    def rebuild(self, wanted: list[dict], want_vec: bool = True) -> tuple[int, str, int]:
         """全量重建：把已有索引作废，逐条重算。`note rebuild` 命令走这里。
 
         只有这里会真正清理残留行——它拿到的 `wanted` 是全量笔记，而不是某次查询的候选集。
+
+        返回第三个值是「读不出来、被跳过」的篇数。原来这里直接 `continue`，
+        用户在结果里看不到「有 3 篇没进索引」，下次搜索它们永远不出现，
+        而提示里一切正常——违反「失败必须可见」。
         """
         rows: dict[str, dict] = {}
         stale: list[tuple[dict, dict]] = []
+        skipped = 0
         for entry in wanted:
             try:
                 text = self._docs_provider(entry)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 —— 单篇坏文件不该让整次重建失败
+                skipped += 1
                 continue
             if not text:
+                skipped += 1
                 continue
             note_id = str(entry["id"])
             rows[note_id] = {"id": note_id, "mtime_ns": entry.get("mtime_ns"),
@@ -423,7 +430,7 @@ class NoteSearcher:
             _, degraded = self._embed_into(stale, rows,
                                            budget_s=_env_float("NOTE_SEARCH_REBUILD_BUDGET_S", 600.0))
         self._flush(rows)
-        return len(rows), degraded
+        return len(rows), degraded, skipped
 
 
 def _fuse(lexical: dict[str, float], semantic: dict[str, float]) -> dict[str, float]:

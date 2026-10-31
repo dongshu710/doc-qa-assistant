@@ -83,8 +83,11 @@ class RAGPipeline:
         self._corpus_cache: dict[str, tuple] = {}
         self._parsed_docs = 0
         self._reused_docs = 0
-        # 索引替换必须成组：chunks 与 _chunk_pos 是配对读取的，分开赋值会让
-        # 正在飞的引用定位到 -1。构建在锁外，只有替换在锁内。
+        # 索引替换必须成组：chunks / retriever / keywords 是配对读的，分开赋值会让
+        # 正在飞的查询看到「新 chunks + 旧 retriever」。构建在锁外，只有替换在锁内。
+        # 原来还有一份 `_chunk_pos`（id(chunk) → 位置）需要一起换；后来发现
+        # `Chunk.chunk_index` 本来就带着自己的位置，那份映射纯属冗余且是跨代
+        # 错位的来源，已删除。
         self._swap_lock = threading.RLock()
         self._build_lock = threading.Lock()
         self._rebuild_lock = threading.RLock()
@@ -98,7 +101,6 @@ class RAGPipeline:
         if not self.chunks:
             raise ValueError("知识库为空，无法启动")
         self._rebuild["chunks"] = len(self.chunks)
-        self._chunk_pos = {id(chunk): i for i, chunk in enumerate(self.chunks)}
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.project_root = root
         self.log_path = os.path.join(root, "logs", "trace.jsonl")
@@ -152,10 +154,11 @@ class RAGPipeline:
 
     @property
     def keyword_detail(self) -> dict:
-        detail = self.keywords.describe()
+        index = self.keywords      # describe() 与 last_error 必须来自同一个对象
+        detail = index.describe()
         detail["mode"] = self.settings.keyword_mode
         detail["llm_mode"] = self.settings.keyword_llm
-        detail["error"] = self.keywords.last_error
+        detail["error"] = index.last_error
         return detail
 
     @property
@@ -273,8 +276,13 @@ class RAGPipeline:
         # 只对结构化条目生效（清单/表格/标签/显式关键词），标题与普通词不在此列。
         # 命中后还要过否定、极性、解释型意图、单文档四道闸门；被挡下的原因写入 trace。
         if self.settings.keyword_mode != "off" and not force_extractive:
+            # 一次取定：`rebuild_keywords` 会在另一个线程里替换 self.keywords。
+            # 原来这里读一次、下面组装引用时再读一次，中间被换掉就会出现
+            # 「report 来自旧索引、chunks 来自新索引」——chunk_index 越界直接 IndexError，
+            # 而那一行在 try 之外，整次问答变成 500。局部变量把两半钉在同一代。
+            kw_index = self.keywords
             try:
-                report = self.keywords.match_report(clean)
+                report = kw_index.match_report(clean)
             except Exception as exc:  # noqa: BLE001 —— 关键词匹配失败就退回正常检索
                 report = None
                 result["keyword_error"] = f"{type(exc).__name__}: {exc}"[:200]
@@ -286,9 +294,16 @@ class RAGPipeline:
                 # 同一条原文只算一次：引用编号必须与答案里的 [n] 一致
                 kw_hits = KeywordIndex.merge(report.hits)
                 if kw_hits:
+                    kw_chunks = kw_index.chunks
+                    if not all(0 <= h.entry.chunk_index < len(kw_chunks) for h in kw_hits):
+                        # 命中与索引不同代（重建恰好插在 match_report 与这里之间）。
+                        # 退回正常检索：给出「有答案、引用点不开」的结果，比慢一点糟得多。
+                        result["keyword_stale"] = len(kw_hits)
+                        kw_hits = []
+                if kw_hits:
                     citations, retrieved = [], []
                     for i, hit in enumerate(kw_hits, 1):
-                        chunk = self.keywords.chunks[hit.entry.chunk_index]
+                        chunk = kw_chunks[hit.entry.chunk_index]
                         citations.append(self._cite(chunk, i, KeywordIndex.snippet(hit)))
                         retrieved.append({"title": chunk.title, "section": chunk.section,
                                           "doc_id": chunk.doc_id,
@@ -489,7 +504,7 @@ class RAGPipeline:
         result["citation_support_rate"] = support["rate"]
         result["retrieved"] = [
             {"title": c.title, "section": c.section, "doc_id": c.doc_id,
-             "chunk_index": self._chunk_pos.get(id(c), -1), "score": round(s, 3)}
+             "chunk_index": c.chunk_index, "score": round(s, 3)}
             for c, s in hits
         ]
         return self._finish(result, ctx["t0"])
@@ -512,9 +527,6 @@ class RAGPipeline:
 
     def _swap_index(self, knowledge_dir: str, chunks, retriever, keywords) -> int:
         with self._swap_lock:
-            # 先算好新映射，再一次性换掉引用，缩小 chunks/pos 不一致的窗口
-            pos = {id(chunk): i for i, chunk in enumerate(chunks)}
-            self._chunk_pos = pos
             self.chunks = chunks
             self.vocabulary = _build_vocabulary(chunks)
             self.retriever = retriever
@@ -589,31 +601,47 @@ class RAGPipeline:
         return state
 
     def rebuild_keywords(self, enrich: bool = True) -> dict:
-        """只重建关键词（不动检索索引）；enrich=True 时对变更文档做一次模型整理。"""
-        self.keywords = self._make_keywords(self.chunks, enrich=enrich)
+        """只重建关键词（不动检索索引）；enrich=True 时对变更文档做一次模型整理。
+
+        enrich 要走模型，可能几秒；这期间全量重建可能把 chunks 整代换掉。
+        所以先拿 chunks 快照、在锁外构造，替换前核对还是不是同一代：
+        把旧代的关键词盖到新索引上，之后每次命中都会用错位的 chunk_index，
+        比不重建糟得多。换代了就丢弃，并如实报 skipped。
+        """
+        chunks = self.chunks
+        keywords = self._make_keywords(chunks, enrich=enrich)
+        with self._swap_lock:
+            if self.chunks is not chunks:
+                self._rebuild["keywords_skipped"] = int(self._rebuild.get("keywords_skipped") or 0) + 1
+                return {**self.keyword_detail, "skipped": "index_rebuilt"}
+            self.keywords = keywords
         return self.keyword_detail
 
     def _cite(self, chunk, ref: int, snippet: str = "") -> dict:
-        """引用必须能回到原文：带 doc_id / chunk_index，前端可据此打开原文抽屉。"""
-        with self._swap_lock:
-            return {
-                "ref": ref, "title": chunk.title, "section": chunk.section,
-                "doc_id": chunk.doc_id,
-                "chunk_index": self._chunk_pos.get(id(chunk), -1),
-                "snippet": snippet,
-            }
+        """引用必须能回到原文：带 doc_id / chunk_index，前端可据此打开原文抽屉。
+
+        位置直接取 `chunk.chunk_index`：块自己带着它在生成时的位置，读对象属性是
+        原子的，不需要再持锁查一份映射——那份映射反而会在索引换代的瞬间给出 -1。
+        """
+        return {
+            "ref": ref, "title": chunk.title, "section": chunk.section,
+            "doc_id": chunk.doc_id,
+            "chunk_index": chunk.chunk_index,
+            "snippet": snippet,
+        }
 
     def source_chunk(self, doc_id: str, chunk_index: int) -> dict | None:
         """按引用定位原文；只接受当前索引里真实存在的块，不做文件路径拼接。"""
-        if not (0 <= chunk_index < len(self.chunks)):
+        chunks = self.chunks      # 取一次：定位与 doc_chunks 计数必须是同一代
+        if not (0 <= chunk_index < len(chunks)):
             return None
-        chunk = self.chunks[chunk_index]
+        chunk = chunks[chunk_index]
         if chunk.doc_id != doc_id:
             return None
         return {
             "doc_id": chunk.doc_id, "title": chunk.title, "section": chunk.section,
             "chunk_index": chunk_index, "text": chunk.text,
-            "doc_chunks": sum(1 for c in self.chunks if c.doc_id == doc_id),
+            "doc_chunks": sum(1 for c in chunks if c.doc_id == doc_id),
         }
 
     def _finish(self, result: dict, t0: float) -> dict:

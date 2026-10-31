@@ -4,52 +4,16 @@
 """
 from __future__ import annotations
 
-import base64
-import binascii
 import gzip
 import hashlib
 import json
 import os
-import pathlib
-import queue
-import re
-import shutil
-import subprocess
-import sys
-import tempfile
 import threading
-import time
-import traceback
-import urllib.error
-import urllib.request
-import uuid
-from collections import Counter
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
-                routing, security, settings_ops, suggest)
-from .. import update as update_mod
-from ..auth import ApiKeyStore, safe_equal
-from ..config import api_key, load_settings
-from ..guards import Guards
-from ..metrics import summarize
-from ..metrics_exporter import Metrics
-from ..notes.api import ApiError
-from ..notes.api import dispatch as notes_dispatch
-from ..notes.service import NoteService
-from ..notes.tools import tools_payload as notes_tools_payload
-from ..openapi import build_spec
-from ..pipeline import RAGPipeline
-from ..theme import FILES_PAGE
-from ..threadstore import ThreadError, ThreadStore
-from ..version import __version__
-from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
-                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
-                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
-                     _safe_doc_name, _safe_kb_name)
+from .. import (routing, security)
+from ..auth import safe_equal
 
 # SSE 是长连接，一条流就占住一个请求线程。BoundedHTTPServer 总共 64 个线程，
 # 几个挂死/半死的流就能把服务拖到不响应。所以单独限流：超过就回 429，
@@ -57,6 +21,11 @@ from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYT
 _SSE_LOCK = threading.Lock()
 _SSE_ACTIVE = 0
 _SSE_LIMIT = max(1, int(os.environ.get("MCP_SSE_MAX_CONN", "4") or 4))
+
+# 这两个写接口的 Key 校验在 `_ask_preflight` 里做（还要记账、限流、算 session），
+# 所以在 `_write_gate` 里放行。必须逐个列名：按前缀放过等于给未来所有
+# `/api/ask*` 预开了后门。
+ASK_PATHS_NO_KEY_GATE = frozenset({"/api/ask", "/api/ask/stream"})
 
 
 def sse_acquire() -> bool:
@@ -365,9 +334,12 @@ def make_base(deps):
                            415 if reason == "content_type" else 403)
                 return True
             # 表里登记为 api 的写接口，配了 Key 就必须带。
-            # `/api/ask*` 例外：它在 `_ask_preflight` 里鉴权，那里还要记账与限流，
-            # 提前拦会让审计日志少一半信息。
-            if routing.level_for(path) == routing.API and not path.startswith("/api/ask"):
+            # `/api/ask` 与 `/api/ask/stream` 例外：它们在 `_ask_preflight` 里鉴权，
+            # 那里还要记账与限流，提前拦会让审计日志少一半信息。
+            # 必须列全名而不是按前缀放过：写成 startswith("/api/ask") 的话，
+            # 将来新加一个没做 preflight 的 `/api/ask-batch` 就是裸接口。
+            if (routing.level_for(path) == routing.API
+                    and path not in ASK_PATHS_NO_KEY_GATE):
                 return self._require_key(path, "write.unauthorized")
             return False
         def _presented_key(self) -> str:

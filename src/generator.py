@@ -4,6 +4,7 @@
 上线时只需注入 LLM_API_KEY（或 DEEPSEEK_API_KEY）即切换为真实大模型生成，其余链路不变。
 """
 import json
+import os
 import random
 import re
 import time
@@ -173,6 +174,21 @@ def _call_llm(query: str, hits, model: str | None = None, history=None) -> tuple
     return chat(build_messages(query, hits, history), temperature=0.1, model=model)
 
 
+def _stream_budget_s(default: float = 180.0) -> float:
+    """流式回答的总时长上限。
+
+    `urlopen(timeout=)` 管的是「socket 空闲多久算超时」，不是「总共能花多久」。
+    模型只要每几秒吐一个 token，就能让一次请求拖上十几分钟，占着线程与 SSE 名额。
+    这里给整条流一个总预算，超了就抛错、由调用方降级为抽取式。
+    """
+    raw = (os.environ.get("LLM_STREAM_MAX_S") or "").strip()
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | None = None,
                 timeout_s: float | None = None, usage_out: dict | None = None):
     """OpenAI 兼容的流式对话：逐段 yield 文本增量。
@@ -197,8 +213,12 @@ def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | Non
         method="POST",
     )
     saw_done = False
+    budget = _stream_budget_s()
+    deadline = time.monotonic() + budget
     with urllib.request.urlopen(req, timeout=timeout_s or settings.llm_timeout_s) as resp:
         for raw in resp:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"流式响应超过 {int(budget)} 秒上限")
             line = raw.decode("utf-8", errors="replace").strip()
             if not line or line.startswith(":") or not line.startswith("data:"):
                 continue

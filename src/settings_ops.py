@@ -9,16 +9,61 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import shutil
+import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PROBE_TIMEOUT_S = 15
+_ALLOWED_SCHEMES = ("http", "https")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """探测不跟随重定向。
+
+    跟随的话，填一个看似正常、实际 302 到 169.254.169.254 或内网地址的
+    base_url，就能把「测试连接」当成内网探测跳板。测试连接只需要知道对面
+    通不通，3xx 本身就说明地址填错了，直接在结果里说清即可。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _host_is_private(host: str) -> bool:
+    """解析出的任一地址落在本机/内网/链路本地就视为私网。"""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            return True
+    return False
+
+
+def _private_probe_allowed() -> bool:
+    """默认允许私网：本地 ollama / vLLM 就是 127.0.0.1，一刀切会把它废掉。
+
+    对外部署（配了 ALLOWED_HOSTS、不再只绑回环）时应设 PROBE_ALLOW_PRIVATE=0，
+    否则「测试连接」就是个可用的内网探测器。
+    """
+    raw = (os.environ.get("PROBE_ALLOW_PRIVATE") or "1").strip().lower()
+    return raw not in ("0", "off", "false", "no")
 
 
 def probe_llm(base_url: str, model: str, api_key: str, timeout_s: float = PROBE_TIMEOUT_S) -> dict:
@@ -26,12 +71,22 @@ def probe_llm(base_url: str, model: str, api_key: str, timeout_s: float = PROBE_
 
     用户点「测试」要的是结论，不是重试次数，所以只打一次：
     重试会让等待翻倍，而 401/404 这类错误重试也不会变对。
+
+    这条路径的入参完全由调用方给，所以三件事必须自己做：协议白名单、
+    不跟随重定向、可选封禁私网。少了任何一条，它就是个内网探测接口。
     """
     base = str(base_url or "").rstrip("/")
     model = str(model or "")
     key = str(api_key or "")
     if not key:
         return {"ok": False, "error": "no_key", "message": "还没填密钥"}
+    parsed = urllib.parse.urlsplit(base)
+    if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+        return {"ok": False, "error": "bad_url",
+                "message": "地址要以 http:// 或 https:// 开头，并带上主机名"}
+    if not _private_probe_allowed() and _host_is_private(parsed.hostname):
+        return {"ok": False, "error": "private_host",
+                "message": "PROBE_ALLOW_PRIVATE 已关闭，不允许探测本机或内网地址"}
     payload = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": "ping"}],
@@ -43,11 +98,15 @@ def probe_llm(base_url: str, model: str, api_key: str, timeout_s: float = PROBE_
     req.add_header("Authorization", f"Bearer {key}")
     started = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        with _NO_REDIRECT_OPENER.open(req, timeout=timeout_s) as resp:
             resp.read()
         return {"ok": True, "latency_ms": int((time.monotonic() - started) * 1000)}
     except urllib.error.HTTPError as exc:
-        hint = {401: "密钥无效或没有权限", 403: "密钥无权访问该模型",
+        hint = {301: "地址发生了重定向，请直接填最终地址",
+                302: "地址发生了重定向，请直接填最终地址",
+                307: "地址发生了重定向，请直接填最终地址",
+                308: "地址发生了重定向，请直接填最终地址",
+                401: "密钥无效或没有权限", 403: "密钥无权访问该模型",
                 404: "地址不对：应填到 /v1 这一层，不要带 /chat/completions",
                 429: "触发限流，稍后再试或换 Key"}.get(exc.code, "接口返回错误")
         return {"ok": False, "error": f"http_{exc.code}", "message": f"{hint}（HTTP {exc.code}）"}

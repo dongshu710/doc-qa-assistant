@@ -80,3 +80,58 @@ def _read_jsonl(path: str, limit: int) -> list[dict]:
     return jsonl.tail_json(path, max(1, int(limit)))
 
 
+def redact_path(value) -> str:
+    """把绝对路径压成 `…/末级`，只保留「指的是哪个目录」。
+
+    路径本身不是密钥，但它暴露用户名与目录结构。`/api/settings` 是开放接口
+    （Key 配错时的回退通道），对外部署时没必要顺手把家目录也交出去。
+    """
+    text = str(value or "")
+    if not text:
+        return ""
+    parts = [seg for seg in text.replace("\\", "/").split("/") if seg and seg != "."]
+    if len(parts) <= 1:
+        return text
+    return "…/" + parts[-1]
+
+
+def _looks_absolute(value: str) -> bool:
+    return os.path.isabs(value) or (len(value) > 1 and value[1] == ":")
+
+
+def redact_settings(payload: dict) -> dict:
+    """配了 API_KEYS 又没带有效 Key 时，把设置回包里的绝对路径收起来。
+
+    深拷贝一份再改：`_settings_payload()` 的结果会同时被审计写入用到，
+    原地改会让同一份数据两处不一致。
+    """
+    out = json.loads(json.dumps(payload, ensure_ascii=False))
+    notes = out.get("notes")
+    if isinstance(notes, dict):
+        for key in ("home_effective", "home_default"):
+            if notes.get(key):
+                notes[key] = redact_path(notes[key])
+    for key in ("config_path", "config_backup"):
+        if out.get(key):
+            out[key] = redact_path(out[key])
+    for target in out.get("mcp_targets") or []:
+        if isinstance(target, dict) and target.get("path"):
+            target["path"] = redact_path(target["path"])
+    storage = out.get("storage")
+    if isinstance(storage, dict):
+        for item in storage.values():
+            if isinstance(item, dict) and item.get("path"):
+                item["path"] = redact_path(item["path"])
+    servers = ((out.get("mcp") or {}).get("config") or {}).get("mcpServers") or {}
+    for server in servers.values():
+        if not isinstance(server, dict):
+            continue
+        if isinstance(server.get("command"), str) and _looks_absolute(server["command"]):
+            server["command"] = redact_path(server["command"])
+        for key, value in list((server.get("env") or {}).items()):
+            if isinstance(value, str) and _looks_absolute(value):
+                server["env"][key] = redact_path(value)
+    out["redacted"] = True
+    return out
+
+

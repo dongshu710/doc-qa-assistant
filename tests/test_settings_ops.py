@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -61,6 +62,40 @@ def start_fake(status: int) -> tuple[ThreadingHTTPServer, str]:
     return httpd, f"http://127.0.0.1:{httpd.server_address[1]}/v1"
 
 
+class RedirectLLM(BaseHTTPRequestHandler):
+    """302 到 /elsewhere。探测不该跟过去——跟了就是可用的 SSRF 跳板。"""
+
+    protocol_version = "HTTP/1.1"
+    hit_target = False
+
+    def do_POST(self):  # noqa: N802
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length:
+            self.rfile.read(length)
+        if self.path.endswith("/elsewhere"):
+            RedirectLLM.hit_target = True
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(302)
+        self.send_header("Location", "/elsewhere")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def start_redirect() -> tuple[ThreadingHTTPServer, str]:
+    RedirectLLM.hit_target = False
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), RedirectLLM)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return httpd, f"http://127.0.0.1:{httpd.server_address[1]}/v1"
+
+
 def main() -> int:
     print("probe_llm")
     check("没填密钥直接拒绝", settings_ops.probe_llm("http://127.0.0.1:1/v1", "m", "")["error"] == "no_key")
@@ -90,6 +125,28 @@ def main() -> int:
 
     dead = settings_ops.probe_llm("http://127.0.0.1:9/v1", "demo", "sk-x", timeout_s=2)
     check("连不上归为网络错误", dead["error"] == "network", str(dead))
+
+    print("probe_llm 的入口校验（这条路径入参完全由调用方给）")
+    for bad in ("file:///etc/passwd", "ftp://x/v1", "127.0.0.1:8000/v1", ""):
+        got = settings_ops.probe_llm(bad, "demo", "sk-x")
+        check(f"拒收非 http(s) 地址 {bad or '(空)'}", got["error"] == "bad_url", str(got))
+
+    httpd, base = start_redirect()
+    try:
+        got = settings_ops.probe_llm(base, "demo", "sk-x", timeout_s=5)
+        check("302 不跟随", RedirectLLM.hit_target is False, "跟到了 /elsewhere")
+        check("302 报成地址问题", got["error"] == "http_302", str(got))
+        check("302 提示可读", "重定向" in got["message"], got["message"])
+    finally:
+        httpd.shutdown()
+
+    os.environ["PROBE_ALLOW_PRIVATE"] = "0"
+    try:
+        got = settings_ops.probe_llm("http://127.0.0.1:1/v1", "demo", "sk-x")
+        check("关掉后不探测本机/内网", got["error"] == "private_host", str(got))
+    finally:
+        os.environ.pop("PROBE_ALLOW_PRIVATE", None)
+    check("默认仍允许本地 ollama", settings_ops._private_probe_allowed() is True)
 
     print("count_notes / copy_notes")
     tmp = Path(tempfile.mkdtemp(prefix="ops-"))
@@ -154,6 +211,35 @@ def main() -> int:
     import inspect
     params = list(inspect.signature(settings_ops.mcp_targets).parameters)
     check("签名里没有可注入的任意路径", "path" not in params, str(params))
+
+    print("设置回包的路径脱敏")
+    from src.handlers.common import redact_path, redact_settings
+    check("Windows 路径压成末级",
+          redact_path(r"C:\Users\bob\agent-notes") == "…/agent-notes",
+          redact_path(r"C:\Users\bob\agent-notes"))
+    check("POSIX 路径压成末级", redact_path("/home/bob/notes") == "…/notes",
+          redact_path("/home/bob/notes"))
+    check("空值返回空", redact_path("") == "")
+    payload = {
+        "ok": True,
+        "notes": {"home_effective": r"C:\Users\bob\agent-notes",
+                  "home_default": r"C:\Users\bob\agent-notes"},
+        "config_path": r"C:\Users\bob\AppData\Roaming\jiyi\app.json",
+        "mcp_targets": [{"id": "claude", "path": r"C:\Users\bob\AppData\Claude\x.json"}],
+        "storage": {"notes": {"path": r"C:\Users\bob\agent-notes\notes", "bytes": 1}},
+        "mcp": {"config": {"mcpServers": {"agent-notes": {
+            "command": r"C:\Python313\python.exe", "args": ["-m", "src.notes.mcp_server"],
+            "env": {"PYTHONPATH": r"D:\proj", "NOTE_HOME": r"C:\Users\bob\agent-notes"}}}}},
+    }
+    redacted = redact_settings(payload)
+    dumped = json.dumps(redacted, ensure_ascii=False)
+    check("标记为已脱敏", redacted.get("redacted") is True)
+    check("用户名不再出现", "bob" not in dumped, dumped[:200])
+    check("只保留末级目录", "agent-notes" in dumped and "Users" not in dumped, dumped[:200])
+    check("MCP 的 env 里的绝对路径也压掉", "D:/proj" not in dumped and "…/proj" in dumped,
+          dumped[-200:])
+    check("原对象未被就地修改",
+          "bob" in payload["notes"]["home_effective"], payload["notes"]["home_effective"])
 
     print(f"\n{passed} 项通过，{len(failures)} 项失败")
     if failures:

@@ -17,7 +17,6 @@ import os
 import sys
 
 from .handlers.app import build_app
-from .http_server import BoundedHTTPServer
 
 
 def create_server(host: str, port: int, knowledge_dir: str | None = None):

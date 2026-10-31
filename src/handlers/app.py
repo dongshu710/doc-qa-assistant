@@ -6,60 +6,85 @@
 """
 from __future__ import annotations
 
-import base64
-import binascii
-import gzip
-import hashlib
-import json
+from dataclasses import dataclass
+from typing import Any
+
 import os
 import pathlib
-import queue
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import traceback
-import urllib.error
-import urllib.request
-import uuid
-from collections import Counter
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
 
-from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
-                routing, security, settings_ops, suggest)
+from .. import (appconfig, kbstore,
+                settings_ops)
 from .. import update as update_mod
-from ..auth import ApiKeyStore, safe_equal
+from ..auth import ApiKeyStore
 from ..config import api_key, load_settings
 from ..guards import Guards
-from ..metrics import summarize
 from ..metrics_exporter import Metrics
-from ..notes.api import ApiError
-from ..notes.api import dispatch as notes_dispatch
 from ..notes.service import NoteService
-from ..notes.tools import tools_payload as notes_tools_payload
-from ..openapi import build_spec
 from ..pipeline import RAGPipeline
-from ..theme import FILES_PAGE
-from ..threadstore import ThreadError, ThreadStore
 from ..version import __version__
-from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
-                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
-                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
-                     _safe_doc_name, _safe_kb_name)
-
-from types import SimpleNamespace
+from .common import (_knowledge_dir, _raw_dir)
 
 from ..http_server import BoundedHTTPServer
 from .base import make_base
 from .read import make_read
 from .resources import make_resources
 from .write import make_write
+
+
+@dataclass
+class AppDeps:
+    """组合根传给各路由模块的依赖。
+
+    原来是 `SimpleNamespace`：拼错一个字段名不会报错，只在运行时 AttributeError，
+    而症状是「某个接口 500」——离出错的地方隔着几层调用。dataclass 在构造时
+    就校验全部字段，少给一个立即 TypeError，拼错一个也立即 TypeError。
+
+    带前导下划线的几个是被各模块当函数直接调用的闭包（`_reopen_notes` 等），
+    与普通数据字段放在一起是历史原因，不是刻意区分。
+    """
+
+    project_root: str
+    settings: Any
+    metrics: Any
+    pipe: Any
+    store: Any
+    log_dir: str
+    guards: Any
+    api_keys: Any
+    note_ref: dict
+    feedback_path: str
+    feedback_cases_path: str
+    doc_cases_path: str
+    run_report_path: str
+    raw_dir: str
+    kb_dir: str
+    async_reload: bool
+    reload_kb: Any
+    index_payload: Any
+    index_fields: Any
+    _reopen_notes: Any
+    _repo_url: Any
+    _downloads: Any
+    _mcp_config: Any
+    _probe_llm: Any
+    _storage_report: Any
+    _clear_index: Any
+    _total_bytes: Any
+    _settings_payload: Any
+    _runtime_warnings: Any
+    _setup_state: Any
+    _apply_setup: Any
+    _mcp_targets: Any
+    _picker_command: Any
+    _pick_folder: Any
+    _count_notes: Any
+    _copy_notes: Any
 
 
 def build_app(host: str, port: int, knowledge_dir: str | None = None):
@@ -205,8 +230,13 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         return settings_ops.clear_index(home) if home else 0
 
     def _total_bytes(report: dict) -> int:
+        """存储区总占用。必须与 `storage_report()` 的字段保持同一份清单——
+
+        少列一项不会报错，只会让「清理前看到 200 MB、清理后还是 200 MB」这种
+        对不上的事情出现。`assets` 是 1.26.0 加的，这里漏过一次。
+        """
         return sum(int((report.get(key) or {}).get("bytes") or 0)
-                   for key in ("notes", "index", "kb", "config", "embedding"))
+                   for key in ("notes", "assets", "index", "kb", "config", "embedding"))
 
     def _settings_payload() -> dict:
         live = load_settings()
@@ -416,7 +446,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         return settings_ops.copy_notes(src, dst)
 
 
-    deps = SimpleNamespace(
+    deps = AppDeps(
         project_root=project_root, settings=settings, metrics=metrics, pipe=pipe,
         store=store, log_dir=log_dir, guards=guards, api_keys=api_keys,
         note_ref=note_ref, feedback_path=feedback_path,

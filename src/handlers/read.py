@@ -4,53 +4,25 @@
 """
 from __future__ import annotations
 
-import base64
-import binascii
-import gzip
-import hashlib
 import json
 import os
-import pathlib
-import queue
-import re
 import select
-import shutil
-import subprocess
-import sys
-import tempfile
-import threading
 import time
-import traceback
-import urllib.error
-import urllib.request
-import uuid
 from collections import Counter
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
-from .. import (appconfig, backup, casegen, evaluator, fileops, ingest, jsonl, kbstore,
-                routing, security, settings_ops, suggest)
+from .. import (kbstore,
+                suggest)
 from .. import update as update_mod
-from ..auth import ApiKeyStore, safe_equal
-from ..config import api_key, load_settings
-from ..guards import Guards
 from ..metrics import summarize
-from ..metrics_exporter import Metrics
-from ..notes.api import ApiError
-from ..notes.api import dispatch as notes_dispatch
-from ..notes.service import NoteService
 from ..notes.tools import tools_payload as notes_tools_payload
 from ..openapi import build_spec
-from ..pipeline import RAGPipeline
 from ..theme import FILES_PAGE
-from ..threadstore import ThreadError, ThreadStore
 from ..version import __version__
 from ..web_pages import ASK_HTML, KB_HTML
-from .common import (ALLOWED_EXT, DOC_B64_MAX_BYTES, DOC_MAX_BYTES, MAX_BODY_BYTES,
-                     NOTES_MAX_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, UPLOAD_MAX_BYTES,
-                     _knowledge_dir, _open_folder, _raw_dir, _read_jsonl,
-                     _safe_doc_name, _safe_kb_name)
+from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
+                     _safe_kb_name)
 from .base import sse_acquire, sse_release
 
 
@@ -94,17 +66,9 @@ def make_read(deps):
     _copy_notes = deps._copy_notes
 
     class ReadRoutes:
-        # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
-        # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
-        protocol_version = "HTTP/1.1"
-        timeout = 20
-
-        # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
-        COMPRESSIBLE = frozenset({
-            "text/html", "text/plain", "text/markdown", "text/css",
-            "application/json", "application/javascript", "text/javascript",
-            "image/svg+xml",
-        })
+        # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
+        # 这四个类通过 MRO 组合成一个 Handler，重复定义时生效的永远是最左边那份，
+        # 改另一份会静默不生效——比没有更糟。
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -149,6 +113,28 @@ def make_read(deps):
             if path == "/api/settings" or path.startswith("/api/settings/"):
                 self._settings("GET", path, qs, None)
                 return
+            # 剩下的都是页面与只读接口，搬进 _get_pages 便于定位；
+            # 那条链末尾自带 404 兜底，这里不用再加。
+            self._get_pages(path, qs)
+
+
+        def _get_pages(self, path: str, qs: dict) -> None:
+            """页面与只读接口的总入口：按资源转交，顺序与原 elif 链一致。"""
+            if path.startswith("/api/admin/") or path in ("/api/audit", "/api/metrics"):
+                self._get_admin(path, qs)
+            elif path.startswith(("/api/kb/", "/api/cases", "/api/examples",
+                                  "/api/knowledge", "/api/keywords")):
+                self._get_kb_view(path, qs)
+            elif path in ("/api/l3", "/openapi.json", "/api/health", "/metrics"):
+                self._get_meta(path, qs)
+            elif path.startswith("/api/"):
+                self._get_api_misc(path, qs)
+            else:
+                self._get_page_html(path, qs)
+            return
+
+        def _get_page_html(self, path: str, qs: dict) -> None:
+            """三张页面 + 旧入口回落；`/files` 是可收藏的固定地址。"""
             if path in ("/", "/index.html", "/insights", "/dashboard", "/report"):
                 # 只留问答与知识库两页，旧入口统一回落到问答页，收藏夹不会 404
                 self._redirect("/ask")
@@ -159,7 +145,12 @@ def make_read(deps):
                 self._send(200, FILES_PAGE, "text/html; charset=utf-8")
             elif path == "/kb":
                 self._send(200, KB_HTML, "text/html; charset=utf-8")
-            elif path == "/api/l3":
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def _get_meta(self, path: str, qs: dict) -> None:
+            """发布与运行时自述：L3 报表、OpenAPI、健康检查、Prometheus。"""
+            if path == "/api/l3":
                 l3_path = os.path.join(project_root, "tests", "report_l3.json")
                 if not os.path.exists(l3_path):
                     self._json({"available": False})
@@ -214,7 +205,12 @@ def make_read(deps):
                     self._json({"error": "forbidden"}, 403)
                     return
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
-            elif path == "/api/admin/config":
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def _get_admin(self, path: str, qs: dict) -> None:
+            """管理面：灰度配置、成本、审计、内部指标，级别在 routing 表里是 ADMIN。"""
+            if path == "/api/admin/config":
                 if not self._is_admin():
                     self._json({"error": "forbidden"}, 403)
                     return
@@ -240,7 +236,12 @@ def make_read(deps):
                 self._json({"items": guards.audit.tail(limit)})
             elif path == "/api/metrics":
                 self._json(summarize(pipe.log_path))
-            elif path == "/api/cases":
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def _get_kb_view(self, path: str, qs: dict) -> None:
+            """知识库读侧：用例、示例、版本清单、变更、文档历史、关键词。"""
+            if path == "/api/cases":
                 curated = _read_jsonl(os.path.join(project_root, "tests", "eval_cases.jsonl"), 100000)
                 fb_cases = _read_jsonl(feedback_cases_path, 100000)
                 doc_cases = _read_jsonl(doc_cases_path, 100000)
@@ -354,7 +355,12 @@ def make_read(deps):
                     self._json({"name": name, "items": store.doc_history(name)})
                 except kbstore.KnowledgeError as exc:
                     self._json({"error": str(exc)}, 400)
-            elif path == "/api/source":
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def _get_api_misc(self, path: str, qs: dict) -> None:
+            """剩下的只读接口：原文、反馈列表、调用轨迹，末尾是 404 兜底。"""
+            if path == "/api/source":
                 doc = (qs.get("doc") or [""])[0]
                 try:
                     chunk_index = int((qs.get("chunk") or ["-1"])[0])
@@ -383,6 +389,7 @@ def make_read(deps):
                 self._json({"items": items})
             else:
                 self._json({"error": "not found"}, 404)
+
 
         def _mcp_stream(self) -> None:
             """GET /mcp：Streamable HTTP 的下行流。
