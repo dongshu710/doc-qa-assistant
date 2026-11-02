@@ -12,11 +12,35 @@ from datetime import datetime
 from urllib.parse import quote, unquote
 
 from . import assets as assets_mod, export as export_mod
-from .model import NoteError
+from .model import KINDS, STATUSES, NoteError
 from .service import NoteConflict, NoteService
 from .store import NoteNotFound, StoreBusy
 
 ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_]{0,80}$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _filters(query: dict) -> tuple[str | None, str | None, str | None]:
+    """校验 kind / status / since 三个过滤参数。
+
+    为什么必须在入口拒：非法值传下去会被当成「不匹配任何笔记」，
+    返回一个空列表——用户看到的是「这段时间我没有笔记」，而不是「你参数写错了」。
+    """
+    kind = _one(query, "kind")
+    status = _one(query, "status")
+    since = _one(query, "since")
+    if kind and kind not in KINDS:
+        raise ApiError(400, "invalid_argument", f"kind 只能是 {' / '.join(KINDS)}")
+    if status and status not in STATUSES:
+        raise ApiError(400, "invalid_argument", f"status 只能是 {' / '.join(STATUSES)}")
+    if since:
+        if not _DATE.match(since):
+            raise ApiError(400, "invalid_argument", "since 需要 YYYY-MM-DD，例如 2026-11-02")
+        try:
+            datetime.strptime(since, "%Y-%m-%d")
+        except ValueError:
+            raise ApiError(400, "invalid_argument", f"since 不是有效日期：{since}") from None
+    return kind, status, since
 
 
 class ApiError(Exception):
@@ -66,8 +90,10 @@ def dispatch(service: NoteService | None, method: str, path: str,
         if len(parts) >= 2 and parts[1] == "assets":
             return _assets(service, parts, method, query, body)
         if not ITEM_ID.match(rest):
-            raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{rest}")
-        note_id = rest
+            # 报错前先解码：用户看到「笔记 id 不合法：%E4%B8%8D%E5%AD%98%E5%9C%A8」
+            # 根本不知道自己在找什么。校验的仍是解码后的值，`%2F` 解成 `/` 照样不匹配。
+            raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{unquote(rest)}")
+        note_id = unquote(rest)
         if method == "GET":
             note = service.get(note_id)
             section = _one(query, "section")
@@ -109,7 +135,7 @@ def _assets(service: NoteService, parts: list[str], method: str,
     为什么不在这一层直接写 HTTP：dispatch 是协议无关的（MCP 也复用它的语义），
     一旦这里开始碰 `wfile`，以后想给 MCP 加附件就得再写一份。
     """
-    note_id = parts[0]
+    note_id = unquote(parts[0])
     if not ITEM_ID.match(note_id):
         raise ApiError(400, "invalid_argument", f"笔记 id 不合法：{note_id}")
     if len(parts) == 2:
@@ -191,9 +217,9 @@ def _export(service: NoteService, query: dict) -> dict:
     if ids:
         notes = [service.get(item) for item in ids]
     else:
-        rows = service.list(tags=query.get("tag") or None, kind=_one(query, "kind"),
-                            status=_one(query, "status"), since=_one(query, "since"),
-                            limit=500)
+        kind, status, since = _filters(query)
+        rows = service.list(tags=query.get("tag") or None, kind=kind,
+                            status=status, since=since, limit=500)
         notes = [service.get(row["id"]) for row in rows]
     title = _one(query, "title") or "我的笔记"
     if fmt == "html":
@@ -217,8 +243,9 @@ def _list(service: NoteService, query: dict) -> dict:
     limit = min(limit, 200)
     # `q` 与 `query` 都收：前者给页面，后者更贴近「搜一下」的自然说法
     text = _one(query, "q") or _one(query, "query") or ""
-    result = service.search(text, tags=query.get("tag") or None, kind=_one(query, "kind"),
-                            status=_one(query, "status"), since=_one(query, "since"),
+    kind, status, since = _filters(query)
+    result = service.search(text, tags=query.get("tag") or None, kind=kind,
+                            status=status, since=since,
                             limit=limit, semantic=(_one(query, "semantic") or "auto").lower())
     rows = result["items"]
     return {"ok": True, "count": len(rows), "items": rows, "search": result["search"]}
@@ -233,6 +260,12 @@ def _patch(service: NoteService, note_id: str, body: dict | None, query: dict) -
                    if key in body}
     base_rev = body.get("base_rev") or _one(query, "base_rev")
     force = body.get("force") is True or (_one(query, "force") or "").lower() in ("1", "true", "yes")
+    # 先校验字段、再校验并发：反过来的话，字段写错的人会先被要求补 base_rev，
+    # 补上之后才被告知 status 非法——白跑一轮，还不知道自己真正错在哪。
+    if "status" in changes and changes["status"] not in STATUSES:
+        raise ApiError(400, "invalid_argument", f"status 只能是 {' / '.join(STATUSES)}")
+    if "kind" in changes and changes["kind"] not in KINDS:
+        raise ApiError(400, "invalid_argument", f"kind 只能是 {' / '.join(KINDS)}")
     return {"ok": True, **service.patch(note_id, changes, base_rev=base_rev, force=force)}
 
 

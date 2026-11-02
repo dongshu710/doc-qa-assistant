@@ -21,7 +21,8 @@ from .chunking import load_corpus
 from . import citations
 from .config import api_key, load_settings
 from .embeddings import EmbeddingError, EmbeddingUnavailable
-from .generator import build_messages, extractive_answer, generate, repair_citation, stream_chat
+from .generator import (build_messages, extractive_answer, generate, low_confidence,
+                        repair_citation, stream_chat)
 from .keywords import KeywordIndex
 
 # 最外层拦截：通用护栏（注入/越权/隐私）+ profile 附加护栏（金融：荐股/收益承诺）
@@ -307,7 +308,10 @@ class RAGPipeline:
                         citations.append(self._cite(chunk, i, KeywordIndex.snippet(hit)))
                         retrieved.append({"title": chunk.title, "section": chunk.section,
                                           "doc_id": chunk.doc_id,
-                                          "chunk_index": hit.entry.chunk_index,
+                                          # 与 citations 同一个口径：文档内序号。
+                                          # 这里原本写的是 hit.entry.chunk_index（全局下标），
+                                          # 同一份结果里两套编号，谁按 retrieved 去取原文都取错。
+                                          "chunk_index": chunk.chunk_index,
                                           "score": round(hit.score, 3)})
                     result.update(
                         behavior="answer",
@@ -481,7 +485,9 @@ class RAGPipeline:
                 cited = [int(x) for x in re.findall(r"\[(\d+)\]", fallback)]
                 valid = sorted({n for n in cited if 1 <= n <= len(hits)})
 
-        result["citations"] = [self._cite(hits[n - 1][0], n) for n in valid]
+        result["citations"] = [self._cite(hits[n - 1][0], n,
+                                          self._snippet(hits[n - 1][0].text, context_query))
+                                  for n in valid]
         result["citation_coverage"] = round(len(valid) / len(cited), 3) if cited else 0.0
 
         # ---------- 引用支持度（编号合法 ≠ 引对了） ----------
@@ -496,7 +502,9 @@ class RAGPipeline:
             result["degrade_reason"] = "citation_unsupported"
             cited = [int(x) for x in re.findall(r"\[(\d+)\]", fallback)]
             valid = sorted({n for n in cited if 1 <= n <= len(hits)})
-            result["citations"] = [self._cite(hits[n - 1][0], n) for n in valid]
+            result["citations"] = [self._cite(hits[n - 1][0], n,
+                                          self._snippet(hits[n - 1][0].text, context_query))
+                                  for n in valid]
             result["citation_coverage"] = round(len(valid) / len(cited), 3) if cited else 0.0
             support = citations.verify(fallback, hits)
         result["citation_support"] = support["items"]
@@ -617,11 +625,32 @@ class RAGPipeline:
             self.keywords = keywords
         return self.keyword_detail
 
+    @staticmethod
+    def _snippet(text: str, query: str, width: int = 60) -> str:
+        """从命中块里取与问题重合最高的一句，给前端抽屉做高亮定位。
+
+        原来检索路径的 `snippet` 恒为空字符串：字段在、值没有，前端 `ask.js` 的
+        `<mark>` 高亮因此永远不生效，用户点开引用只能看到整段原文从头开始。
+        空串比缺字段更糟——它看起来像「这段确实没有摘要」。
+        """
+        from .retriever import tokenize
+        q = set(tokenize(query or ""))
+        best, best_hit = "", -1
+        for sentence in re.split(r"(?<=[。；;！!？?\n])", text or ""):
+            item = sentence.strip()
+            if not item:
+                continue
+            hit = len(q & set(tokenize(item)))
+            if hit > best_hit:
+                best, best_hit = item, hit
+        return (best or (text or "").strip())[:width]
+
     def _cite(self, chunk, ref: int, snippet: str = "") -> dict:
         """引用必须能回到原文：带 doc_id / chunk_index，前端可据此打开原文抽屉。
 
         位置直接取 `chunk.chunk_index`：块自己带着它在生成时的位置，读对象属性是
         原子的，不需要再持锁查一份映射——那份映射反而会在索引换代的瞬间给出 -1。
+        **注意这是文档内序号**，`source_chunk()` 也按文档内序号定位，两边必须同一个口径。
         """
         return {
             "ref": ref, "title": chunk.title, "section": chunk.section,
@@ -631,20 +660,33 @@ class RAGPipeline:
         }
 
     def source_chunk(self, doc_id: str, chunk_index: int) -> dict | None:
-        """按引用定位原文；只接受当前索引里真实存在的块，不做文件路径拼接。"""
+        """按引用定位原文；只接受当前索引里真实存在的块，不做文件路径拼接。
+
+        `chunk_index` 是**文档内序号**（`chunking.chunk_document()` 的 `idx` 每篇文档重置），
+        所以必须先在 doc_id 范围内收窄再取序号。原来直接拿它当全局下标去索引
+        `self.chunks`，除第一篇文档外一律命中别的文档 → 返回 None →
+        前端点引用只看到「读取失败 / 原文不存在或索引已更新」，而且这句错话说的是
+        「索引过期」，用户重建多少次索引都不会好。
+        """
         chunks = self.chunks      # 取一次：定位与 doc_chunks 计数必须是同一代
-        if not (0 <= chunk_index < len(chunks)):
+        doc_chunks = [c for c in chunks if c.doc_id == doc_id]
+        if not (0 <= chunk_index < len(doc_chunks)):
             return None
-        chunk = chunks[chunk_index]
-        if chunk.doc_id != doc_id:
-            return None
+        chunk = doc_chunks[chunk_index]
         return {
             "doc_id": chunk.doc_id, "title": chunk.title, "section": chunk.section,
             "chunk_index": chunk_index, "text": chunk.text,
-            "doc_chunks": sum(1 for c in chunks if c.doc_id == doc_id),
+            "doc_chunks": len(doc_chunks),
         }
 
     def _finish(self, result: dict, t0: float) -> dict:
+        # 所有路径都从这里出去，所以置信度只在这里标一次：answer 分 high/low，
+        # 未命中与澄清没有「置信度」可言（写 none，避免调用方把缺失当高置信）。
+        if result.get("behavior") == "answer":
+            result["confidence"] = (
+                "low" if low_confidence(result.get("gate_score")) else "high")
+        else:
+            result.setdefault("confidence", "none")
         session_id = result.get("session_id")
         if session_id and result.get("answer"):
             self.sessions.append(session_id, result.get("query") or "", result["answer"])

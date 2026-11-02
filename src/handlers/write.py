@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 from .. import (casegen, evaluator, ingest, jsonl, kbstore)
-from .common import (ALLOWED_EXT, ASSET_BODY_MAX, DOC_B64_MAX_BYTES, DOC_MAX_BYTES,
+from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYTES,
+                     DOC_MAX_BYTES,
                      MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
                      UPLOAD_MAX_BYTES,
                      _read_jsonl,
@@ -129,7 +130,7 @@ def make_write(deps):
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
                             "/api/keywords/rebuild", "/api/session/clear",
                             "/api/admin/config", "/api/admin/rollback"):
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -140,15 +141,24 @@ def make_write(deps):
                 limit = UPLOAD_MAX_BYTES
             elif path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
                 limit = DOC_B64_MAX_BYTES
+            elif path in ("/api/ask", "/api/ask/stream"):
+                limit = ASK_MAX_BYTES
             else:
                 limit = MAX_BODY_BYTES
-            if length <= 0 or length > limit:
-                self._json({"error": "body empty or too large"}, 400)
+            if length <= 0:
+                self._json({"ok": False, "error": "invalid_argument",
+                            "message": "请求体为空"}, 400)
+                return
+            if length > limit:
+                self._json({"ok": False, "error": "payload_too_large",
+                            "message": f"请求体 {length} 字节，超过该接口上限 {limit // 1024} KB"},
+                           413)
                 return
             try:
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
-                self._json({"error": "invalid json"}, 400)
+                self._json({"ok": False, "error": "invalid_json",
+                            "message": "请求体不是合法 JSON"}, 400)
                 return
 
             # 按资源转交。原来是 641 行的 if 链，改任何一处都要在这条链上找位置，
@@ -198,7 +208,7 @@ def make_write(deps):
                 return
             # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
             # 不能让请求挂在一个没有 response 的方法里。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
         def _post_kb(self, path: str, payload: dict) -> None:
             """按路径再分一层，具体处理见下面的方法。"""
@@ -245,6 +255,10 @@ def make_write(deps):
                         "change_id": change_id,
                         "version": store.active_version(),
                         "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                        # 同名覆盖必须让上传的人看见：写入是真的，旧内容也是真的没了
+                        # （只在历史版本里）。原来 warnings 只存在 changes 接口里，
+                        # 上传的回复干干净净，用户对「我覆盖了什么」一无所知。
+                        "warnings": staged["change"].get("warnings") or [],
                         **index_fields(),
                     })
                     guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
@@ -266,7 +280,7 @@ def make_write(deps):
                                    kind="text", chunks=total, chars=len(content))
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
         def _post_kb_doc(self, path: str, payload: dict) -> None:
             """PDF / DOCX 上传：解码、解析、暂存，与文本走同一条审批链。"""
@@ -353,6 +367,7 @@ def make_write(deps):
                         "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
                         "pending": approved is None, "change_id": change_id,
                         "version": store.active_version(),
+                        "warnings": staged["change"].get("warnings") or [],
                         "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
                         **index_fields(before),
                     })
@@ -392,7 +407,7 @@ def make_write(deps):
                                    bytes=len(data), engine=res.get("engine"))
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
         def _post_kb_review(self, path: str, payload: dict) -> None:
             """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
@@ -484,7 +499,7 @@ def make_write(deps):
                             "version": res["version"], **index_fields()})
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
 
         def _post_data(self, path: str, payload: dict) -> None:
@@ -599,7 +614,7 @@ def make_write(deps):
                 self._json({"ok": True, "case": case, "total": seq})
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
         def _post_ops(self, path: str, payload: dict) -> None:
             """运维动作：反馈落盘、关键词重建、清会话、索引热载。"""
@@ -654,7 +669,7 @@ def make_write(deps):
                     self._json({"ok": False, "error": str(exc)}, 500)
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
 
         def _post_ask(self, path: str, payload: dict) -> None:
@@ -767,13 +782,25 @@ def make_write(deps):
             return
             # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
             # 不能让请求挂在一个没有 response 的方法里。
-            self._json({"error": "not found"}, 404)
+            self._not_found(self.command, path)
 
         # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
         # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。
         def _ask_preflight(self, payload: dict):
             """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
-            query = str(payload.get("query", ""))
+            # 字段缺失与「给了空串」是两件事：
+            #   空串 → 澄清（聊天场景里用户按了回车，回一句"请说明具体问题"是对的）；
+            #   缺字段 → 400（调用方把 query 写成了 question，回澄清等于把
+            #   参数名写错伪装成用户没输入，是最难自查的一类静默失败）。
+            if not isinstance(payload, dict) or "query" not in payload:
+                return None, ({"ok": False, "error": "invalid_argument",
+                               "message": "缺少 query 字段；请求体应形如 {\"query\": \"你的问题\"}"},
+                              400, {})
+            if not isinstance(payload["query"], str):
+                return None, ({"ok": False, "error": "invalid_argument",
+                               "message": f"query 必须是字符串，收到 {type(payload['query']).__name__}"},
+                              400, {})
+            query = payload["query"]
             session_id = str(payload.get("session_id") or "").strip()[:64] or None
             client = self._client()
             request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]

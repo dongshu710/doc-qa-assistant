@@ -119,6 +119,9 @@ function footHTML(d){
     html+=pill('模式 '+(MODE[d.mode]||d.mode||'-'))+pill(ms);
     if(d.retrieval_score!=null){ html+=pill('检索分 '+round(d.retrieval_score,3)); }
   }
+  /* 置信度低不是"出错了"，是"这条未必是你要问的对象"——单独一个黄标，
+     让用户在看答案之前就知道要核对原文。正文里也有同样的提示语，双保险。 */
+  if(d.confidence==='low'){ html+=pill('置信度低 · 请核对原文','warn'); }
   if(d.citations&&d.citations.length){ html+=pill('引用 '+d.citations.length+' 条'); }
   if(d.citation_coverage!=null&&d.citation_coverage<0.999){
     html+=pill('引用覆盖 '+Math.round(d.citation_coverage*100)+'%','warn');

@@ -41,7 +41,11 @@ def normalize(raw) -> list[Msg]:
             raise SelectError(f"第 {position} 条消息不是对象")
         role = str(item.get("role") or "user").strip().lower()
         if role not in _ROLES:
-            role = "user"
+            # 原来静默改成 user：调用方把 role 写错（"boss"/"me"）也照样入库，
+            # 落盘后正文里出现「boss：…」，用户只会觉得笔记乱了，不知道该改哪。
+            raise SelectError(
+                f"第 {position} 条消息的 role 不合法：{role!r}；允许 "
+                + " / ".join(sorted(_ROLES)))
         text = _extract_text(item)
         if not text.strip():
             continue

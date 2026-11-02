@@ -186,6 +186,10 @@ body.side-mini .sb-item{justify-content:center;padding:0;}
 .tb-link{
   height:30px;padding:0 9px;border:0;border-radius:7px;background:transparent;
   color:var(--muted);font-size:12.5px;cursor:pointer;
+  /* 窄屏（390px）顶栏被标题挤满时，flex 会把按钮压到 1 个字宽，
+     「导出」「清空」变成竖排两行——看着像渲染坏了，也点不准。
+     nowrap + 不缩，宁可让标题先截断。 */
+  white-space:nowrap;flex:0 0 auto;
 }
 .tb-link:hover{background:var(--surface-2);color:var(--ink);}
 .side-scrim{display:none;}

@@ -15,6 +15,9 @@ CURATED = ROOT / "tests" / "eval_cases.jsonl"
 FEEDBACK = ROOT / "tests" / "eval_cases_feedback.jsonl"
 DOCS = ROOT / "tests" / "eval_cases_docs.jsonl"
 HARD = ROOT / "tests" / "eval_cases_hard.jsonl"
+# 「域内但语料没覆盖」：正确行为不是答对，而是**不许装作答对**。
+# 这批用例是 1.27.0 用户测试里 4/8 假阳性的回归基线。
+UNCOVERED = ROOT / "tests" / "eval_cases_uncovered.jsonl"
 
 
 def _norm(text: str) -> str:
@@ -33,6 +36,14 @@ def check_l1(case: dict, actual: dict, context: list[dict] | None = None) -> lis
 
     if "behavior" in expect and actual.get("behavior") != expect["behavior"]:
         failures.append(f"行为不符: 期望 {expect['behavior']}, 实际 {actual.get('behavior')}")
+
+    # 「不许装作答对」：语料没覆盖的问题，要么说不知道（no_answer），
+    # 要么明确标注置信度低。两个都不满足，就是把别的条款当成了答案。
+    if expect.get("soft_refuse"):
+        if actual.get("behavior") == "answer" and actual.get("confidence") != "low":
+            failures.append(
+                f"未覆盖的问题被当成了确定答案（gate={actual.get('gate_score')}, "
+                f"confidence={actual.get('confidence')}）")
 
     answer_n = _norm(actual.get("answer", ""))
 
@@ -64,7 +75,7 @@ def check_l1(case: dict, actual: dict, context: list[dict] | None = None) -> lis
 
 
 def default_case_files(include_hard: bool = False, include_docs: bool = True) -> list[Path]:
-    files = [CURATED]
+    files = [CURATED, UNCOVERED]
     if FEEDBACK.exists():
         files.append(FEEDBACK)
     if include_docs and DOCS.exists():

@@ -144,6 +144,9 @@ class NoteService:
         return {
             "ok": True,
             "committed": committed,
+            # 预览（commit=false）返回的 id 是「打算用的」而不是「已经存在的」：
+            # 真正落盘时会重新生成。标注出来，别让调用方拿它去 GET/PATCH。
+            "preview": not commit,
             "id": note.id,
             "title": note.title,
             "kind": note.kind,

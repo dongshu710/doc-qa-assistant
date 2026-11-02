@@ -86,8 +86,10 @@ def main() -> int:
             "data_b64": _b64(FIXTURES / "sample_scanned.pdf"),
         })
         assert code == 422, f"扫描件应被拒，实际 {code} {body}"
-        assert "OCR" in (body.get("error") or ""), body
-        print(f"[1] 扫描件被拒（{code}）：{(body.get('error') or '')[:46]}…")
+        # 1.28.0 起错误体统一：error 只放机器码，人话在 message 里
+        assert body.get("error") == "unprocessable", body
+        assert "OCR" in (body.get("message") or ""), body
+        print(f"[1] 扫描件被拒（{code}）：{(body.get('message') or '')[:46]}…")
 
         # 2) 正常 PDF → 解析入库
         code, body = _post(port, "/api/knowledge/upload_pdf", {

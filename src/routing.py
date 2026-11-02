@@ -82,3 +82,67 @@ def is_page(path: str) -> bool:
 def describe() -> list[dict]:
     """给测试与文档用：把表摊平成可断言的形状。"""
     return [{"prefix": prefix, "level": level} for prefix, level in RULES]
+
+
+# ---------- 方法表：只用于「方法用错时报 405 而不是 404」 ----------
+# 为什么不手写一张：手写的表一定会跟真实路由漂移。这里从 OpenAPI 里取——
+# 那份规格本来就被 `test_contract.py` 盯着与 dispatch 双向对齐。
+# 只在 dispatch 已经判定「没有这个路由」时才查这张表，所以即使取错了，
+# 最坏结果是 404 变 405，不会把一个本来能用的请求挡掉。
+_SPEC_METHODS: dict[str, set[str]] | None = None
+_EXTRA_METHODS = {
+    # OpenAPI 没登记、但确实存在的路由（补在这里而不是改文档：
+    # 它们属于内部/页面用的接口，先保证报错语义正确）
+    "/api/threads": {"GET", "POST", "PUT", "DELETE"},
+    "/api/settings": {"GET", "POST"},
+    "/api/settings/test": {"POST"},
+    "/api/settings/setup": {"POST"},
+    "/api/settings/pick": {"POST"},
+    "/api/files/raw": {"GET", "PUT"},
+    "/api/storage/usage": {"GET"},
+    "/api/storage/backups": {"GET"},
+    "/api/storage/backup": {"POST"},
+    "/api/storage/cleanup": {"POST"},
+    "/api/trace": {"GET"},
+    "/api/feedback/list": {"GET"},
+    "/api/admin/config": {"GET", "POST"},
+    "/api/admin/cost": {"GET"},
+    "/api/audit": {"GET"},
+    "/mcp": {"GET", "POST"},
+}
+
+
+def _spec_methods() -> dict[str, set[str]]:
+    global _SPEC_METHODS
+    if _SPEC_METHODS is None:
+        table: dict[str, set[str]] = {}
+        try:
+            from .openapi import build_spec
+            spec = build_spec("0.0.0", {"mode": "open"}, "", "vector")
+            for path, ops in (spec.get("paths") or {}).items():
+                table[path] = {m.upper() for m in ops
+                               if m.lower() in ("get", "post", "put", "patch", "delete")}
+        except Exception:      # noqa: BLE001 —— 规格生成失败不该影响请求处理
+            table = {}
+        table.update(_EXTRA_METHODS)
+        _SPEC_METHODS = table
+    return _SPEC_METHODS
+
+
+def _match_template(template: str, path: str) -> bool:
+    left = template.strip("/").split("/")
+    right = path.strip("/").split("/")
+    if len(left) != len(right):
+        return False
+    return all(a.startswith("{") or a == b for a, b in zip(left, right))
+
+
+def allowed_methods(path: str) -> set[str] | None:
+    """这个路径允许哪些方法；完全没登记就返回 None（调用方按 404 处理）。"""
+    table = _spec_methods()
+    if path in table:
+        return table[path]
+    for template, methods in table.items():
+        if "{" in template and _match_template(template, path):
+            return methods
+    return None

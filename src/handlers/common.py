@@ -22,6 +22,11 @@ def _open_folder(folder: str) -> None:
 
 
 MAX_BODY_BYTES = 8192
+# 问答另给一档：上限 500 字的问题按 UTF-8 最多 1.5 KB，但用户会粘一大段再被
+# MAX_INPUT_CHARS 拦下来。请求体上限卡在 8 KB 时，同样的「问题太长」在 501 字
+# 走的是「请精简后重试」，在 3000 字走的是「body empty or too large」——
+# 同一件事两种说法。放大到 64 KB，让超长问题统一走「问题过长」那条路。
+ASK_MAX_BYTES = 64 * 1024
 NOTES_MAX_BYTES = 2 * 1024 * 1024        # 一段对话可能很长：笔记接口单独放宽
 UPLOAD_MAX_BYTES = 512 * 1024          # 单个文本文件上限（.md/.txt）
 DOC_MAX_BYTES = 6 * 1024 * 1024         # 单个 PDF/DOCX 上限（解码后）

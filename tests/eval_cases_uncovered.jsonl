@@ -1,0 +1,10 @@
+{"id": "U01", "category": "uncovered", "input": "房贷利率是多少", "expect": {"soft_refuse": true}}
+{"id": "U02", "category": "uncovered", "input": "网点几点下班", "expect": {"soft_refuse": true}}
+{"id": "U03", "category": "uncovered", "input": "基金定投起购金额是多少", "expect": {"soft_refuse": true}}
+{"id": "U04", "category": "uncovered", "input": "投诉电话是多少", "expect": {"soft_refuse": true}}
+{"id": "U05", "category": "uncovered", "input": "信用卡年费是多少", "expect": {"soft_refuse": true}}
+{"id": "U06", "category": "uncovered", "input": "外汇牌价今天多少", "expect": {"soft_refuse": true}}
+{"id": "U07", "category": "uncovered", "input": "保险犹豫期是几天", "expect": {"soft_refuse": true}}
+{"id": "U08", "category": "uncovered", "input": "员工生日福利是什么", "expect": {"soft_refuse": true}}
+{"id": "U09", "category": "uncovered", "input": "公司年会在哪里办", "expect": {"soft_refuse": true}}
+{"id": "U10", "category": "uncovered", "input": "Python 的装饰器怎么写", "expect": {"soft_refuse": true}}

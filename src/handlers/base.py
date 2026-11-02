@@ -8,12 +8,78 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
 from .. import (routing, security)
 from ..auth import safe_equal
+
+# 错误体统一形状：{"ok": false, "error": "<机器码>", "message": "<中文>"}。
+# 1.27.0 之前同一个服务里同时存在 5 种：`{"error":"not found"}`、
+# `{"error":"invalid json"}`、`{"ok":false,"error":"content_type","message":...}`、
+# `{"ok":false,"error":"文件内容为空"}`（中文塞进了 error）、
+# `{"error":"rate limited","retry_after":...}`。客户端要按分支猜三种写法。
+# 收敛放在 `_json` 这个唯一出口，136 个调用点不必逐个改。
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+_CODE_OK = re.compile(r"^[a-z][a-z0-9_]*$")
+_CODE_BY_STATUS = {
+    400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found",
+    405: "method_not_allowed", 409: "conflict", 413: "payload_too_large",
+    415: "unsupported_media_type", 422: "unprocessable", 428: "precondition_required",
+    429: "rate_limited", 500: "internal_error", 503: "unavailable",
+}
+# 历史遗留的英文短语 → 规范码（只在 status>=400 且没有 message 时兜底）
+_LEGACY = {
+    "not found": "not_found",
+    "invalid json": "invalid_json",
+    "body empty or too large": "body_empty_or_too_large",
+    "rate limited": "rate_limited",
+}
+_MESSAGE_BY_CODE = {
+    "not_found": "没有这个接口或资源",
+    "invalid_json": "请求体不是合法 JSON",
+    "body_empty_or_too_large": "请求体为空或超过上限",
+    "bad_request": "请求参数不合法",
+    "rate_limited": "请求过于频繁，请稍后重试",
+    "method_not_allowed": "该地址不支持这个请求方法",
+    "forbidden": "没有权限",
+    "unauthorized": "需要 API Key 或管理员令牌",
+    "conflict": "资源已被修改，请刷新后重试",
+    "internal_error": "服务内部错误",
+}
+
+
+def normalize_error(obj, code: int):
+    """把各种历史写法的错误体收敛成一种。成功响应原样返回。"""
+    if not isinstance(obj, dict):
+        return obj
+    # JSON-RPC（MCP）有自己的错误规范：`error` 是对象、带 code，且不是 HTTP 错误体。
+    # 混进来会把 `{"code":-32700}` 覆盖成字符串，客户端解析直接崩。
+    if "jsonrpc" in obj:
+        return obj
+    err = obj.get("error")
+    if code < 400 and obj.get("ok") is not False:
+        return obj
+    if not isinstance(err, str) or not err:
+        # 只有 ok=false 没给 error：补一个，别让客户端拿到半个错误
+        obj["ok"] = False
+        obj["error"] = _CODE_BY_STATUS.get(code, "error")
+        obj.setdefault("message", _MESSAGE_BY_CODE.get(obj["error"], ""))
+        return obj
+
+    if _CJK.search(err):
+        # 中文句子被放进了 error：挪到 message，error 换成状态码对应的机器码
+        obj["message"] = obj.get("message") or err
+        obj["error"] = _CODE_BY_STATUS.get(code, "error")
+    elif err in _LEGACY:
+        obj["error"] = _LEGACY[err]
+    elif not _CODE_OK.match(err):
+        obj["error"] = re.sub(r"[^a-z0-9]+", "_", err.lower()).strip("_") or "error"
+    obj["ok"] = False
+    obj.setdefault("message", _MESSAGE_BY_CODE.get(obj["error"], ""))
+    return obj
 
 # SSE 是长连接，一条流就占住一个请求线程。BoundedHTTPServer 总共 64 个线程，
 # 几个挂死/半死的流就能把服务拖到不响应。所以单独限流：超过就回 429，
@@ -156,8 +222,26 @@ def make_base(deps):
                 except (BrokenPipeError, ConnectionResetError):
                     self.close_connection = True
         def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
-            self._send(code, json.dumps(obj, ensure_ascii=False), extra_headers=extra_headers,
-                       cache="no-store")
+            self._send(code, json.dumps(normalize_error(obj, code), ensure_ascii=False),
+                       extra_headers=extra_headers, cache="no-store")
+
+        def _not_found(self, method: str, path: str,
+                       extra_headers: dict | None = None) -> None:
+            """没有命中任何路由时的统一出口：方法用错回 405，路径不认识回 404。
+
+            原来一律 404：客户端拿 `PUT /api/notes` 去调，被告知「路径不存在」，
+            第一反应是核对 URL 拼写，而真正的问题是方法。405 至少指向正确方向。
+            """
+            allowed = routing.allowed_methods(path)
+            if allowed and method.upper() not in allowed:
+                allow = ", ".join(sorted(allowed))
+                self._json({"ok": False, "error": "method_not_allowed",
+                            "message": f"{method.upper()} 不支持这个地址；允许 {allow}"},
+                           405, extra_headers={"Allow": allow})
+                return
+            self._json({"ok": False, "error": "not_found",
+                        "message": f"没有这个接口：{path}"}, 404)
+
         def _send_bytes(self, code: int, data: bytes, content_type: str,
                         extra_headers: dict | None = None,
                         cache: str = "private, max-age=300") -> None:
@@ -388,7 +472,7 @@ def make_base(deps):
             if self._guard("PUT", parsed.path):
                 return
             if target not in ("threads", "files"):
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, parsed.path)
                 return
             body, err = self._read_note_body()
             if err:
@@ -402,7 +486,7 @@ def make_base(deps):
             if self._guard("PATCH", parsed.path):
                 return
             if target not in ("notes", "threads"):
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, parsed.path)
                 return
             body, err = self._read_note_body()
             if err:
@@ -416,7 +500,7 @@ def make_base(deps):
             if self._guard("DELETE", parsed.path):
                 return
             if target not in ("notes", "threads"):
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, parsed.path)
                 return
             body = None
             try:
@@ -436,7 +520,7 @@ def make_base(deps):
             if self._guard("OPTIONS", parsed.path):
                 return
             if not target:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, parsed.path)
                 return
             handler = {"notes": self._notes, "threads": self._threads,
                        "files": self._files, "settings": self._settings}[target]

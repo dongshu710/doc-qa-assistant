@@ -252,7 +252,9 @@ def _components() -> dict:
                     "ref": {"type": "integer", "description": "正文中的 [n]"},
                     "title": {"type": "string"}, "section": {"type": "string"},
                     "doc_id": {"type": "string"},
-                    "chunk_index": {"type": "integer"},
+                    "chunk_index": {"type": "integer",
+                                    "description": "文档内序号（从 0 开始），"
+                                                   "直接用于 GET /api/source?doc=&chunk="},
                     "version": {"type": "string", "description": "知识库版本，如 v0005"},
                     "snippet": {"type": "string", "description": "命中片段"},
                 },

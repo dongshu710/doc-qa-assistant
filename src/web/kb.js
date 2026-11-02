@@ -40,7 +40,7 @@ function render(){
   $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
   $('kbHint').textContent=total?('合计 '+chunks+' 个知识块'):'';
   if(!list.length){
-    $('kbBody').innerHTML=emptyRow(6,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx');
+    $('kbBody').innerHTML=emptyRow(6,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx / .xlsx');
     return;
   }
   $('kbBody').innerHTML=list.map(function(f){
@@ -264,7 +264,7 @@ async function uploadFiles(files){
   var arr=[].slice.call(files||[]);
   if(!arr.length||BUSY) return;
   BUSY=true;
-  var ok=0, fail=0, added=0, pend=0, rebuilding=false, firstErr='', notes=[];
+  var ok=0, fail=0, added=0, pend=0, rebuilding=false, firstErr='', notes=[], warns=[];
   for(var i=0;i<arr.length;i++){
     setMsg('上传中 '+(i+1)+'/'+arr.length+'：'+arr[i].name);
     try{
@@ -272,6 +272,8 @@ async function uploadFiles(files){
       if(r&&r.ok){
         ok++; added+=r.added_chunks||0; if(r.pending) pend++;
         if(r.rebuilding) rebuilding=true;
+        /* 同名覆盖是"写成功了但旧内容没了"，比失败更需要说清楚 */
+        if(r.warnings&&r.warnings.length){ [].push.apply(warns, r.warnings); }
         var bits=[];
         if(r.format) bits.push(String(r.format).toUpperCase());
         if(r.rows) bits.push(r.rows+' 行');
@@ -294,6 +296,11 @@ async function uploadFiles(files){
       toast('已入库 '+ok+' 份'+(rebuilding?'，索引重建中':'，新增 '+added+' 块'));
     }
     await settleIndex(rebuilding&&!pend, '已入库 '+ok+' 份');
+    if(warns.length){
+      /* 覆盖提示单独一条，且用 warn 样式：它不会自动消失，用户必须看到"旧版本被替换了" */
+      setMsg(warns.join('；')+'。旧版本在「版本」里可以回滚。','warn');
+      toast('已覆盖同名文档，可在版本历史回滚', true);
+    }
   }else{
     setMsg('上传失败：'+firstErr,'err');
     toast('上传失败：'+firstErr,true);

@@ -112,6 +112,7 @@ def notes_paths() -> dict:
                     {"name": "since", "in": "query", "schema": {"type": "string"},
                      "description": "起始日期 YYYY-MM-DD"},
                     {"name": "limit", "in": "query",
+                     "description": "条数上限；0 表示不限制（内部取全量候选用），负数报 400",
                      "schema": {"type": "integer", "minimum": 0, "maximum": 200, "default": 20}},
                 ],
                 "responses": {

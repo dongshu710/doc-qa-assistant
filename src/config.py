@@ -70,6 +70,11 @@ class Settings:
     # 检索
     top_k: int = 4
     min_score: float = 0.3      # 检索置信度阈值：低于此值返回「无法找到答案」（阈值随检索模式不同）
+    # 低于这个分数仍作答，但要加保留语气（「可能不是你要问的对象」）。
+    # 为什么不是直接拒答：实测同一条语料里，正确回答的最低分与答非所问的最高分有重叠
+    # （向量模式 0.69 vs 0.78），任何单一阈值都会错杀。重叠区间里唯一诚实的做法是
+    # 把「像答案」降级成「最接近的段落」，把判断权交回给用户。
+    hedge_score: float = 0.8
     retrieval: str = "vector"   # embedding | vector（零依赖基线）| bm25 | hybrid
     rrf_k: int = 60
     query_expansion: str = "auto"  # off | auto | llm：auto=有 Key 时启用 LLM 查询扩展
@@ -158,7 +163,14 @@ def load_settings() -> Settings:
     base = (_first_env("LLM_BASE_URL", default=DEFAULT_BASE_URL) or DEFAULT_BASE_URL).rstrip("/")
     # 各检索器的分数尺度不同：BM25 是 0~20+ 原始分，hashing/embedding 归一化到 0~1。
     # 阈值必须分模式给默认值，否则换检索器会把所有问题打成「无法找到答案」。
+    #
+    # min_score 保持 1.27.0 的取值不动：实测发现 BM25 的原始分随**语料规模**变化
+    # （6 篇 33 块时正确回答 9.5~33.9，5 块的小语料同样的问题只有 1.9），
+    # 按一个语料标定出来的绝对值搬到另一份语料上就会把正常问题全拒掉。
+    # 所以这里只给「归一化到 0~1」的模式设 hedge，BM25 需要使用者自己标定。
     default_min = {"embedding": "0.38", "hybrid": "0.30", "vector": "0.30"}.get(retrieval, "0.5")
+    # 低于 hedge_score 仍作答，但加保留语气。0 表示不启用（BM25 这种量纲不固定的模式）。
+    default_hedge = {"embedding": "0.80", "hybrid": "0.80", "vector": "0.80"}.get(retrieval, "0")
     keyword_mode = (_first_env("KEYWORD_MODE", default="on") or "on").strip().lower()
     if keyword_mode not in ("on", "off"):
         keyword_mode = "on"
@@ -169,6 +181,7 @@ def load_settings() -> Settings:
         channel=endpoint_label(base),
         top_k=int(_first_env("TOP_K", default="4")),
         min_score=float(_first_env("MIN_SCORE", default=default_min)),
+        hedge_score=float(_first_env("HEDGE_SCORE", default=default_hedge)),
         retrieval=retrieval,
         rrf_k=int(_first_env("RRF_K", default="60")),
         query_expansion=expansion,

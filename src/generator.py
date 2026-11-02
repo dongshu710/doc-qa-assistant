@@ -79,12 +79,29 @@ def _best_sentence(query: str, chunk) -> str:
     return "".join(s for _, _, s in chosen).strip()
 
 
+def low_confidence(score) -> bool:
+    """分数落在「可能是也可能不是」的区间：作答但必须带保留语气。
+
+    单一阈值判不了这一段——实测同一条语料里正确回答可以低到 0.685，
+    而答非所问能高到 0.775。与其假装分得清，不如把不确定明说出来。
+    """
+    threshold = float(getattr(load_settings(), "hedge_score", 0.0) or 0.0)
+    return threshold > 0 and float(score or 0.0) < threshold
+
+
+# 保留语气的开头。不去掉「可能不是」这四个字：这是用户判断要不要采信的唯一线索。
+HEDGE_PREFIX = "最相近的段落如下（可能不是你要问的对象，请核对原文）：\n"
+
+
 def extractive_answer(query: str, hits) -> str:
     if not hits:
         return "资料中未找到相关内容。"
-    top = hits[0][0]
+    top, score = hits[0][0], hits[0][1]
     sentence = _best_sentence(query, top)
-    return f"（离线抽取模式，未调用大模型）根据《{top.title}》·{top.section}：{sentence} [1]"
+    body = f"根据《{top.title}》·{top.section}：{sentence} [1]"
+    # 原来开头固定写「（离线抽取模式，未调用大模型）」——那是实现细节，用户读到的
+    # 第一反应是「系统坏了/没配好」。模式由返回值里的 mode 字段和页面状态条表达。
+    return (HEDGE_PREFIX + body) if low_confidence(score) else body
 
 
 def chat(

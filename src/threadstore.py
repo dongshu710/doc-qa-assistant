@@ -24,6 +24,7 @@ import re
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
@@ -59,7 +60,13 @@ class ThreadError(ValueError):
 
 
 def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S")
+    """UTC ISO 时间。
+
+    原来写本地时间且不带时区，而前端传进来的 `created` 是 `new Date().toISOString()`
+    （UTC + Z）——同一条记录里两个基准，在东八区差 8 小时写进同一个文件。
+    负时区（如 UTC-5）还会出现「created 晚于 updated」的倒挂，排序直接乱。
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ThreadStore:

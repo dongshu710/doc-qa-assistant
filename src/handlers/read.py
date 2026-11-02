@@ -146,7 +146,7 @@ def make_read(deps):
             elif path == "/kb":
                 self._send(200, KB_HTML, "text/html; charset=utf-8")
             else:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
 
         def _get_meta(self, path: str, qs: dict) -> None:
             """发布与运行时自述：L3 报表、OpenAPI、健康检查、Prometheus。"""
@@ -206,7 +206,7 @@ def make_read(deps):
                     return
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
             else:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
 
         def _get_admin(self, path: str, qs: dict) -> None:
             """管理面：灰度配置、成本、审计、内部指标，级别在 routing 表里是 ADMIN。"""
@@ -237,7 +237,7 @@ def make_read(deps):
             elif path == "/api/metrics":
                 self._json(summarize(pipe.log_path))
             else:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
 
         def _get_kb_view(self, path: str, qs: dict) -> None:
             """知识库读侧：用例、示例、版本清单、变更、文档历史、关键词。"""
@@ -356,7 +356,7 @@ def make_read(deps):
                 except kbstore.KnowledgeError as exc:
                     self._json({"error": str(exc)}, 400)
             else:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
 
         def _get_api_misc(self, path: str, qs: dict) -> None:
             """剩下的只读接口：原文、反馈列表、调用轨迹，末尾是 404 兜底。"""
@@ -388,7 +388,7 @@ def make_read(deps):
                 } for r in rows]
                 self._json({"items": items})
             else:
-                self._json({"error": "not found"}, 404)
+                self._not_found(self.command, path)
 
 
         def _mcp_stream(self) -> None:

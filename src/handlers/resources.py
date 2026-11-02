@@ -445,7 +445,7 @@ def make_resources(deps):
                     self._json(payload, 200, cors)
                     return
             # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
-            self._json({"error": "not found"}, 404, cors)
+            self._not_found(self.command, path, cors)
 
         def _settings_notes(self, method: str, path: str, body: dict | None,
                              cors: dict) -> None:
@@ -483,7 +483,7 @@ def make_resources(deps):
                 self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
                 return
             # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
-            self._json({"error": "not found"}, 404, cors)
+            self._not_found(self.command, path, cors)
 
         def _settings_storage(self, method: str, path: str, body: dict | None,
                              cors: dict) -> None:
@@ -515,7 +515,7 @@ def make_resources(deps):
                             "freed_bytes": freed, "storage": after}, 200, cors)
                 return
             # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
-            self._json({"error": "not found"}, 404, cors)
+            self._not_found(self.command, path, cors)
 
         def _settings_mcp(self, method: str, path: str, body: dict | None,
                              cors: dict) -> None:
@@ -585,6 +585,6 @@ def make_resources(deps):
                 self._json({"ok": True, "path": folder}, 200, cors)
                 return
             # 分派进来就不再回 `_settings` 的兜底，每条路径都要有自己的 404。
-            self._json({"error": "not found"}, 404, cors)
+            self._not_found(self.command, path, cors)
 
     return ResourcesRoutes
