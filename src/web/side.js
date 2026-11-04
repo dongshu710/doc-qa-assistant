@@ -51,6 +51,23 @@
     return '更早';
   }
 
+  /* 列表右侧的时刻。同名的会话（同一句话问过很多次）只靠标题完全分不出来，
+     点开一个个试才知道是哪条。今天显示 HH:MM，更早显示 MM-DD——
+     分组已经给了"今天/昨天"，这里不再重复日期。 */
+  function timeShort(iso){
+    var d=new Date(iso||''), t=new Date();
+    if(isNaN(d.getTime())) return '';
+    var hm=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    if(d.toDateString()===t.toDateString()) return hm;
+    return (d.getMonth()+1)+'-'+('0'+d.getDate()).slice(-2);
+  }
+  function fmtFull(iso){
+    var d=new Date(iso||'');
+    if(isNaN(d.getTime())) return '';
+    var p=function(n){ return ('0'+n).slice(-2); };
+    return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());
+  }
+
   // 合并写：一轮问答会连续改标题和 sid，别为一次改动打三次请求
   function persist(thread, delay){
     if(!thread) return;
@@ -206,8 +223,12 @@
         var g=group(t.updated);
         if(g!==last){ html+='<div class="conv-group">'+g+'</div>'; last=g; }
         var on=t.id===JY.currentId()?' on':'';
-        html+='<button type="button" class="conv'+on+'" data-id="'+t.id+'" title="'+esc(t.title||'')+'">'
+        html+='<button type="button" class="conv'+on+'" data-id="'+t.id+'" '
+          +'title="'+esc(t.title||'')+' · '+esc(fmtFull(t.created||t.updated))+' · '+((t.turns&&t.turns.length)||t.count||0)+' 轮">'
           +'<span class="t">'+esc(t.title||'新对话')+'</span>'
+          // 用 created 而不是 updated：列表按 updated 排序，但显示"这段对话是哪次问的"更符合直觉，
+          // 也更能区分同一句话问过很多次留下的同名会话
+          +'<span class="ts">'+esc(timeShort(t.created||t.updated))+'</span>'
           +'<span class="x" data-del="'+t.id+'" role="button" aria-label="删除这条会话">×</span></button>';
       });
       if(!rows.length){

@@ -121,6 +121,9 @@ def test_reject(service: NoteService, note_id: str) -> None:
 def test_traversal(service: NoteService, note_id: str) -> None:
     print("路径穿越")
     home = Path(service.store.home).resolve()
+    folder = assets_mod.asset_dir(service.store.home, note_id)
+    before = {p.name for p in folder.glob("*")} if folder.exists() else set()
+
     for name in ("../evil.png", "..\\evil.png", f"../{note_id}/evil.png", "/etc/passwd"):
         try:
             service.read_asset(note_id, name)
@@ -128,15 +131,20 @@ def test_traversal(service: NoteService, note_id: str) -> None:
         except assets_mod.AssetError:
             check(f"拒绝读 {name}", True)
 
-    got = service.save_asset(note_id, "../../evil.png", PNG)
-    where = assets_mod.asset_dir(service.store.home, note_id).resolve() / got["name"]
-    check("穿越名被按在附件目录里",
-          where.parent == assets_mod.asset_dir(service.store.home, note_id).resolve(), str(where))
-    check("没有逃出存储区", str(where).startswith(str(home)), str(where))
-    check("穿越名里的目录被抹掉了", "/" not in got["name"] and ".." not in got["name"], got["name"])
+    # 1.28.1 起保存端也拒绝：原来 basename 之后会悄悄存成 evil.png，
+    # 调用方拿到的 name 已经不是自己传的那个（知识库侧一直是拒绝，这里对齐）。
+    for name in ("../../evil.png", "a/b.png", "..\\evil.png", "/etc/passwd"):
+        try:
+            saved = service.save_asset(note_id, name, PNG)
+            check(f"拒绝保存 {name}", False, f"竟然存成 {saved['name']}")
+        except assets_mod.AssetError as exc:
+            check(f"拒绝保存 {name}", exc.status == 400, f"status={exc.status}")
+    after = {p.name for p in folder.glob("*")} if folder.exists() else set()
+    check("被拒的名字没有落盘", after == before, str(after - before))
+    check("附件仍在存储区里", str(folder.resolve()).startswith(str(home)), str(folder))
 
     try:
-        assets_mod.resolve(service.store.home, note_id, got["name"] + ".tmp")
+        assets_mod.resolve(service.store.home, note_id, "图.png.tmp")
         check("拒读临时文件", False, "竟然读了")
     except assets_mod.AssetError:
         check("拒读临时文件", True)

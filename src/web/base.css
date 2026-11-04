@@ -118,6 +118,10 @@ main{flex:1 0 auto;}
   font-size:13px;line-height:1.4;text-align:left;cursor:pointer;
 }
 .conv .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 时间戳：同名会话（同一句话问了很多次）只靠标题分不出来，右侧给一个时刻。
+   hover / 选中时让位给 ×，否则两个都挤在 34px 的行里，标题被压得过短。 */
+.conv .ts{flex:none;font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;}
+.conv:hover .ts,.conv.on .ts{display:none;}
 .conv:hover{background:var(--hover);}
 .conv.on{background:var(--hover);font-weight:500;}
 .conv .x{

@@ -70,16 +70,26 @@ def _check_id(note_id: str) -> str:
 
 
 def sanitize(name: str) -> str:
-    """清洗文件名：去掉路径分隔符与控制字符，压掉重复的点与空白。
+    """清洗文件名：含路径的**显式拒绝**，不做 basename 静默改名。
 
-    `a/../../b` → `a....b` 这种结果还要再过一遍 `_BAD` 与显式 `..` 检查；
-    单靠正则替换挡不住所有写法，所以 `resolve()` 里还要再验一次。
+    知识库侧 `_safe_kb_name` 从第一天起就是「拒绝 `../x.md`」，这里原来用
+    `os.path.basename` 把 `a/b.png` 悄悄截成 `b.png`，同一个仓库两套规矩。
+    静默改名虽然安全，但调用方拿到的 `name` 已经不是他传的那个，
+    Markdown 里写下的链接也跟着变了，而他不会知道——隐性行为比报错难查得多。
+
+    `_BAD` 仍然替换控制字符：它们藏在合法名字里，替换比拒绝更文明（`a\x01.png` → `a_.png`）。
+    扩展名白名单与长度截断不变。
     """
-    base = os.path.basename(str(name or "").replace("\\", "/"))
-    base = _BAD.sub("_", base).strip().strip(".")
+    raw = str(name or "").strip()
+    if not raw:
+        raise AssetError("附件名为空", status=400, code="invalid_name")
+    if "/" in raw or "\\" in raw or ".." in raw:
+        raise AssetError("文件名不能包含路径（/ \\ 或 ..），请只传文件名",
+                         status=400, code="invalid_name")
+    base = _BAD.sub("_", raw).strip().strip(".")
     base = re.sub(r"\s+", " ", base)
     if not base:
-        base = "file"
+        raise AssetError("附件名清洗后为空", status=400, code="invalid_name")
     stem, ext = os.path.splitext(base)
     ext = ext.lower()
     if not ext or ext not in ALLOWED_EXT:

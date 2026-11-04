@@ -36,7 +36,10 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/api/notes", API),
     ("/api/threads", API),
     ("/api/files", API),
-    ("/api/storage", API),
+    # `/api/storage` 本身没有 handler，只有 usage/backups/backup/cleanup 四个子端点；
+    # 曾经在这里登记过前缀，表里就出现了一个不存在的端点（鉴权表是契约的单一来源，
+    # 登记不存在的路径只会误导维护者）。子端点不登记也照样是 API——未登记的
+    # `/api/*` 默认收紧，少写一行不会放宽任何东西。
     ("/api/source", API),             # 文档原文
     ("/api/trace", API),              # 用户提问记录
     ("/api/feedback", API),
