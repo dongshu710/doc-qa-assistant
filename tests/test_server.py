@@ -47,11 +47,12 @@ try:
     assert 'id="filesDot"' in pages["/files"], "文件页导航上要有红点按钮"
     print("pages OK（问答 / 知识库 / 文件）")
 
-    # 笔记入口：问答页能发起保存，知识库页有两个分区且不是嵌套关系。
-    # 结构错位（面板套进另一个面板）在浏览器里表现为「点了没反应」，字符串断言抓不到，
-    # 所以这里用 HTMLParser 真的看一次父子关系。
+    # 笔记入口：问答页能发起保存，完整管理在 /files；知识库只剩文档一个分区。
+    # 1.29.0 起 /kb 的「笔记」tab 已移除（与 /files 能力完全重复），
+    # 这里同时盯住「文档面板没被别的面板套住」与「笔记面板不会偷偷回来」。
     assert 'id="noteDialog"' in pages["/ask"] and "存为笔记" in pages["/ask"]
-    assert 'id="panelNotes"' in pages["/kb"] and 'data-tab="notes"' in pages["/kb"]
+    assert 'id="panelNotes"' not in pages["/kb"], "知识库不该再有笔记面板"
+    assert 'id="pfList"' in pages["/files"] and 'id="pfNew"' in pages["/files"]
 
     class PanelFinder(HTMLParser):
         def __init__(self):
@@ -77,10 +78,9 @@ try:
 
     finder = PanelFinder()
     finder.feed(pages["/kb"])
-    assert "panelDocs" in finder.ids and "panelNotes" in finder.ids, finder.ids
-    assert "panelNotes" not in " ".join(finder.parents.get("panelNotes", [])), "笔记面板被套进了文档面板"
+    assert "panelDocs" in finder.ids and "panelNotes" not in finder.ids, finder.ids
     assert finder.parents.get("panelDocs")[-1:] == ["main"], finder.parents.get("panelDocs")
-    print("notes panels OK（两个分区同级，未嵌套）")
+    print("notes panels OK（知识库只有文档分区，未嵌套）")
 
     # 旧入口保留 302，收藏夹里的链接不能断
     class NoRedirect(urllib.request.HTTPRedirectHandler):

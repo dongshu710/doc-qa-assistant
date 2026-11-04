@@ -24,7 +24,6 @@ import hashlib
 import mimetypes
 import os
 import re
-from datetime import datetime
 from pathlib import Path
 
 SCHEMA_REF = "assets"
@@ -243,7 +242,3 @@ def stats(home: str | Path) -> dict:
             count += 1
             largest = max(largest, size)
     return {"count": count, "bytes": total, "largest": largest}
-
-
-def now_text() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")

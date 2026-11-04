@@ -40,3 +40,36 @@ function toast(msg,isErr){
     return raw.call(this,input,init);
   };
 })();
+
+/* ---------- 跨页面通用的小工具：各页面不再各写一份 ---------- */
+
+/* 时间：列表里只需要到分钟，秒与毫秒只会占宽 */
+function fmtTime(iso){ return String(iso==null?'':iso).slice(0,16).replace('T',' '); }
+
+/* 字节：小于 10 保留一位小数（5.0 KB 比 5 KB 有信息量），KB 以上自动进位 */
+function fmtBytes(n){
+  if(n==null||n==='') return '—';
+  n=Number(n)||0;
+  if(n<1024) return n+' B';
+  var units=['KB','MB','GB','TB'], i=-1, v=n;
+  do{ v/=1024; i++; }while(v>=1024&&i<units.length-1);
+  return (v>=10?v.toFixed(0):v.toFixed(1))+' '+units[i];
+}
+
+/* 请求头：JSON 请求只从这里出，API Key 与站内标记只在一个地方加 */
+function reqHeaders(extra){
+  var h={'Accept':'application/json'};
+  if(extra) h['Content-Type']='application/json';
+  return apiHeaders(h);
+}
+
+/* 下载：先 fetch 再转 Blob——直接给 a[href] 带不上鉴权头，开了 Key 的实例会 401 */
+function saveBlob(content, filename, mime){
+  try{
+    var blob=new Blob([content],{type:mime||'application/octet-stream'});
+    var url=URL.createObjectURL(blob), a=document.createElement('a');
+    a.href=url; a.download=filename||'download';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); },1000);
+  }catch(e){ toast('导出失败：'+((e&&e.message)||e), true); }
+}

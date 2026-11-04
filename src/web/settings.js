@@ -159,14 +159,6 @@
     renderApiState(d.llm||{});
     renderStorage(d.storage||{});
   }
-
-  function sizeText(n){
-    n=Number(n)||0;
-    if(n<1024) return n+' B';
-    var units=['KB','MB','GB','TB'], i=-1, v=n;
-    do{ v/=1024; i++; }while(v>=1024&&i<units.length-1);
-    return (v>=10?v.toFixed(0):v.toFixed(1))+' '+units[i];
-  }
   function renderApiState(llm){
     var box=$('apiState'); if(!box) return;
     llm=llm||{};
@@ -183,11 +175,11 @@
     var notes=(st.notes||{}), idx=(st.index||{}), threads=(st.threads||{}), assets=(st.assets||{});
     // 只报几件事：文档 / 会话 / 附件多大、缓存多大、磁盘还剩多少。
     // 面积条不画了——几个数字并排比「占比」更好读，也不用解释颜色。
-    if($('stNotes')) $('stNotes').textContent=sizeText(notes.bytes)+(notes.files?(' · '+notes.files+' 篇'):'');
-    if($('stThreads')) $('stThreads').textContent=sizeText(threads.bytes)+(threads.files?(' · '+threads.files+' 条'):'');
-    if($('stAssets')) $('stAssets').textContent=sizeText(assets.bytes)+(assets.files?(' · '+assets.files+' 个'):'');
-    if($('stIndex')) $('stIndex').textContent=sizeText(Number(idx.bytes||0)+Number((st.embedding||{}).bytes||0));
-    if($('stFree')) $('stFree').textContent=sizeText((st.disk||{}).free);
+    if($('stNotes')) $('stNotes').textContent=fmtBytes(notes.bytes)+(notes.files?(' · '+notes.files+' 篇'):'');
+    if($('stThreads')) $('stThreads').textContent=fmtBytes(threads.bytes)+(threads.files?(' · '+threads.files+' 条'):'');
+    if($('stAssets')) $('stAssets').textContent=fmtBytes(assets.bytes)+(assets.files?(' · '+assets.files+' 个'):'');
+    if($('stIndex')) $('stIndex').textContent=fmtBytes(Number(idx.bytes||0)+Number((st.embedding||{}).bytes||0));
+    if($('stFree')) $('stFree').textContent=fmtBytes((st.disk||{}).free);
     if($('stKeep')) $('stKeep').value=String(st.keep_versions==null?30:st.keep_versions);
     var cost=$('stCost');
     if(cost){
@@ -206,7 +198,7 @@
     api('POST','/api/settings/storage/clean',{keep:Number($('stKeep').value||0)}).then(function(d){
       if(!d||!d.ok){ note('stMsg',(d&&d.message)||'清理失败',true); return; }
       renderStorage(d.storage||{});
-      var freed=sizeText(d.freed_bytes||0);
+      var freed=fmtBytes(d.freed_bytes||0);
       var removed=(d.removed||[]).length;
       note('stMsg','已清理 '+(removed?removed+' 个旧版本':'旧版本')+'，释放 '+freed
         +'；当前保留 '+d.keep+' 版。',false);
@@ -220,7 +212,7 @@
     btn.disabled=true; btn.textContent='备份中…';
     api('POST','/api/storage/backup',{}).then(function(d){
       if(!d||!d.ok){ note('stMsg',(d&&d.message)||'备份失败',true); return; }
-      var msg='已备份 '+(d.files||0)+' 个文件（'+sizeText(d.bytes||0)+'）';
+      var msg='已备份 '+(d.files||0)+' 个文件（'+fmtBytes(d.bytes||0)+'）';
       // 附件超限是「跳过」而不是失败，不显示出来用户会照着成功提示去恢复，才发现图没了
       var warn=(d.warnings||[]).join('；');
       note('stMsg',warn?(msg+'，但附件没进全：'+warn):(msg+'。'),!!warn);
@@ -390,12 +382,6 @@
       box.innerHTML='<option value="claude">Claude Desktop</option>';
       if($('setMcpNote')) $('setMcpNote').textContent='当前系统没找到已知客户端，只能手动复制配置。';
     }
-  }
-
-  function esc(v){
-    return String(v==null?'':v).replace(/[&<>"']/g,function(c){
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-    });
   }
 
   if($('setMcpCopy')) $('setMcpCopy').addEventListener('click',function(){

@@ -267,7 +267,8 @@ def main() -> int:
         check(f"{label}含存储位置控件", 'id="setHomeWrap"' in html and 'id="stToggleHome"' in html)
         check(f"{label}含接口控件", 'id="setBase"' in html)
         check(f"{label}设置脚本已注入", "setMcpInstall" in html)
-        check(f"{label}文件脚本已注入", "filesExport" in html)
+        # 锚点取脚本里真实导出的符号：抽屉早先的 filesExport 按钮已随入口收敛移除
+        check(f"{label}文件脚本已注入", "__filesBackup" in html)
 
     print(f"\n{passed} 项通过，{len(failures)} 项失败")
     if failures:

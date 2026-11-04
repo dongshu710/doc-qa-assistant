@@ -33,15 +33,6 @@ def load(name: str) -> str:
     return (_web_dir() / name).read_bytes().decode("utf-8")
 
 
-def path_of(name: str) -> str:
-    """真实文件系统路径；资源不在磁盘上时（如 .pyz 内）返回空串。"""
-    try:
-        handle = _web_dir() / name
-        return str(handle) if handle.is_file() and _is_fs(handle) else ""
-    except (OSError, TypeError, AttributeError, ValueError):
-        return ""
-
-
 def _is_fs(handle) -> bool:
     """zip 里的 Traversable 也实现了 `is_file()`，但它没有真实路径。"""
     return hasattr(handle, "__fspath__")

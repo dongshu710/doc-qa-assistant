@@ -286,14 +286,6 @@ def _items_from(value: str) -> list[str]:
 _FUNC_CHARS = set("的了和与及或是在有为对等中上下我你他这那其之把被从向就也都而但")
 
 
-def _sentence_for(chunks, term: str):
-    for idx, chunk in chunks:
-        snippet = _first_sentence_with(chunk.text, term)
-        if snippet:
-            return snippet, idx
-    return None, None
-
-
 _TABLE_SKIP = {"序号", "编号", "备注", "说明", "单位", "小计", "合计"}
 _BS = chr(92)
 
@@ -766,11 +758,6 @@ class KeywordIndex:
                     out.append(entry.term)
             terms[doc_id] = out
         self._doc_terms = terms
-
-    def term_count(self, doc_id: str) -> int:
-        if not self._doc_terms:
-            self._build_doc_terms()
-        return len(self._doc_terms.get(doc_id) or [])
 
     # ---------- 匹配与输出 ----------
     def _build_key_index(self) -> None:

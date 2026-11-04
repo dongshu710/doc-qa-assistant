@@ -24,7 +24,7 @@ from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYT
                      MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
                      UPLOAD_MAX_BYTES,
                      _read_jsonl,
-                     _safe_doc_name, _safe_kb_name)
+                     _safe_name)
 
 
 def make_write(deps):
@@ -223,7 +223,7 @@ def make_write(deps):
         def _post_kb_upload(self, path: str, payload: dict) -> None:
             """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
             if path == "/api/knowledge/upload":
-                name = _safe_kb_name(payload.get("name"))
+                name = _safe_name(payload.get("name"))
                 content = str(payload.get("content") or "")
                 if not name:
                     self._json({"ok": False, "error": "只支持 .md / .txt，文件名不合法"}, 400)
@@ -285,7 +285,7 @@ def make_write(deps):
         def _post_kb_doc(self, path: str, payload: dict) -> None:
             """PDF / DOCX 上传：解码、解析、暂存，与文本走同一条审批链。"""
             if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
-                name = _safe_doc_name(payload.get("name"))
+                name = _safe_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
                 if not name:
                     self._json({"ok": False,
                                 "error": "只接受纯文件名的 " + " / ".join(
@@ -412,7 +412,7 @@ def make_write(deps):
         def _post_kb_review(self, path: str, payload: dict) -> None:
             """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
             if path == "/api/knowledge/delete":
-                name = _safe_kb_name(payload.get("name"))
+                name = _safe_name(payload.get("name"))
                 target = os.path.join(kb_dir(), name) if name else ""
                 if not name or not os.path.exists(target):
                     self._json({"ok": False, "error": "文件不存在"}, 404)
@@ -513,7 +513,7 @@ def make_write(deps):
         def _post_cases(self, path: str, payload: dict) -> None:
             """用例集：从文档/反馈生成，以及跑一遍评测。"""
             if path == "/api/cases/from_doc":
-                name = _safe_kb_name(payload.get("name"))
+                name = _safe_name(payload.get("name"))
                 if not name:
                     self._json({"ok": False, "error": "请指定知识库里的 .md 文件名"}, 400)
                     return

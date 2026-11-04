@@ -68,9 +68,6 @@ class ApiKeyStore:
         key = key or ""
         return ("…" + key[-4:]) if len(key) >= 8 else "…"
 
-    def public_names(self) -> list[str]:
-        return sorted(set(self.keys.values()))
-
     def describe(self) -> dict:
         # 不回名字：调用方标识属于内部信息，健康检查只需要知道「开没开」
         return {"mode": "key" if self.enabled else "open", "keys": len(self.keys)}

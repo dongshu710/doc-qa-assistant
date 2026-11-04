@@ -215,15 +215,6 @@ function copyText(text,okMsg){
     navigator.clipboard.writeText(text).then(function(){toast(okMsg||'已复制');},function(){toast('复制失败',true);});
   }else{ toast('当前浏览器不支持剪贴板',true); }
 }
-function downloadText(name,text,mime){
-  try{
-    var blob=new Blob([text],{type:(mime||'text/markdown')+';charset=utf-8'});
-    var a=document.createElement('a');
-    a.href=URL.createObjectURL(blob); a.download=name;
-    document.body.appendChild(a); a.click();
-    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
-  }catch(e){ toast('导出失败：'+(e.message||e),true); }
-}
 
 /* ---------- 会话历史：刷新不丢 ----------
    页面上的对话是本地记录，和服务端 3 轮上下文是两件事：
@@ -310,7 +301,7 @@ function exportMarkdown(){
       out.push('');
     }
   });
-  downloadText('qa-'+stamp()+'.md', out.join(NL));
+  saveBlob(out.join(NL), 'qa-'+stamp()+'.md', 'text/markdown;charset=utf-8');
   toast('已导出 Markdown');
 }
 

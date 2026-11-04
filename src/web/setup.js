@@ -18,10 +18,6 @@
     msg.textContent=text||'';
     msg.style.color=bad?'var(--bad)':'var(--muted)';
   }
-  function headers(){
-    var h={'Content-Type':'application/json','Accept':'application/json'};
-    return window.apiHeaders?window.apiHeaders(h):h;
-  }
   function open(){ panel.hidden=false; mask.hidden=false; setTimeout(function(){ if(input) input.focus(); },80); }
   function close(){
     panel.hidden=true; mask.hidden=true;
@@ -29,7 +25,7 @@
   }
 
   function check(){
-    fetch('/api/settings/setup',{headers:headers()}).then(function(r){ return r.json(); }).then(function(d){
+    fetch('/api/settings/setup',{headers:reqHeaders()}).then(function(r){ return r.json(); }).then(function(d){
       if(!d||!d.ok||!d.needed) return;
       var skipped=false;
       try{ skipped=sessionStorage.getItem(SKIP)==='1'; }catch(e){}
@@ -50,7 +46,7 @@
   if(pick) pick.addEventListener('click',function(){
     var btn=this, label=btn.textContent;
     btn.disabled=true; btn.textContent='选择中…';
-    fetch('/api/settings/pick-folder',{method:'POST',headers:headers(),body:'{}'})
+    fetch('/api/settings/pick-folder',{method:'POST',headers:reqHeaders(),body:'{}'})
       .then(function(r){ return r.json(); }).then(function(d){
         if(d&&d.ok&&d.path&&input) input.value=d.path;
         else if(d&&d.message) say(d.message,true);
@@ -64,7 +60,7 @@
     var btn=this, label=btn.textContent;
     btn.disabled=true; btn.textContent='正在创建…';
     say('正在建目录…');
-    fetch('/api/settings/setup',{method:'POST',headers:headers(),
+    fetch('/api/settings/setup',{method:'POST',headers:reqHeaders(),
       body:JSON.stringify({home:home})}).then(function(r){ return r.json(); }).then(function(d){
       if(!d||!d.ok){ say((d&&d.message)||'建存储区失败',true); return; }
       panel.hidden=true; mask.hidden=true;

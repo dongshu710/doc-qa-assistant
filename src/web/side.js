@@ -18,13 +18,8 @@
     var t=String(q||'').replace(/\s+/g,' ').trim();
     return t?t.slice(0,28):'新对话';
   }
-  function headers(extra){
-    var h={'Accept':'application/json'};
-    if(extra) h['Content-Type']='application/json';
-    return (window.apiHeaders?window.apiHeaders(h):h);
-  }
   function call(method,path,body){
-    return fetch(path,{method:method,headers:headers(!!body),
+    return fetch(path,{method:method,headers:reqHeaders(!!body),
       body:body?JSON.stringify(body):undefined}).then(function(r){ return r.json(); });
   }
   function find(id){
@@ -87,7 +82,7 @@
       clearTimeout(timers[t.id]); delete timers[t.id];
       try{
         fetch('/api/threads/'+encodeURIComponent(t.id),{
-          method:'PUT',keepalive:true,headers:headers(true),
+          method:'PUT',keepalive:true,headers:reqHeaders(true),
           body:JSON.stringify({title:t.title,created:t.created,sid:t.sid||'',turns:t.turns||[]})
         });
       }catch(e){}

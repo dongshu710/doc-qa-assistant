@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-from .. import ingest, jsonl
+from .. import jsonl
 
 def _open_folder(folder: str) -> None:
     """用系统文件管理器打开目录。三个平台各一条命令，失败抛 OSError 让调用方回结构化错误。"""
@@ -40,16 +40,19 @@ SSE_MAX_SECONDS = 300.0                 # 单次流式回答的总时长上限
 ALLOWED_EXT = (".md", ".txt")
 
 
-def _safe_kb_name(name) -> str | None:
-    """只接受「纯文件名」的 .md/.txt。
+def _safe_name(name, exts=None, maxlen: int = 80) -> str | None:
+    """只接受「纯文件名」，扩展名必须在 `exts` 里。
 
-    显式拒绝路径分隔符而不是 basename 静默改名：
-    静默改名虽然安全，但会让用户以为传了 `../x.md` 却出现 `x.md`，属于隐性行为。
+    显式拒绝路径分隔符而不是 basename 静默改名：静默改名虽然安全，但会让用户
+    以为传了 `../x.md` 却出现 `x.md`，属于隐性行为。
+
+    原来是「知识库上传」与「文档上传」各写一份，五段判断逐字相同、只差长度上限
+    与扩展名集合；现在合成一个，差异走参数。
     """
     raw = str(name or "").strip()
     if not raw or "/" in raw or "\\" in raw or ".." in raw:
         return None
-    if len(raw) > 80 or not raw.lower().endswith(ALLOWED_EXT):
+    if len(raw) > maxlen or not raw.lower().endswith(tuple(exts or ALLOWED_EXT)):
         return None
     if any(ch in raw for ch in '<>:"|?*\x00'):
         return None
@@ -66,18 +69,6 @@ def _raw_dir() -> str:
     path = os.path.join(root, "data", "raw")
     os.makedirs(path, exist_ok=True)
     return path
-
-
-def _safe_doc_name(name) -> str | None:
-    """上传文档名：只接受纯文件名，且扩展名必须在 `ingest.SUPPORTED_EXT` 内。"""
-    raw = str(name or "").strip()
-    if not raw or "/" in raw or "\\" in raw or ".." in raw:
-        return None
-    if len(raw) > 120 or not raw.lower().endswith(ingest.SUPPORTED_EXT):
-        return None
-    if any(ch in raw for ch in '<>:"|?*\x00'):
-        return None
-    return raw
 
 
 def _read_jsonl(path: str, limit: int) -> list[dict]:

@@ -5,112 +5,134 @@
   var detail=$('pfDetail'), search=$('pfSearch');
   var current='', timer=null;
 
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
-  function headers(extra){
-    var h={'Accept':'application/json'};
-    if(extra) h['Content-Type']='application/json';
-    return window.apiHeaders?window.apiHeaders(h):h;
+  function api(path, method, body){
+    var opt={method:method||'GET', headers:reqHeaders(!!body)};
+    if(body) opt.body=JSON.stringify(body);
+    return fetch(path,opt).then(function(r){ return r.json(); });
   }
-  function req(p){
-    if(window.__notesFetch) return window.__notesFetch(p);
-    return fetch(p,{headers:headers()}).then(function(r){ return r.json(); });
-  }
-  function fmt(iso){ return String(iso||'').slice(0,16).replace('T',' '); }
-  function size(n){
-    n=Number(n)||0;
-    if(n<1024) return n+' B';
-    if(n<1048576) return Math.round(n/1024)+' KB';
-    return (n/1048576).toFixed(1)+' MB';
-  }
-  function toast(t,bad){ if(window.toast) window.toast(t,bad); }
 
   function render(rows){
     if(!rows.length){
       list.innerHTML='<p class="files-empty">'+(search&&search.value.trim()
         ? '没有匹配的笔记。'
-        : '还没有文件。在问答里点「存为笔记」，或让智能体通过 MCP 保存。')+'</p>';
+        : '还没有文件。在问答里点「存为笔记」，或在这里新建一篇。')+'</p>';
       return;
     }
     list.innerHTML='';
     rows.forEach(function(it){
       var b=document.createElement('button');
       b.type='button'; b.className='file-item'; b.setAttribute('data-id',it.id);
-      b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmt(it.created))+'</span>';
+      b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmtTime(it.created))+'</span>';
       list.appendChild(b);
     });
   }
 
-  /* 搜索走服务端：/files 与问答页共用同一套笔记索引（标题 + 标签 + 正文），
+  /* 搜索走服务端：与问答页共用同一套笔记索引（标题 + 标签 + 正文），
      在这里再写一遍本地过滤等于两套匹配规则，搜同一句话会给出不同结果。 */
   function load(openId){
     var q=(search&&search.value||'').trim();
-    var url='/api/notes?limit=100'+(q?('&q='+encodeURIComponent(q)):'');
-    req(url).then(function(d){
+    api('/api/notes?limit=100'+(q?('&q='+encodeURIComponent(q)):'')).then(function(d){
       if(!d||!d.ok){ list.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
       var rows=d.items||[];
       if($('pfTotal')) $('pfTotal').textContent=(q?'匹配 ':'共 ')+(d.count||rows.length)+' 篇';
       render(rows);
       var want=openId||current;
       var target=want?list.querySelector('[data-id="'+want+'"]'):null;
-      if(target){ target.click(); return; }
+      if(target){ select(target); return; }
       if(q){ current=''; detail.innerHTML='<p class="files-empty">从左侧选一份查看。</p>'; return; }
-      var first=list.querySelector('.file-item'); if(first) first.click();
+      var first=list.querySelector('.file-item'); if(first) select(first);
     }).catch(function(){
       list.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
     });
   }
 
+  function bodyHtml(d){
+    var meta=[fmtTime(d.created), d.kind||'', (d.tags||[]).join(' · ')].filter(Boolean).join(' · ');
+    // 文件是用户的，那就得能改：页内改原文，或交给系统里顺手的编辑器；删除放在同一排但用红色区分
+    var tools='<div class="files-tools">'
+      +'<button class="btn ghost sm" type="button" data-edit="'+esc(d.id||'')+'" data-path="'+esc(d.path||'')+'">编辑原文</button>'
+      +'<button class="btn ghost sm" type="button" data-openfile="'+esc(d.path||'')+'">用系统编辑器打开</button>'
+      +'<button class="btn ghost sm pf-del" type="button" data-delnote="'+esc(d.id||'')+'" data-title="'+esc(d.title||'')+'">删除这篇</button>'
+      +'</div>';
+    var html=tools+'<h3>'+esc(d.title||'(无标题)')+'</h3><div class="files-meta">'+esc(meta)+'</div>';
+    var secs=(d.sections||[]).filter(function(s){ return s.body&&String(s.body).trim(); });
+    if(!secs.length) html+='<p class="files-empty">这篇还没有正文。</p>';
+    secs.forEach(function(s){
+      html+='<div class="files-sec"><h4>'+esc(s.title)+'</h4><p>'+esc(s.body)+'</p></div>';
+    });
+    return html+'<div class="pf-assets" id="pfAssets"></div>';
+  }
+
+  function select(btn){
+    [].forEach.call(list.querySelectorAll('.file-item'),function(x){ x.classList.toggle('on',x===btn); });
+    var id=btn.getAttribute('data-id'); current=id;
+    detail.innerHTML='<p class="files-empty">读取中…</p>';
+    api('/api/notes/'+encodeURIComponent(id)).then(function(d){
+      if(!d||!d.ok){ detail.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
+      detail.innerHTML=bodyHtml(d);
+      loadAssets(id);
+      detail.scrollTop=0;
+    }).catch(function(){ detail.innerHTML='<p class="files-empty">读取失败。</p>'; });
+  }
+
+  // ---- 附件：列表 / 上传 / 下载 ----
   function loadAssets(id){
     var box=$('pfAssets'); if(!box) return;
     box.innerHTML='<h4>附件</h4><p class="files-empty">读取中…</p>';
-    req('/api/notes/'+encodeURIComponent(id)+'/assets').then(function(d){
+    api('/api/notes/'+encodeURIComponent(id)+'/assets').then(function(d){
       var rows=(d&&d.items)||[];
       if(!d||!d.ok){ box.innerHTML=''; return; }
-      if(!rows.length){ box.innerHTML='<h4>附件</h4><p class="files-empty">这篇没有附件。</p>'; return; }
-      box.innerHTML='<h4>附件 · '+rows.length+' 个</h4>'+rows.map(function(a){
+      var head='<div class="pf-assets-hd"><h4>附件'+(rows.length?' · '+rows.length+' 个':'')+'</h4>'
+        +'<button type="button" class="btn ghost sm" data-upload>上传附件</button></div>';
+      if(!rows.length){ box.innerHTML=head+'<p class="files-empty">还没有附件。单文件 ≤ 8 MB。</p>'; return; }
+      box.innerHTML=head+rows.map(function(a){
         return '<button type="button" class="pf-asset" data-asset="'+esc(a.name)+'">'
           +'<span class="nm">'+esc(a.display||a.name)+'</span>'
-          +'<span class="sz">'+size(a.size)+'</span></button>';
+          +'<span class="sz">'+fmtBytes(a.size)+'</span></button>';
       }).join('');
     }).catch(function(){ box.innerHTML=''; });
   }
 
-  // 正文渲染复用 files.js 里那一份（抽屉与 /files 页共用，两处各写一套迟早长歪）
-  function renderDetail(d){
-    var html=window.__notesDetailHtml?window.__notesDetailHtml(d):'';
-    detail.innerHTML=html+'<div class="pf-assets" id="pfAssets"></div>';
-    var tools=detail.querySelector('.files-tools');
-    if(tools){
-      var b=document.createElement('button');
-      b.type='button'; b.className='btn ghost sm pf-del';
-      b.setAttribute('data-delnote',d.id);
-      b.setAttribute('data-title',d.title||'');
-      b.textContent='删除这篇';
-      tools.appendChild(b);
-    }
-    loadAssets(d.id);
+  function readBase64(file){
+    return new Promise(function(resolve, reject){
+      var fr=new FileReader();
+      fr.onload=function(){
+        var text=String(fr.result||''), comma=text.indexOf(',');
+        resolve(comma>=0?text.slice(comma+1):'');
+      };
+      fr.onerror=function(){ reject(new Error('读取文件失败')); };
+      fr.readAsDataURL(file);
+    });
   }
 
-  function removeNote(btn){
-    var id=btn.getAttribute('data-delnote'), title=btn.getAttribute('data-title')||'这篇';
-    if(!window.confirm('删除《'+title+'》？\n会移到存储区的 .trash，可以从那里找回；附件也一起删除。')) return;
-    btn.disabled=true;
-    fetch('/api/notes/'+encodeURIComponent(id)+'?confirm=1',{method:'DELETE',headers:headers()})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        if(!d||!d.ok){ toast((d&&d.message)||'删除失败',true); btn.disabled=false; return; }
-        toast('已删除，可在 .trash 找回');
-        current='';
-        detail.innerHTML='<p class="files-empty">已删除。从左侧选另一份。</p>';
-        load();
-      }).catch(function(e){ toast('删除失败：'+((e&&e.message)||e),true); btn.disabled=false; });
+  function uploadAssets(files){
+    if(!current){ toast('先选一篇笔记', true); return; }
+    var arr=[].slice.call(files||[]); if(!arr.length) return;
+    var ok=0, fail=[];
+    (function next(i){
+      if(i>=arr.length){
+        if(fail.length) toast('成功 '+ok+' 个，失败 '+fail.length+' 个（'+fail[0]+'）', true);
+        else toast('已上传 '+ok+' 个附件');
+        loadAssets(current);
+        return;
+      }
+      var f=arr[i];
+      readBase64(f)
+        .then(function(b64){
+          return api('/api/notes/'+encodeURIComponent(current)+'/assets','POST',{name:f.name,data:b64});
+        })
+        .then(function(d){
+          if(d&&d.ok) ok++; else fail.push((d&&d.message)||f.name);
+          next(i+1);
+        })
+        .catch(function(e){ fail.push(f.name+'：'+((e&&e.message)||e)); next(i+1); });
+    })(0);
   }
 
-  // 附件下载必须走 fetch 再转 Blob：直接 a[href] 带不上 API Key 头，开了鉴权的实例会 401
+  // 附件下载走 fetch 再转 Blob：直接 a[href] 带不上 API Key 头，开了鉴权的实例会 401
   function download(name){
     var url='/api/notes/'+encodeURIComponent(current)+'/assets/'+encodeURIComponent(name);
-    fetch(url,{headers:headers()}).then(function(r){
+    fetch(url,{headers:reqHeaders()}).then(function(r){
       if(!r.ok) throw new Error('HTTP '+r.status);
       return r.blob();
     }).then(function(blob){
@@ -122,23 +144,143 @@
     }).catch(function(){ toast('下载失败',true); });
   }
 
-  list.addEventListener('click',function(e){
-    var b=e.target.closest('.file-item'); if(!b) return;
-    [].forEach.call(list.querySelectorAll('.file-item'),function(x){ x.classList.toggle('on',x===b); });
-    var id=b.getAttribute('data-id'); current=id;
+  // ---- 编辑原文 ----
+  function openEditor(btn){
+    var path=btn.getAttribute('data-path')||'';
+    if(!path){ toast('这篇没有对应的磁盘路径',true); return; }
     detail.innerHTML='<p class="files-empty">读取中…</p>';
-    req('/api/notes/'+encodeURIComponent(id)).then(function(d){
+    api('/api/files/raw?path='+encodeURIComponent(path)).then(function(d){
       if(!d||!d.ok){ detail.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
-      renderDetail(d);
-      detail.scrollTop=0;
-    }).catch(function(){ detail.innerHTML='<p class="files-empty">读取失败。</p>'; });
+      detail.innerHTML='<div class="files-editor">'
+        +'<div class="fe-head"><span class="fe-path">'+esc(d.path)+'</span><span class="fe-rev">rev '+esc(d.rev)+'</span></div>'
+        +'<p class="fe-tip">这是磁盘上的原文，含 front matter。删掉头部也能用，但标签、状态、摘要这些字段会丢。</p>'
+        +'<textarea class="fe-area" spellcheck="false"></textarea>'
+        +'<div class="fe-foot"><span class="fe-msg"></span>'
+        +'<button class="btn ghost sm" type="button" data-cancel>取消</button>'
+        +'<button class="btn sm" type="button" data-save>保存</button></div></div>';
+      var area=detail.querySelector('.fe-area');
+      area.value=d.content;
+      area.scrollTop=0;
+      try{ area.setSelectionRange(0,0); }catch(e){}
+      var msg=detail.querySelector('.fe-msg');
+      function say(t,bad){ msg.textContent=t||''; msg.className='fe-msg'+(bad?' err':''); }
+      detail.querySelector('[data-cancel]').onclick=function(){
+        var item=list.querySelector('.file-item.on');
+        if(item) select(item);
+      };
+      detail.querySelector('[data-save]').onclick=function(){
+        var saveBtn=this; saveBtn.disabled=true; say('保存中…');
+        fetch('/api/files/raw',{method:'PUT',headers:reqHeaders(true),body:JSON.stringify({
+          path:d.path, content:area.value, base_rev:d.rev})}).then(function(r){
+          return r.json().then(function(body){ return {status:r.status, body:body}; });
+        }).then(function(res){
+          var body=res.body||{};
+          if(res.status===409){
+            say('文件在你编辑期间被改过（可能是智能体），已拒绝覆盖。复制内容后点取消再看最新版。',true);
+            return;
+          }
+          if(!body.ok){ say(body.message||'保存失败',true); return; }
+          say('已保存 '+body.rev);
+          toast('已保存到存储区');
+          load(current);      // front matter 里的标题/标签可能改过，列表要跟着刷新
+        }).catch(function(e){ say('保存失败：'+((e&&e.message)||e),true); })
+          .finally(function(){ saveBtn.disabled=false; });
+      };
+      area.focus();
+    }).catch(function(){
+      detail.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
+    });
+  }
+
+  // ---- 新建 / 删除 ----
+  function newNote(){
+    var wrap=document.createElement('div');
+    wrap.className='pf-dlg-mask';
+    wrap.innerHTML='<div class="pf-dlg" role="dialog" aria-modal="true" aria-label="新建笔记">'
+      +'<h3>新建笔记</h3>'
+      +'<label class="pf-f">标题<input id="pfNewTitle" maxlength="120" placeholder="一句话说清这篇记什么"></label>'
+      +'<label class="pf-f">正文<textarea id="pfNewBody" rows="6" placeholder="可以先留空，之后再补。"></textarea></label>'
+      +'<div class="pf-dlg-foot"><span class="pf-msg"></span>'
+      +'<button class="btn ghost sm" type="button" data-cancel>取消</button>'
+      +'<button class="btn sm" type="button" data-ok>创建</button></div></div>';
+    document.body.appendChild(wrap);
+    var title=wrap.querySelector('#pfNewTitle'), body=wrap.querySelector('#pfNewBody');
+    var msg=wrap.querySelector('.pf-msg'), okBtn=wrap.querySelector('[data-ok]');
+    title.focus();
+    function close(){ wrap.remove(); }
+    wrap.querySelector('[data-cancel]').onclick=close;
+    wrap.addEventListener('click',function(e){ if(e.target===wrap) close(); });
+    wrap.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
+    okBtn.onclick=function(){
+      var t=title.value.trim();
+      if(!t){ msg.textContent='标题不能为空'; title.focus(); return; }
+      var b=body.value.trim();
+      var msgs=[{role:'user',text:t}];
+      if(b) msgs.push({role:'assistant',text:b});
+      okBtn.disabled=true; msg.textContent='创建中…';
+      api('/api/notes','POST',{messages:msgs,commit:true}).then(function(d){
+        if(!d||!d.ok){ msg.textContent=(d&&d.message)||'创建失败'; okBtn.disabled=false; return; }
+        close(); toast('已创建');
+        load(d.id);
+      }).catch(function(e){ msg.textContent='创建失败：'+((e&&e.message)||e); okBtn.disabled=false; });
+    };
+  }
+
+  function removeNote(btn){
+    var id=btn.getAttribute('data-delnote'), title=btn.getAttribute('data-title')||'这篇';
+    if(!window.confirm('删除《'+title+'》？\n会移到存储区的 .trash，可以从那里找回；附件也一起删除。')) return;
+    btn.disabled=true;
+    fetch('/api/notes/'+encodeURIComponent(id)+'?confirm=1',{method:'DELETE',headers:reqHeaders()})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d||!d.ok){ toast((d&&d.message)||'删除失败',true); btn.disabled=false; return; }
+        toast('已删除，可在 .trash 找回');
+        current='';
+        detail.innerHTML='<p class="files-empty">已删除。从左侧选另一份。</p>';
+        load();
+      }).catch(function(e){ toast('删除失败：'+((e&&e.message)||e),true); btn.disabled=false; });
+  }
+
+  // ---- 导出 ----
+  function exportAll(fmt, btn){
+    var label=btn.textContent;
+    btn.disabled=true; btn.textContent='导出中…';
+    api('/api/notes/export?format='+fmt).then(function(d){
+      if(!d||!d.ok){ toast((d&&d.message)||'导出失败',true); return; }
+      saveBlob(d.content, d.filename||('notes.'+fmt), d.mime||'');
+      toast('已导出 '+(d.count||0)+' 篇');
+    }).catch(function(e){
+      toast('导出失败：'+((e&&e.message)||e),true);
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
+  }
+
+  // ---- 事件 ----
+  list.addEventListener('click',function(e){
+    var b=e.target.closest('.file-item'); if(b) select(b);
   });
 
   detail.addEventListener('click',function(e){
     var del=e.target.closest('[data-delnote]');
     if(del){ e.preventDefault(); removeNote(del); return; }
-    var a=e.target.closest('[data-asset]');
-    if(a){ e.preventDefault(); download(a.getAttribute('data-asset')); }
+    var asset=e.target.closest('[data-asset]');
+    if(asset){ e.preventDefault(); download(asset.getAttribute('data-asset')); return; }
+    var edit=e.target.closest('[data-edit]');
+    if(edit){ e.preventDefault(); openEditor(edit); return; }
+    var up=e.target.closest('[data-upload]');
+    if(up){ e.preventDefault(); if($('pfAssetFile')) $('pfAssetFile').click(); return; }
+    var open=e.target.closest('[data-openfile]');
+    if(open){
+      e.preventDefault();
+      var path=open.getAttribute('data-openfile')||''; if(!path) return;
+      api('/api/files/open','POST',{path:path}).then(function(d){
+        if(!d||!d.ok) toast((d&&d.message)||'打不开',true);
+      }).catch(function(){ toast('打不开系统编辑器',true); });
+    }
+  });
+
+  if($('pfAssetFile')) $('pfAssetFile').addEventListener('change',function(){
+    uploadAssets(this.files);
+    this.value='';      // 同一个文件连选两次也要能触发 change
   });
 
   if(search) search.addEventListener('input',function(){
@@ -146,21 +288,11 @@
     timer=setTimeout(function(){ load(); },240);   // 防抖：边打边搜会把每次按键都变成一次 BM25
   });
 
-  if($('pfExport')) $('pfExport').addEventListener('click',function(){
-    var btn=this, label=btn.textContent;
-    btn.disabled=true; btn.textContent='导出中…';
-    req('/api/notes/export?format=json').then(function(d){
-      if(!d||!d.ok){ toast((d&&d.message)||'导出失败',true); return; }
-      var blob=new Blob([d.content],{type:d.mime||'application/json;charset=utf-8'});
-      var url=URL.createObjectURL(blob), a=document.createElement('a');
-      a.href=url; a.download=d.filename||'notes.json';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){ URL.revokeObjectURL(url); },1000);
-      toast('已导出 '+(d.count||0)+' 篇');
-    }).catch(function(e){
-      toast('导出失败：'+((e&&e.message)||e),true);
-    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
-  });
+  if($('pfNew')) $('pfNew').addEventListener('click',newNote);
+  if($('pfExport')) $('pfExport').addEventListener('click',function(){ exportAll('json',this); });
+  if($('pfExportHtml')) $('pfExportHtml').addEventListener('click',function(){ exportAll('html',this); });
 
-  load();
+  // 抽屉点某篇会带 ?id= 过来，直接选中；没有就选第一篇
+  var m=/[?&]id=([^&]+)/.exec(location.search);
+  load(m?decodeURIComponent(m[1]):undefined);
 })();

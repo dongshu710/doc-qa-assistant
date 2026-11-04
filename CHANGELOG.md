@@ -2,6 +2,53 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.29.0] - 2026-11-04
+
+笔记入口收敛：**`/files` 成为唯一完整入口**，知识库只留只读语料。
+顺带清掉一批冗余——死代码、重复样式、各页面各写一份的工具函数。
+
+### 变更（入口，含破坏性）
+
+- **`/kb` 的「笔记」分区移除**（`kb.html` / `kb.js` / `kb.css`，约 420 行）。
+  它与 `/files` 的能力几乎完全重合：同一批笔记、两套列表、两套详情、两个删除按钮。
+  用户要记住「删笔记去哪个页面」，而答案是「两边都行」——这不是体验，是犹豫。
+  `/kb#notes` 会自动跳到 `/files`，老链接不会 404。
+- **`/files` 补齐承接能力**：新建笔记（标题 + 正文）、上传附件（单个 ≤ 8 MB）、
+  导出 HTML（原来只有 JSON）。再加上 1.28.1 已有的搜索、删除、附件下载、编辑原文，
+  `/files` 现在覆盖原先分散在两个入口的全部操作。
+- **侧栏「文件」抽屉降为「最近文件」**：只列最近 5 篇 + 「查看全部」。点任意一条带
+  `?id=` 跳到 `/files` 对应位置。抽屉不再内嵌详情与编辑——两套详情渲染器各自维护，
+  改一处漏一处，这次一并删掉。
+
+### 清理（冗余）
+
+- **前端工具函数收口到 `util.js`**（42 → 73 行）：`fmtTime` / `fmtBytes` / `reqHeaders` /
+  `saveBlob`。删掉各处副本：`esc`×3、`fmt(iso)`×2、`size`/`fmtBytes`×3、`headers()`×4，
+  以及四处各自实现的「Blob 下载」（files / files_page / ask 的 Markdown / kb 的 HTML）。
+- **删 6 个零引用函数**：`auth.public_names`、`keywords._sentence_for`、`keywords.term_count`、
+  `notes.assets.now_text`、`routing.is_page`、`webassets.path_of`。
+- **删 27 个无引用 CSS 类名**对应的规则（旧仪表盘/报告页残留：`donut`、`stat-strip`、
+  `dash-select`、`modal-card`、`grid2/3/4`、`set-note-*` 等），共 49 行。
+- **`.files-dot` 两份定义合并**：`base.css` 与 `files.css` 各一份，`top/right` 与尺寸都不同，
+  后加载者覆盖前者——改哪一份都不生效。
+- **`ask.css` 末尾 10 行无主题前缀的孤儿覆盖层**：5 条与主规则值完全相同，3 条改色的并回原规则
+  （计算值不变）。
+- **后端合并**：`_safe_kb_name` + `_safe_doc_name` → `_safe_name(name, exts, maxlen)`；
+  三处相同的 `_now()` → 新增 `src/timeutil.py` 的 `utc_now_iso()`；
+  页面清单从 `routing.PAGE_PREFIXES` + `read.py` 的 `if/elif` 两处登记 → `PAGE_ROUTES` 单一来源。
+
+### 兼容性
+
+- `GET /kb#notes` → 自动跳 `/files`
+- `/api/notes` 系列接口不变；MCP 工具不变
+- 抽屉里原来的「编辑原文 / 导出全部」入口移到 `/files`（能力都在，位置变了）
+
+### 测试
+
+- `tests/e2e_notes.mjs` 重写到 `/files`：新建、编辑原文、搜索、上传附件、导出 HTML、
+  窄屏无溢出、问答页存笔记，全通过
+- `tests/test_server.py` 增加两条断言：`/kb` 不得再出现 `panelNotes`、`/files` 必须有 `pfList`/`pfNew`
+
 ## [1.28.1] - 2026-11-04
 
 上一版留下的五条「产品取舍」逐条落地。核心是**同一个能力不该有两个入口、两套规矩**：

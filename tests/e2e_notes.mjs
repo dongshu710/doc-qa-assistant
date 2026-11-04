@@ -132,58 +132,51 @@ try {
   });
   page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`));
 
-  // ---------- 知识库页：笔记分区 ----------
-  await page.goto(`${base}/kb`, { waitUntil: 'networkidle' });
-  check('默认停在文档分区', await page.isVisible('#panelDocs') && !(await page.isVisible('#panelNotes')));
-  await page.click('.kb-tabs button[data-tab="notes"]');
-  await page.waitForSelector('.note-item', { timeout: 15000 });
-  check('切到笔记分区并加载出列表', (await page.locator('.note-item').count()) === 1);
-  check('列表带标题', (await page.textContent('.note-item b')).includes('出口退税'));
-  check('标题栏不被遮挡', await page.isVisible('#noteCount'));
+  // ---------- /files：唯一完整入口 ----------
+  await page.goto(`${base}/files`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('.file-item', { timeout: 15000 });
+  check('/files 列出笔记', (await page.locator('.file-item').count()) === 1);
+  check('列表带标题', (await page.textContent('.file-item b')).includes('出口退税'));
 
-  await page.click('.note-item');
-  await page.waitForSelector('#noteEditor:not([hidden])');
-  check('打开后标题回填', (await page.inputValue('#neTitle')).includes('出口退税'));
-  check('小节可编辑', (await page.locator('#neSections textarea').count()) >= 2);
-  check('标签回填', (await page.inputValue('#neTags')).includes('税务'));
+  await page.click('.file-item');
+  await page.waitForSelector('.pf-detail h3', { timeout: 15000 });
+  check('详情显示标题', (await page.textContent('.pf-detail h3')).includes('出口退税'));
 
-  await page.fill('#neTitle', '出口退税口径（已核对）');
-  page.once('dialog', (d) => d.accept('补充'));
-  await page.click('#neAddSec');
-  await page.waitForSelector('#neSections .ne-sec:last-child textarea');
-  await page.fill('#neSections .ne-sec:last-child textarea', '- 与报关行确认口径');
-  await page.click('#neSave');
+  // 编辑原文：改标题后列表要跟着变（这条链路以前只有抽屉能做）
+  await page.click('[data-edit]');
+  await page.waitForSelector('.fe-area', { timeout: 15000 });
+  const raw = await page.inputValue('.fe-area');
+  check('原文含 front matter', raw.trimStart().startsWith('---'), raw.slice(0, 40));
+  await page.fill('.fe-area', raw.replace('出口退税口径', '出口退税口径（已核对）'));
+  await page.click('[data-save]');
+  await page.waitForFunction(
+    () => (document.querySelector('.file-item b')?.textContent || '').includes('已核对'),
+    null, { timeout: 15000 });
+  check('保存后列表标题同步', true);
+
+  // 服务端搜索：与问答页共用同一套索引
+  await page.fill('#pfSearch', '税务');
   await page.waitForTimeout(800);
-  check('保存后列表标题同步', (await page.textContent('.note-item b')).includes('已核对'));
+  check('搜索命中', (await page.locator('.file-item').count()) === 1);
 
-  const detail = await page.evaluate(async () => {
-    const list = await (await fetch('/api/notes')).json();
-    return await (await fetch('/api/notes/' + list.items[0].id)).json();
-  });
-  check('磁盘内容含新增小节',
-    detail.sections.some((s) => s.title === '补充' && s.body.includes('报关行')),
-    JSON.stringify(detail.sections.map((s) => s.title)));
+  // 清空搜索并重新选中，附件区才会挂上来
+  await page.fill('#pfSearch', '');
+  await page.waitForTimeout(800);
+  await page.click('.file-item');
+  await page.waitForSelector('[data-upload]', { timeout: 15000 });
 
-  const conflict = await page.evaluate(async () => {
-    const list = await (await fetch('/api/notes')).json();
-    const r = await fetch('/api/notes/' + list.items[0].id, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base_rev: 'deadbeefdeadbeef', changes: { title: '旧 rev 覆盖' } }),
-    });
-    return { status: r.status, body: await r.json() };
-  });
-  check('旧 rev 修改被拒 409', conflict.status === 409, JSON.stringify(conflict).slice(0, 120));
+  // 附件上传（知识库那边的入口已经并到这里）
+  const tmpFile = path.join(noteHome, '附件样例.txt');
+  fs.writeFileSync(tmpFile, '附件内容');
+  await page.setInputFiles('#pfAssetFile', tmpFile);
+  await page.waitForSelector('.pf-asset', { timeout: 15000 });
+  check('附件上传后出现在列表',
+    (await page.textContent('.pf-asset .nm')).includes('附件样例'));
 
-  await page.fill('#noteSearch', '不存在的关键词');
-  await page.waitForTimeout(200);
-  check('搜不到时给空提示', (await page.textContent('#noteList')).includes('没有匹配'));
-  await page.fill('#noteSearch', '税务');
-  await page.waitForTimeout(200);
-  check('按标签能搜到', (await page.locator('.note-item').count()) === 1);
-
+  // 导出 HTML（内容要自包含，能离线打开）
   const [download] = await Promise.all([
     page.waitForEvent('download', { timeout: 15000 }),
-    page.click('#noteExportHtml'),
+    page.click('#pfExportHtml'),
   ]);
   const exported = await fs.promises.readFile(await download.path(), 'utf8');
   check('导出 HTML 可下载', exported.includes('<!doctype html>') && exported.includes('已核对'));

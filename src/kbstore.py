@@ -33,7 +33,7 @@ import os
 import difflib
 import shutil
 import time
-from datetime import datetime, timezone
+from .timeutil import utc_now_iso
 
 from . import locks
 
@@ -45,7 +45,8 @@ class KnowledgeError(RuntimeError):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # 口径统一在 timeutil：三份相同实现分散在三个模块，改一处漏两处就是时区 bug
+    return utc_now_iso()
 
 
 def _sha256(data: bytes) -> str:

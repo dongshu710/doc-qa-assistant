@@ -61,7 +61,7 @@ printf '%s\n%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"prot
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | NOTE_HOME=/tmp/notes python -m src.notes.mcp_server
 ```
 
-期望：`/api/notes` 返回 `201` 与 `path`；MCP 第二条返回 7 个工具名；`/kb#notes` 能看到这篇。
+期望：`/api/notes` 返回 `201` 与 `path`；MCP 第二条返回 7 个工具名；`/files` 能看到这篇。
 
 ## 4. 发布到 GitHub
 

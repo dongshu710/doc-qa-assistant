@@ -23,7 +23,7 @@ import json
 import math
 import os
 import threading
-from datetime import datetime, timezone
+from .timeutil import utc_now_iso
 
 from .embeddings import EmbeddingCache, EmbeddingError
 
@@ -38,7 +38,8 @@ def l2_normalize(vec: list[float]) -> list[float]:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # 口径统一在 timeutil：三份相同实现分散在三个模块，改一处漏两处就是时区 bug
+    return utc_now_iso()
 
 
 def _try_import_numpy():

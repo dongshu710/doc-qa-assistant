@@ -13,6 +13,7 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 from .. import (kbstore,
+                routing,
                 suggest)
 from .. import update as update_mod
 from ..metrics import summarize
@@ -22,7 +23,7 @@ from ..theme import FILES_PAGE
 from ..version import __version__
 from ..web_pages import ASK_HTML, KB_HTML
 from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
-                     _safe_kb_name)
+                     _safe_name)
 from .base import sse_acquire, sse_release
 
 
@@ -134,19 +135,17 @@ def make_read(deps):
             return
 
         def _get_page_html(self, path: str, qs: dict) -> None:
-            """三张页面 + 旧入口回落；`/files` 是可收藏的固定地址。"""
-            if path in ("/", "/index.html", "/insights", "/dashboard", "/report"):
-                # 只留问答与知识库两页，旧入口统一回落到问答页，收藏夹不会 404
+            """页面分派：清单在 `routing.PAGE_ROUTES`，这里只负责把键换成 HTML。"""
+            if path in routing.PAGE_ALIASES:
+                # 只留问答、知识库、文件三页，旧入口统一回落到问答页
                 self._redirect("/ask")
-            elif path == "/ask":
-                self._send(200, ASK_HTML, "text/html; charset=utf-8")
-            elif path == "/files":
-                # 能被收藏、能被智能体直接打开的固定地址：加不进客户端工具栏时用这个
-                self._send(200, FILES_PAGE, "text/html; charset=utf-8")
-            elif path == "/kb":
-                self._send(200, KB_HTML, "text/html; charset=utf-8")
-            else:
+                return
+            page = routing.PAGE_ROUTES.get(path)
+            if page is None:
                 self._not_found(self.command, path)
+                return
+            html = {"ask": ASK_HTML, "files": FILES_PAGE, "kb": KB_HTML}[page]
+            self._send(200, html, "text/html; charset=utf-8")
 
         def _get_meta(self, path: str, qs: dict) -> None:
             """发布与运行时自述：L3 报表、OpenAPI、健康检查、Prometheus。"""
@@ -309,7 +308,7 @@ def make_read(deps):
                     "keywords": pipe.keywords.summary(),
                 })
             elif path == "/api/keywords":
-                name = _safe_kb_name((qs.get("name") or [""])[0])
+                name = _safe_name((qs.get("name") or [""])[0])
                 if name:
                     doc_id = name.rsplit(".", 1)[0]
                     if doc_id not in pipe.keywords.docs:

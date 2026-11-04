@@ -54,8 +54,16 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/mcp", API),                    # MCP over HTTP：能读写笔记，等同于 notes 接口
 )
 
-PAGE_PREFIXES = ("", "/ask", "/kb", "/files", "/index.html", "/insights",
-                 "/dashboard", "/report", "/favicon.ico")
+# 页面清单只登记一次：`_get_page_html` 按这里的键去取 HTML。
+# 以前 `PAGE_PREFIXES`（本文件）与 `read.py` 的 if/elif 各写一遍页面路径，
+# 加一个页面要改两处，漏一处的表现是「收藏夹里的地址突然 404」。
+PAGE_ROUTES: dict[str, str] = {
+    "/ask": "ask",
+    "/files": "files",      # 能被收藏、能被智能体直接打开的固定地址
+    "/kb": "kb",
+}
+# 旧入口：只做跳转，收藏夹里的老地址不至于 404
+PAGE_ALIASES: tuple[str, ...] = ("/", "/index.html", "/insights", "/dashboard", "/report")
 
 
 def _matches(path: str, prefix: str) -> bool:
@@ -76,10 +84,6 @@ def level_for(path: str) -> str:
     if path.startswith("/api/"):
         return API
     return OPEN
-
-
-def is_page(path: str) -> bool:
-    return path in PAGE_PREFIXES or not path.startswith("/api/")
 
 
 def describe() -> list[dict]:
