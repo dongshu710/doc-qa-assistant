@@ -6,7 +6,7 @@
 .ask-main{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;padding:0 20px;}
 .hero{flex:1;display:flex;align-items:center;justify-content:center;width:100%;padding:4vh 0 20px;}
 .hero-inner{width:100%;max-width:720px;text-align:center;}
-.hero-mark{width:48px;height:48px;border-radius:15px;background:var(--brand);color:#fff;
+.hero-mark{width:48px;height:48px;border-radius:15px;background:var(--brand);color:var(--on-brand);
   display:flex;align-items:center;justify-content:center;margin:0 auto 18px;}
 .hero-mark .mark{width:48px;height:48px;border-radius:15px;background:transparent;box-shadow:none;}
 .hero-mark .mark svg{width:26px;height:26px;}
@@ -93,9 +93,9 @@
   .composer{position:sticky;bottom:0;background:var(--surface);padding-bottom:10px;}
 }
 
-.src-mask{position:fixed;inset:0;background:rgba(10,16,32,.34);z-index:80;}
-.src-drawer{position:fixed;top:0;right:0;height:100%;width:min(540px,94vw);background:#fff;z-index:81;
-  box-shadow:-24px 0 60px -30px rgba(10,16,32,.55);display:flex;flex-direction:column;
+.src-mask{position:fixed;inset:0;background:var(--mask);z-index:80;}
+.src-drawer{position:fixed;top:0;right:0;height:100%;width:min(540px,94vw);background:var(--surface);z-index:81;
+  box-shadow:-24px 0 60px -30px rgba(24,22,18,.55);display:flex;flex-direction:column;
   transform:translateX(8px);opacity:0;transition:transform .18s ease,opacity .18s ease;}
 .src-drawer.open{transform:none;opacity:1;}
 .src-head{display:flex;align-items:flex-start;gap:12px;padding:16px 18px 13px;border-bottom:1px solid var(--line);}
@@ -106,8 +106,8 @@
 .src-close:hover{background:var(--line);color:var(--ink);}
 .src-text{margin:0;padding:18px;overflow:auto;white-space:pre-wrap;word-break:break-word;
   font-size:13px;line-height:1.9;color:var(--text);font-family:inherit;flex:1;}
-.src-text mark{background:#fff3bf;color:#6b4b00;border-radius:3px;padding:0 1px;}
-.ref b{width:16px;height:16px;border-radius:5px;background:var(--brand);color:#fff;font-size:12px;
+.src-text mark{background:var(--mark-bg);color:var(--mark-fg);border-radius:3px;padding:0 1px;}
+.ref b{width:16px;height:16px;border-radius:5px;background:var(--brand);color:var(--on-brand);font-size:12px;
   display:flex;align-items:center;justify-content:center;font-weight:600;flex:none;}
 .ans-foot{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px;padding-top:11px;border-top:1px dashed var(--line);}
 .ans-foot .pill{font-size:12px;padding:2px 8px;}
@@ -153,7 +153,7 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 
 /* ---------- 存为笔记 ---------- */
 .fb-save{display:inline-flex;align-items:center;gap:5px;}
-.note-mask{position:fixed;inset:0;background:rgba(10,16,32,.42);z-index:60;backdrop-filter:blur(2px);}
+.note-mask{position:fixed;inset:0;background:var(--mask-2);z-index:60;backdrop-filter:blur(2px);}
 .note-dialog{position:fixed;z-index:61;left:50%;top:50%;transform:translate(-50%,-50%);
   width:min(560px,calc(100vw - 32px));max-height:min(660px,calc(100vh - 60px));display:flex;flex-direction:column;
   background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh-3);overflow:hidden;}

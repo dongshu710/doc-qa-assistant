@@ -2,7 +2,7 @@
    和设置抽屉同一套视觉，但层级更低（110）：
    先看智能体接线，再进设置改具体参数，不会互相盖住。
    注意别用 .note-* 那套类名——那是问答页私有的，/kb 和 /files 上没有。 */
-.agent-mask{position:fixed;inset:0;background:rgba(12,16,28,.38);z-index:110;backdrop-filter:blur(2px);}
+.agent-mask{position:fixed;inset:0;background:var(--mask);z-index:110;backdrop-filter:blur(2px);}
 .agent-dlg{position:fixed;z-index:111;left:50%;top:50%;transform:translate(-50%,-50%);
   width:min(600px,calc(100vw - 32px));max-height:min(720px,calc(100vh - 48px));
   display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);
@@ -42,9 +42,9 @@
   .agent-dlg{width:100vw;max-height:84vh;left:0;top:auto;bottom:0;transform:none;
     border-radius:16px 16px 0 0;}
 }
-[data-theme="dark"] .agent-state{background:#24262c;border-color:#2e3037;}
-[data-theme="dark"] .agent-foot{background:#1d1f24;}
-[data-theme="dark"] .agent-pre{background:#1d1f24;}
+[data-theme="dark"] .agent-state{background:var(--surface-2);border-color:var(--line);}
+[data-theme="dark"] .agent-foot{background:var(--surface);}
+[data-theme="dark"] .agent-pre{background:var(--surface);}
 
 /* 侧栏「智能体」按钮上的状态点：接出工具后点亮。
    放在这里而不是 base.css，是因为它属于这一块功能，删功能时一起删。 */

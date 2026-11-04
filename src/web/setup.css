@@ -1,7 +1,7 @@
 /* ============ 首次运行：建存储区 ============
    层级 300：比设置（120）、智能体（110）、文件（100）都高，
    因为这件事没做完之前，别的开关都没有意义（内容还无处可存）。 */
-.setup-mask{position:fixed;inset:0;z-index:300;background:rgba(28,26,22,.45);backdrop-filter:blur(3px);}
+.setup-mask{position:fixed;inset:0;z-index:300;background:var(--mask-2);backdrop-filter:blur(3px);}
 .setup-card{position:fixed;z-index:301;left:50%;top:50%;transform:translate(-50%,-50%);
   width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;
   padding:30px 30px 22px;border-radius:20px;background:var(--surface);
