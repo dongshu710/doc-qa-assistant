@@ -20,39 +20,46 @@ from .theme import BASE_CSS, BRAND, THEME_HEAD, THEME_JS, footer, nav
 from .version import __version__
 
 REPORT_CSS = """
-/* ---------- 汇报页 ---------- */
-.rp-hero{position:relative;overflow:hidden;background:#070c1b;color:#eaf0ff;border-radius:20px;padding:36px 34px 32px;margin-bottom:16px;
-  box-shadow:0 30px 70px -40px rgba(7,12,27,.75);}
+/* ---------- 汇报页 ----------
+   .rp-hero 是深色封面：它在亮色和暗色主题下都保持深底，所以这一块的配色
+   故意不走 var(--surface) 之类会翻转的令牌，用的是固定暖黑。
+   除这块之外一律走令牌——翻不翻是设计决定，不是漏写。 */
+/* 汇报页整页滚动：主站是 .main 内部滚动，这里让 body 滚——
+   目录高亮脚本用的是 window.scrollY，整页滚动才对得上 */
+.page-insights .main{height:auto;min-height:100vh;}
+.page-insights .stage{overflow:visible;}
+.rp-hero{position:relative;overflow:hidden;background:#1b1a17;color:#e6e0d4;border-radius:20px;padding:36px 34px 32px;margin-bottom:16px;
+  box-shadow:0 30px 70px -40px rgba(27,26,23,.75);}
 .rp-hero::before{content:"";position:absolute;inset:0;
-  background:radial-gradient(560px 300px at 6% 0%,rgba(47,92,246,.42),transparent 62%),
-             radial-gradient(520px 340px at 96% 10%,rgba(122,92,251,.34),transparent 66%);}
+  background:radial-gradient(560px 300px at 6% 0%,rgba(47,111,94,.42),transparent 62%),
+             radial-gradient(520px 340px at 96% 10%,rgba(188,217,205,.26),transparent 66%);}
 .rp-hero::after{content:"";position:absolute;inset:0;
   background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
   background-size:42px 42px;mask-image:radial-gradient(600px 320px at 20% 10%,#000,transparent 78%);
   -webkit-mask-image:radial-gradient(600px 320px at 20% 10%,#000,transparent 78%);}
 .rp-hero > *{position:relative;}
-.rp-hero .eyebrow{color:#9db4ff;margin-bottom:12px;}
-.rp-hero .eyebrow::before{background:#7f9cff;}
-.rp-hero h1{font-size:clamp(23px,2.4vw,31px);margin:0 0 10px;letter-spacing:-.03em;color:#fff;line-height:1.28;}
-.rp-hero p{color:#a7b6d6;max-width:780px;margin:0 0 16px;line-height:1.85;font-size:13.5px;}
+.rp-hero .eyebrow{color:#bcd9cd;margin-bottom:12px;}
+.rp-hero .eyebrow::before{background:#82c0a9;}
+.rp-hero h1{font-size:clamp(23px,2.4vw,31px);margin:0 0 10px;letter-spacing:-.03em;color:#f2efe8;line-height:1.28;}
+.rp-hero p{color:#c9c3b8;max-width:780px;margin:0 0 16px;line-height:1.85;font-size:13.5px;}
 .rp-hero .badges{display:flex;flex-wrap:wrap;gap:7px;}
-.rp-hero .b{font-size:11.5px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.09);color:#dbe4fb;border:1px solid rgba(255,255,255,.1);}
-.rp-hero .b.solid{background:rgba(47,92,246,.9);border-color:rgba(120,150,255,.5);color:#fff;}
+.rp-hero .b{font-size:11.5px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.09);color:#e6e0d4;border:1px solid rgba(255,255,255,.1);}
+.rp-hero .b.solid{background:rgba(47,111,94,.92);border-color:rgba(188,217,205,.45);color:#fff;}
 .rp-hero .actions{margin-top:20px;display:flex;gap:9px;flex-wrap:wrap;align-items:center;}
-.rp-hero a.btn{background:#fff;color:#101a3a;box-shadow:0 10px 24px -16px rgba(0,0,0,.8);}
-.rp-hero a.btn:hover{background:#f2f5ff;}
-.rp-hero a.btn.ghost2{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.24);color:#e2e8f0;}
+.rp-hero a.btn{background:#fff;color:#12201b;box-shadow:0 10px 24px -16px rgba(0,0,0,.8);}
+.rp-hero a.btn:hover{background:#e4efe9;}
+.rp-hero a.btn.ghost2{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.24);color:#e6e0d4;}
 .rp-hero a.btn.ghost2:hover{background:rgba(255,255,255,.14);}
 
 /* 目录 */
-.rp-nav{position:sticky;top:var(--nav-h);z-index:30;display:flex;gap:2px;overflow:auto;scrollbar-width:none;
+.rp-nav{position:sticky;top:0;z-index:30;display:flex;gap:2px;overflow:auto;scrollbar-width:none;
   padding:9px 0;margin-bottom:16px;background:linear-gradient(180deg,rgba(246,247,251,.97) 62%,rgba(246,247,251,0));}
 .rp-nav::-webkit-scrollbar{display:none;}
 .rp-nav a{padding:6px 11px;border-radius:8px;font-size:12.5px;color:var(--muted);white-space:nowrap;transition:background .15s,color .15s;}
-.rp-nav a:hover{background:#eef1f9;color:var(--ink);}
-.rp-nav a.active{background:#fff;color:var(--brand-600);font-weight:600;border:1px solid var(--line);box-shadow:var(--sh-1);}
+.rp-nav a:hover{background:var(--hover);color:var(--ink);}
+.rp-nav a.active{background:var(--surface);color:var(--brand-600);font-weight:600;border:1px solid var(--line);box-shadow:var(--sh-1);}
 
-.sec{margin-bottom:14px;scroll-margin-top:calc(var(--nav-h) + 58px);}
+.sec{margin-bottom:14px;scroll-margin-top:58px;}
 .sec-head{display:flex;align-items:center;gap:10px;margin-bottom:13px;flex-wrap:wrap;min-height:24px;}
 .sec-head h2{font-size:16px;letter-spacing:-.02em;}
 .sec-head .n{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:5px;padding:2px 6px;}
@@ -62,23 +69,23 @@ REPORT_CSS = """
 @media (max-width:860px){.two-col{grid-template-columns:1fr;}}
 .axis{display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:13px;line-height:1.8;}
 .axis .ic{flex:none;width:19px;height:19px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;margin-top:3px;font-weight:700;}
-.axis .ic.is{background:#e9f9f1;color:#0a7a4d;}
-.axis .ic.not{background:#fef1f0;color:#a91e13;}
+.axis .ic.is{background:var(--ok-soft);color:var(--ok);}
+.axis .ic.not{background:var(--bad-soft);color:var(--bad);}
 .axis b{font-weight:650;color:var(--ink);}
 .score{display:inline-block;min-width:36px;text-align:center;font-weight:650;border-radius:6px;padding:2px 6px;font-variant-numeric:tabular-nums;}
-.score.s5,.score.s4{background:#e9f9f1;color:#0a7a4d;}
-.score.s3{background:#fff7e8;color:#8f5400;}
-.score.s2,.score.s1{background:#fef1f0;color:#a91e13;}
-.arch{background:linear-gradient(180deg,#fbfcff,#fff);border:1px solid var(--line);border-radius:14px;padding:10px 8px;}
-.rp-list{margin:0;padding-left:18px;line-height:1.95;font-size:12.8px;color:#3b4657;}
+.score.s5,.score.s4{background:var(--ok-soft);color:var(--ok);}
+.score.s3{background:var(--warn-soft);color:var(--warn);}
+.score.s2,.score.s1{background:var(--bad-soft);color:var(--bad);}
+.arch{background:linear-gradient(180deg,var(--surface-2),var(--surface));border:1px solid var(--line);border-radius:14px;padding:10px 8px;}
+.rp-list{margin:0;padding-left:18px;line-height:1.95;font-size:12.8px;color:var(--text);}
 .rp-list li{margin-bottom:3px;}
-.rp-list li::marker{color:#a9b3c6;}
+.rp-list li::marker{color:var(--faint);}
 .foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);color:var(--faint);font-size:11.5px;line-height:1.85;}
 
 /* L3 语义质量 */
 .rp-l3{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;}
 .rp-scores{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
-.rp-score{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:linear-gradient(180deg,#fff,#fbfcff);}
+.rp-score{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:linear-gradient(180deg,var(--surface),var(--surface-2));}
 .rp-score .k{font-size:11.5px;color:var(--muted);}
 .rp-score .v{font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.035em;margin:3px 0 8px;line-height:1.1;font-variant-numeric:tabular-nums;}
 .rp-score .v small{font-size:11.5px;color:var(--faint);font-weight:500;letter-spacing:0;margin-left:2px;}
@@ -86,14 +93,14 @@ REPORT_CSS = """
 .rp-l3-note{font-size:12.5px;color:var(--muted);line-height:1.9;}
 .rp-l3-note b{color:var(--ink);font-weight:600;}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:5px 10px;border-radius:999px;
-  border:1px solid var(--line);background:#f7f9fd;color:#475467;font-weight:500;}
+  border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-weight:500;}
 @media (max-width:860px){.rp-l3{grid-template-columns:1fr;gap:16px;}}
 
 /* 让汇报页的 6 个 KPI 排成整齐的 3 × 2 */
 .kpis.six{grid-template-columns:repeat(3,1fr);}
 @media (max-width:900px){.kpis.six{grid-template-columns:repeat(2,1fr);}}
 
-.rp-hero .live{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#a7f3d0;}
+.rp-hero .live{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#8fd4ae;}
 .rp-hero .live i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.2);}
 @media (max-width:640px){
   .rp-hero{padding:26px 20px;border-radius:16px;}
@@ -108,7 +115,7 @@ REPORT_CSS = """
   body{background:#fff;}
   .nav,.site-foot,.rp-nav,.rp-hero .actions{display:none !important;}
   .card,.kpi,.sec{break-inside:avoid;}
-  .rp-hero{background:#0f172a !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .rp-hero{background:#1b1a17 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 }
 """
 
@@ -298,51 +305,51 @@ ARCH_SVG = """
 <svg class="arch" viewBox="0 0 960 232" width="100%" role="img" aria-label="问答链路架构图">
   <defs>
     <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#b6c0d4"/>
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--faint)"/>
     </marker>
   </defs>
   <g font-family="-apple-system, 'Microsoft YaHei', sans-serif">
-    <rect x="18" y="18" width="270" height="64" rx="11" fill="#fff" stroke="#dfe5f1"/>
-    <circle cx="39" cy="40" r="9" fill="#eef2ff"/>
-    <text x="39" y="43.6" font-size="10" font-weight="700" fill="#2f5cf6" text-anchor="middle">1</text>
-    <text x="55" y="44" font-size="12.5" font-weight="600" fill="#0a1020">输入校验</text>
-    <text x="55" y="62" font-size="10.5" fill="#6b7280">归一化去零宽 · 注入 / 越权 / 荐股拦截</text>
+    <rect x="18" y="18" width="270" height="64" rx="11" fill="var(--surface)" stroke="var(--line)"/>
+    <circle cx="39" cy="40" r="9" fill="var(--brand-soft)"/>
+    <text x="39" y="43.6" font-size="10" font-weight="700" fill="var(--brand)" text-anchor="middle">1</text>
+    <text x="55" y="44" font-size="12.5" font-weight="600" fill="var(--ink)">输入校验</text>
+    <text x="55" y="62" font-size="10.5" fill="var(--muted)">归一化去零宽 · 注入 / 越权 / 荐股拦截</text>
 
-    <rect x="345" y="18" width="270" height="64" rx="11" fill="#fff" stroke="#dfe5f1"/>
-    <circle cx="366" cy="40" r="9" fill="#eef2ff"/>
-    <text x="366" y="43.6" font-size="10" font-weight="700" fill="#2f5cf6" text-anchor="middle">2</text>
-    <text x="382" y="44" font-size="12.5" font-weight="600" fill="#0a1020">向量召回 + 重排</text>
-    <text x="382" y="62" font-size="10.5" fill="#6b7280">字符 n-gram 向量 · 词覆盖 / 长片段重排</text>
+    <rect x="345" y="18" width="270" height="64" rx="11" fill="var(--surface)" stroke="var(--line)"/>
+    <circle cx="366" cy="40" r="9" fill="var(--brand-soft)"/>
+    <text x="366" y="43.6" font-size="10" font-weight="700" fill="var(--brand)" text-anchor="middle">2</text>
+    <text x="382" y="44" font-size="12.5" font-weight="600" fill="var(--ink)">向量召回 + 重排</text>
+    <text x="382" y="62" font-size="10.5" fill="var(--muted)">字符 n-gram 向量 · 词覆盖 / 长片段重排</text>
 
-    <rect x="672" y="18" width="270" height="64" rx="11" fill="#fffaef" stroke="#f2dcb0"/>
-    <circle cx="693" cy="40" r="9" fill="#fdeccc"/>
-    <text x="693" y="43.6" font-size="10" font-weight="700" fill="#b26a00" text-anchor="middle">3</text>
-    <text x="709" y="44" font-size="12.5" font-weight="600" fill="#0a1020">置信度闸门</text>
-    <text x="709" y="62" font-size="10.5" fill="#92703a">低于阈值返回未命中 · 附相似问题</text>
+    <rect x="672" y="18" width="270" height="64" rx="11" fill="var(--warn-soft)" stroke="var(--warn)"/>
+    <circle cx="693" cy="40" r="9" fill="var(--warn-soft)"/>
+    <text x="693" y="43.6" font-size="10" font-weight="700" fill="var(--warn)" text-anchor="middle">3</text>
+    <text x="709" y="44" font-size="12.5" font-weight="600" fill="var(--ink)">置信度闸门</text>
+    <text x="709" y="62" font-size="10.5" fill="var(--warn)">低于阈值返回未命中 · 附相似问题</text>
 
-    <rect x="672" y="150" width="270" height="64" rx="11" fill="#eef2ff" stroke="#cfd9fb"/>
-    <circle cx="693" cy="172" r="9" fill="#dfe6ff"/>
-    <text x="693" y="175.6" font-size="10" font-weight="700" fill="#2449d8" text-anchor="middle">4</text>
-    <text x="709" y="176" font-size="12.5" font-weight="600" fill="#0a1020">生成层</text>
-    <text x="709" y="194" font-size="10.5" fill="#4b5f9e">LLM 生成 · 超时重试 · 抽取式兜底</text>
+    <rect x="672" y="150" width="270" height="64" rx="11" fill="var(--brand-soft)" stroke="var(--brand-line)"/>
+    <circle cx="693" cy="172" r="9" fill="var(--brand-tint)"/>
+    <text x="693" y="175.6" font-size="10" font-weight="700" fill="var(--brand-600)" text-anchor="middle">4</text>
+    <text x="709" y="176" font-size="12.5" font-weight="600" fill="var(--ink)">生成层</text>
+    <text x="709" y="194" font-size="10.5" fill="var(--muted)">LLM 生成 · 超时重试 · 抽取式兜底</text>
 
-    <rect x="345" y="150" width="270" height="64" rx="11" fill="#fff" stroke="#dfe5f1"/>
-    <circle cx="366" cy="172" r="9" fill="#eef2ff"/>
-    <text x="366" y="175.6" font-size="10" font-weight="700" fill="#2f5cf6" text-anchor="middle">5</text>
-    <text x="382" y="176" font-size="12.5" font-weight="600" fill="#0a1020">引用校验</text>
-    <text x="382" y="194" font-size="10.5" fill="#6b7280">无有效 [n] → 降级为可追溯答案</text>
+    <rect x="345" y="150" width="270" height="64" rx="11" fill="var(--surface)" stroke="var(--line)"/>
+    <circle cx="366" cy="172" r="9" fill="var(--brand-soft)"/>
+    <text x="366" y="175.6" font-size="10" font-weight="700" fill="var(--brand)" text-anchor="middle">5</text>
+    <text x="382" y="176" font-size="12.5" font-weight="600" fill="var(--ink)">引用校验</text>
+    <text x="382" y="194" font-size="10.5" fill="var(--muted)">无有效 [n] → 降级为可追溯答案</text>
 
-    <rect x="18" y="150" width="270" height="64" rx="11" fill="#eafaf2" stroke="#c4eeda"/>
-    <circle cx="39" cy="172" r="9" fill="#d3f4e4"/>
-    <text x="39" y="175.6" font-size="10" font-weight="700" fill="#0a7a4d" text-anchor="middle">6</text>
-    <text x="55" y="176" font-size="12.5" font-weight="600" fill="#0a1020">答案 · 引用 · 观测</text>
-    <text x="55" y="194" font-size="10.5" fill="#2f7d5e">trace · 审计 · 指标看板</text>
+    <rect x="18" y="150" width="270" height="64" rx="11" fill="var(--ok-soft)" stroke="var(--ok)"/>
+    <circle cx="39" cy="172" r="9" fill="var(--ok-soft)"/>
+    <text x="39" y="175.6" font-size="10" font-weight="700" fill="var(--ok)" text-anchor="middle">6</text>
+    <text x="55" y="176" font-size="12.5" font-weight="600" fill="var(--ink)">答案 · 引用 · 观测</text>
+    <text x="55" y="194" font-size="10.5" fill="var(--ok)">trace · 审计 · 指标看板</text>
 
-    <line x1="292" y1="50" x2="338" y2="50" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
-    <line x1="619" y1="50" x2="665" y2="50" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
-    <line x1="807" y1="86" x2="807" y2="143" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
-    <line x1="668" y1="182" x2="622" y2="182" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
-    <line x1="341" y1="182" x2="295" y2="182" stroke="#b6c0d4" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="292" y1="50" x2="338" y2="50" stroke="var(--faint)" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="619" y1="50" x2="665" y2="50" stroke="var(--faint)" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="807" y1="86" x2="807" y2="143" stroke="var(--faint)" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="668" y1="182" x2="622" y2="182" stroke="var(--faint)" stroke-width="1.3" marker-end="url(#ar)"/>
+    <line x1="341" y1="182" x2="295" y2="182" stroke="var(--faint)" stroke-width="1.3" marker-end="url(#ar)"/>
   </g>
 </svg>
 """
@@ -558,8 +565,10 @@ def render(data: dict, standalone: bool = False) -> str:
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:,">
 <title>项目汇报 · {BRAND}</title><style>{BASE_CSS}{REPORT_CSS}</style></head>
-<body>
+<body class="page-insights">
+<div class="app">
 {header}
+<div class="main"><div class="stage stage-insights">
 <main class="wrap">
 
 <section class="rp-hero">
@@ -714,6 +723,8 @@ python -m src.report --out dist/report.html</pre>
 </div>
 </main>
 {footer(links=not standalone)}
+</div></div>
+</div>
 <script>
 (function(){{
   var links=[].slice.call(document.querySelectorAll('#rpNav a'));

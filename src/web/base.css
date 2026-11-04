@@ -471,16 +471,9 @@ pre.cmd .c{color:#8a857c;}
 [data-theme="dark"] .tabs a.active{background:var(--surface);border-color:var(--line);}
 
 /* ---------- 汇报页 ---------- */
-[data-theme="dark"] .rp-nav{background:linear-gradient(180deg,rgba(11,17,32,.97) 62%,rgba(11,17,32,0));}
-[data-theme="dark"] .rp-nav a:hover{background:#1c2942;color:var(--ink);}
+[data-theme="dark"] .rp-nav{background:linear-gradient(180deg,rgba(24,22,18,.97) 62%,rgba(24,22,18,0));}
+[data-theme="dark"] .rp-nav a:hover{background:var(--hover);color:var(--ink);}
 [data-theme="dark"] .rp-nav a.active{background:var(--surface);border-color:var(--line);}
-[data-theme="dark"] .arch{background:linear-gradient(180deg,#141f38,#111827);}
-[data-theme="dark"] .rp-score{background:linear-gradient(180deg,#141f38,#111827);}
-[data-theme="dark"] .rp-list{color:#c3ccdf;}
-[data-theme="dark"] .rp-list li::marker{color:#6b7a96;}
-[data-theme="dark"] .axis .ic.is,.score.s5,.score.s4{background:#0f2f26;color:#6ee7b7;}
-[data-theme="dark"] .axis .ic.not,.score.s2,.score.s1{background:#3a1518;color:#fca5a5;}
-[data-theme="dark"] .score.s3{background:#33260c;color:#fcd34d;}
 
 /* ---------- 减动效 ----------
    系统开启「减少动态效果」后，所有过渡/动画压到 0.01ms：
