@@ -10,10 +10,17 @@
     python tools/push_via_api.py                  # 提交信息取本地 HEAD 的 subject
     python tools/push_via_api.py -m "全量提交信息"
 
-副作用（必须知道）：远端 commit 的 SHA 和本地不一样——GitHub 会把 `+08:00` 规范成 `Z`，
-父提交、时间戳都要重新拼，哈希必然变。所以推完之后要：
-    git fetch origin && git reset --hard origin/main
-否则本地继续提交再 push 会被判成「历史分叉」。
+SHA 一致性：建 commit 时会把本地 HEAD 的 author/committer（名字、邮箱、**带时区的 ISO 时间**）
+一并传过去，所以父提交对得上时，远端 commit 与本地是**同一个对象**，SHA 相同，推完不需要 reset。
+
+这里曾经写的是「GitHub 会把 `+08:00` 规范成 `Z`，哈希必然变」——错的。实测（v1.28.0）：
+不传 author/committer 时 GitHub 用「认证账号 + 推送那一刻」补齐，时间戳和本地根本不是一回事，
+SHA 当然不同；传了之后 SHA 逐字节一致。差别全在调用方，不在 GitHub 的时区处理。
+
+SHA 确实不同的两种情况，脚本会直接说是哪一种：
+  - 用了 `-m`：提交信息与本地 HEAD 不同，本来就不是同一个对象；
+  - 本地 HEAD 的父提交不是远端当前提交（本地落后于远端，或历史分叉）。
+第二种才是真正需要 `git fetch origin && git reset --hard origin/main` 的场景。
 """
 from __future__ import annotations
 
@@ -37,6 +44,33 @@ def git(*args: str, binary: bool = False):
     if proc.returncode != 0:
         die(f"git {' '.join(args)} 失败：{proc.stderr.decode('utf-8', 'replace')[:300]}")
     return proc.stdout if binary else proc.stdout.decode("utf-8", "replace").strip()
+
+
+def head_identity() -> dict:
+    """本地 HEAD 的作者/提交者身份，原样取名字、邮箱与带时区的时间。
+
+    必须显式传：不传时 GitHub 用「认证账号 + 当前时刻」补齐，同一个 tree 也会得到
+    另一个 SHA，本地与远端就长期「内容同步、SHA 分叉」，每次推完都得 reset。
+
+    时间用 `%aI`（ISO 8601，保留 `+08:00` 偏移）。只传 `%at` 的 epoch 会丢掉时区，
+    git 对象里 author 行的尾段不同，SHA 又对不上。字段用 \\x1f 分隔，避开姓名里可能出现的空格。
+    """
+    raw = git("log", "-1", "--format=%an%x1f%ae%x1f%aI%x1f%cn%x1f%ce%x1f%cI")
+    name, mail, date, cname, cmail, cdate = raw.split("\x1f")
+    return {
+        "author": {"name": name, "email": mail, "date": date},
+        "committer": {"name": cname, "email": cmail, "date": cdate},
+    }
+
+
+def head_message() -> str:
+    """HEAD 提交信息原文，连尾部换行一起保留。
+
+    `git log --format=%B` 出来的字串会被 git() 的 strip 削掉尾巴，拼出的 commit
+    与本地少一个换行就换了 SHA。直接从 commit 对象里切，不经过任何规整。
+    """
+    raw = git("cat-file", "commit", "HEAD", binary=True).decode("utf-8", "replace")
+    return raw.split("\n\n", 1)[1] if "\n\n" in raw else ""
 
 
 def local_entries() -> dict:
@@ -73,10 +107,11 @@ def remote_state(repo: str) -> tuple:
 def main(argv: list) -> int:
     dry = "--dry-run" in argv
     message = ""
-    if "-m" in argv:
+    custom_message = "-m" in argv
+    if custom_message:
         message = argv[argv.index("-m") + 1]
     if not message:
-        message = git("log", "-1", "--pretty=%B")
+        message = head_message()
 
     token()  # 先确认有令牌，别等传完 blob 才发现没权限
     repo = repo_slug()
@@ -129,8 +164,11 @@ def main(argv: list) -> int:
     if status != 201:
         die(f"建树失败：{status} {tree}")
 
+    # 身份必须跟着走：不带 author/committer，GitHub 会补成「认证账号 + 此刻」，
+    # 同一个 tree 也会落成另一个 SHA（见文件头说明）。
     status, commit = api("POST", f"/repos/{repo}/git/commits",
-                         {"message": message, "tree": tree["sha"], "parents": [remote_sha]})
+                         {"message": message, "tree": tree["sha"], "parents": [remote_sha],
+                          **head_identity()})
     if status != 201:
         die(f"建提交失败：{status} {commit}")
 
@@ -139,9 +177,24 @@ def main(argv: list) -> int:
     if status not in (200, 201):
         die(f"移动分支失败：{status} {updated}")
 
-    say(f"已推送：本地 {git('rev-parse', '--short', 'HEAD')} → 远端 {commit['sha'][:7]}")
-    say("本地与远端 SHA 不同（GitHub 规范了时区），继续开发前执行：")
-    say("  git fetch origin && git reset --hard origin/main")
+    local_head = git("rev-parse", "HEAD")
+    parents = git("log", "-1", "--format=%P").split()
+    say(f"已推送：本地 {local_head[:7]} → 远端 {commit['sha'][:7]}")
+
+    # SHA 一致时不需要 reset：这一步以前被当成「必然不同」而每次都得做，
+    # 但真正需要 reset 的只有「父提交不同」这一种，分开说清，别让用户白跑一条可能覆盖改动的命令。
+    if commit["sha"] == local_head:
+        say("远端与本地是同一个提交对象（SHA 一致），可以直接继续开发")
+    elif custom_message:
+        say("远端 SHA 与本地不同：本次用了 -m，提交信息与本地 HEAD 不一致，属预期")
+    elif parents != [remote_sha]:
+        say(f"远端 SHA 与本地不同：本地 HEAD 的父提交是 "
+            f"{parents[0][:7] if parents else '（无，首个提交）'}，远端当前是 {remote_sha[:7]}，"
+            f"说明本地落后于远端或历史已分叉。同步一次再继续：")
+        say("  git fetch origin && git reset --hard origin/main")
+    else:
+        say("远端 SHA 与本地不同，但父提交与提交信息都一致——身份或时间戳没能原样传过去，"
+            "请检查 head_identity() 取到的字段")
     return 0
 
 
