@@ -159,13 +159,20 @@ def find_release(slug: str, tag: str) -> dict | None:
     die(f"查询 Release 失败（HTTP {status}）：{data}")
 
 
+# 附件类型按扩展名给。这里以前一律写 application/zip，于是 SHA256SUMS.txt
+# 也被标成 zip——文件能下、文件名也对，但 Content-Type 是错的，
+# 按类型分派的客户端（curl -OJ、某些解压工具）会把它当压缩包处理。
+ASSET_TYPES = {".zip": "application/zip", ".txt": "text/plain; charset=utf-8"}
+
+
 def upload_asset(slug: str, release_id: int, path: Path) -> bool:
     url = f"{UPLOADS}/repos/{slug}/releases/{release_id}/assets?name={urllib.parse.quote(path.name)}"
     payload = path.read_bytes()
     req = urllib.request.Request(url, data=payload, method="POST")
     req.add_header("Authorization", f"token {token()}")
     req.add_header("Accept", "application/vnd.github+json")
-    req.add_header("Content-Type", "application/zip")
+    req.add_header("Content-Type",
+                   ASSET_TYPES.get(path.suffix.lower(), "application/octet-stream"))
     try:
         with ghnet.opener().open(req, timeout=TIMEOUT) as resp:
             return resp.status in (200, 201)
@@ -196,6 +203,13 @@ def verify_asset(slug: str, asset: dict, local: Path) -> bool:
     local_size = local.stat().st_size
     if remote_size != local_size:
         say(f"  回读失败：{local.name} 远端 {remote_size} 字节，本地 {local_size} 字节")
+        return False
+    # 类型也要回读：字节对了但 Content-Type 错，按类型分派的客户端还是会踩坑，
+    # 而这种错在页面上完全看不出来（文件名、大小、sha 都正常）
+    want = ASSET_TYPES.get(local.suffix.lower(), "application/octet-stream")
+    got = (asset.get("content_type") or "").split(";")[0].strip().lower()
+    if got and got != want.split(";")[0].strip().lower():
+        say(f"  回读失败：{local.name} 类型是 {got}，应为 {want}")
         return False
     url = f"https://api.github.com/repos/{slug}/releases/assets/{asset['id']}"
     req = urllib.request.Request(url)
