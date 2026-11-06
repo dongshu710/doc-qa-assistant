@@ -715,9 +715,12 @@ def _block_l1(l1: list[dict], total_cases: int = 0) -> str:
         detail = " · ".join(f"{c} {v['passed']}/{v['total']}" for c, v in cats.items())
         ok = (r["pass_rate"] or 0) >= 0.9
         stale = total_cases and r["total"] != total_cases
+        # 标记单独成变量：f-string 表达式里不能出现反斜杠（Python ≤3.11 直接
+        # SyntaxError，3.12 的 PEP 701 才放开）。CI 跑 3.11 + 3.13 两档，
+        # 只有 3.13 绿过一次就不会发现。
+        pill = ' <span class="pill">旧轮次</span>' if stale else ""
         rows += (
-            f"<tr><td>{_esc(r['label'])}"
-            f"{' <span class=\"pill\">旧轮次</span>' if stale else ''}</td>"
+            f"<tr><td>{_esc(r['label'])}{pill}</td>"
             f"<td>{r['total']}</td>"
             f"<td class=\"{'ok' if ok else 'bad'}\">{round((r['pass_rate'] or 0) * 100)}%</td>"
             f"<td class=\"muted\">{_esc(r.get('reported_at') or '—')}</td>"

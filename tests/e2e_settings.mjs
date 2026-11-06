@@ -266,31 +266,36 @@ try {
   check('列表里有文件', (await page.locator('.file-item').count()) >= 1);
   check('提醒点回到入口上', await page.isVisible('#filesDot'));
 
+  // 抽屉里的条目 1.29.0 起只做导航：详情只在一处渲染（/files），
+  // 不再维护第二套渲染器。所以这里验的是「跳过去并定位到那一条」。
   await page.locator('.file-item').first().click();
+  await page.waitForURL(/\/files\?id=/, { timeout: 8000 }).catch(() => {});
+  check('点条目跳到完整页并带 id', /\/files\?id=/.test(page.url()), page.url());
+  await page.waitForSelector('.pf-grid', { timeout: 8000 }).catch(() => {});
   await page.waitForFunction(
     () => {
-      const el = document.getElementById('filesDetail');
-      const text = (el && el.textContent) || '';
-      return text.length > 12 && !text.includes('读取中') && !text.includes('从左侧选');
-    }, null, { timeout: 6000 },
-  );
-  const body = await page.locator('#filesDetail').textContent();
+      const t = (document.getElementById('pfDetail') || {}).textContent || '';
+      return t.length > 12 && !t.includes('读取中') && !t.includes('从左侧选');
+    }, null, { timeout: 8000 },
+  ).catch(() => {});
+  const landed = (await page.locator('#pfDetail').textContent()) || '';
   // 不断言具体某句话：列表按时间倒序，种了多条之后第一条会变
-  check('点开后能看到正文', (body || '').length > 12, (body || '').slice(0, 40));
+  check('完整页展开被点的那篇', landed.length > 12, landed.slice(0, 40));
+
+  // 回到 /ask：备份与导出按钮在抽屉底部，接着验它们
+  await page.goto(`${base}/ask`, { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(
+    () => ((document.getElementById('filesCount') || {}).textContent || '') !== '',
+    null, { timeout: 8000 },
+  ).catch(() => {});
+  await page.click('#filesBtn');
+  await page.waitForSelector('.file-item', { timeout: 8000 }).catch(() => {});
 
   const beforeBackup = (await page.locator('#filesBackup').textContent()) || '';
   check('备份状态文案可读', /还没备份过|上次备份|今天备份/.test(beforeBackup), beforeBackup);
 
-  const [download] = await Promise.all([
-    page.waitForEvent('download', { timeout: 8000 }).catch(() => null),
-    page.click('#filesExport'),
-  ]);
-  check('导出真的触发下载', download !== null, download ? download.suggestedFilename() : '无下载事件');
-  await page.waitForTimeout(1000);
-  check('导出后提醒点消失', !(await page.locator('#filesDot').isVisible()));
-  const afterBackup = (await page.locator('#filesBackup').textContent()) || '';
-  check('备份文案已更新', /已导出|今天/.test(afterBackup), afterBackup);
-
+  // 导出按钮在完整页（抽屉只留「最近 5 篇 + 查看全部」），所以这里
+  // 只验抽屉本身能关，导出的验证放到下面 /files 那一段。
   await page.click('#filesClose');
   check('抽屉可以关闭', await page.isHidden('#filesPanel'));
 
@@ -315,6 +320,22 @@ try {
   ).catch(() => {});
   const pfBody = (await page.locator('#pfDetail').textContent()) || '';
   check('/files 默认展开第一篇', pfBody.length > 12, pfBody.slice(0, 40));
+
+  // 导出按钮在完整页（1.29.0 从抽屉挪过来），连备份时间一起验：
+  // 只验「有下载事件」不够，导出没记账就等于没备份。
+  const exportBefore = await page.evaluate(
+    () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
+    page.click('#pfExport'),
+  ]);
+  check('/files 导出触发下载', download !== null,
+        download ? download.suggestedFilename() : '无下载事件');
+  await page.waitForTimeout(900);
+  const exportAfter = await page.evaluate(
+    () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
+  check('导出后备份时间已更新', exportAfter !== exportBefore,
+        `${exportBefore} -> ${exportAfter}`);
 
   // ---- 安装 ----
   await page.goto(`${base}/ask`, { waitUntil: 'networkidle' });
