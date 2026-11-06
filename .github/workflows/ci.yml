@@ -55,6 +55,11 @@ jobs:
           python tests/test_openapi_routes.py
           python tests/test_ci_coverage.py
 
+      # Dify 外部知识库适配：消费者在外部，字段名一个都不能错，
+      # 而错误表现是「对方界面上一句连接失败」，本地跑页面完全看不出来。
+      - name: 外部集成（Dify 检索协议）
+        run: python tests/test_dify_retrieval.py
+
       # 前端资源是 .js/.css/.html 文件，语法错不该等到浏览器里白屏才发现
       - name: 前端资源（node --check / CSS 括号 / 内联脚本）
         run: python tools/check_frontend.py

@@ -52,6 +52,10 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/api/session", API),
     ("/api/reload", API),
     ("/mcp", API),                    # MCP over HTTP：能读写笔记，等同于 notes 接口
+    # Dify 外部知识库适配。必须显式登记：它不在 /api/ 下，不登记会落到默认 open，
+    # 等于把「按问题检索语料原文」这个能力对全网敞开（单机也一样，任意网页都能请求回环）。
+    # 实际凭据用 `Authorization: Bearer <API_KEY>`，与 Dify 面板里填的密钥是同一个。
+    ("/dify", API),
 )
 
 # 页面清单只登记一次：`_get_page_html` 按这里的键去取 HTML。

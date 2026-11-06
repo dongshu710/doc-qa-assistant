@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .. import (casegen, evaluator, ingest, jsonl, kbstore)
+from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore)
 from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYTES,
                      DOC_MAX_BYTES,
                      MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
@@ -129,7 +129,8 @@ def make_write(deps):
                             "/api/cases/from_doc", "/api/cases/run",
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
                             "/api/keywords/rebuild", "/api/session/clear",
-                            "/api/admin/config", "/api/admin/rollback"):
+                            "/api/admin/config", "/api/admin/rollback",
+                            "/dify/retrieval"):
                 self._not_found(self.command, path)
                 return
             try:
@@ -171,9 +172,37 @@ def make_write(deps):
             elif (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
                   or path in ("/api/feedback", "/api/reload")):
                 self._post_data(path, payload)
+            elif path == "/dify/retrieval":
+                # Dify 会把配置的端点名后面拼上 /retrieval，所以这里就这一个路径。
+                # 它不在 /api/ 下：那是本项目的接口面，这是给外部平台用的适配面。
+                self._post_dify(payload)
             else:
                 self._post_ask(path, payload)
             return
+
+        def _post_dify(self, payload: dict) -> None:
+            """Dify 外部知识库：检索 → records。生成交给 Dify，这里绝不碰模型。
+
+            错误按 Dify 约定的 `{error_code, error_msg}` 返回。它只看 HTTP 状态码，
+            非 200 一律变成界面上一句「外部知识库调用失败」——真正的原因不写进 body
+            就等于没写，排障的人只能去翻服务端日志。
+            """
+            try:
+                query, top_k, threshold = dify.parse_request(payload)
+            except dify.DifyError as exc:
+                self._json({"records": [], "error_code": exc.code,
+                            "error_msg": str(exc)}, 400)
+                return
+            try:
+                items = dify.records(pipe, query, top_k, threshold)
+            except Exception as exc:  # noqa: BLE001 —— 索引损坏等：如实报错，不假装空结果
+                self._json({"records": [], "error_code": 5000,
+                            "error_msg": self._error_text(exc, "检索失败")}, 500)
+                return
+            metrics.inc("rag_dify_retrieval_total")
+            # 没有命中就回空数组。Dify 的约定是「检索不到不算错」，它会把这条知识库
+            # 当没有贡献继续走；这里回 404/500 反而会让整个应用报错。
+            self._json({"records": items})
 
         def _post_admin(self, path: str, payload: dict) -> None:
             """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""

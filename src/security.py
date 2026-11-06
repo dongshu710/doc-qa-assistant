@@ -21,6 +21,16 @@ import os
 from urllib.parse import urlsplit
 
 LOOPBACK_NAMES = {"localhost", "localhost."}
+
+# `host.docker.internal` 是 Docker 给「宿主机」的保留名，语义上就是本机。
+# 把它算作回环别名，是为了让 Dify 这类跑在容器里、要访问本服务的平台开箱能用，
+# 不必每次启动都带 ALLOWED_HOSTS。
+#
+# 为什么这不放宽攻击面：这个域名由 Docker 的 DNS 提供，公网无法注册同名域名，
+# DNS rebinding 也借不到它；浏览器发起的请求仍然要过 Origin / Sec-Fetch-Site /
+# X-Jiyi-Client 三道校验。真正需要防备的是「任意域名解析到 127.0.0.1」，
+# 而这里的做法是把一个不可被外部控制的保留名加进白名单，不是放开域名任意解析。
+DOCKER_HOST_NAMES = {"host.docker.internal", "gateway.docker.internal"}
 REASONS = {
     "host": "只接受本机访问（Host 不合法）；需要局域网访问请设置 ALLOWED_HOSTS",
     "origin": "拒绝跨站请求（Origin 不属于本机）",
@@ -56,7 +66,7 @@ def host_allowed(host_header: str, extra: set[str] | None = None) -> bool:
     host = _hostname(host_header)
     if not host:
         return False
-    if host in LOOPBACK_NAMES:
+    if host in LOOPBACK_NAMES or host in DOCKER_HOST_NAMES:
         return True
     try:
         if ipaddress.ip_address(host).is_loopback:

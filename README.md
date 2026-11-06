@@ -1448,6 +1448,91 @@ POST /api/files/open {path}                     -> 交给系统默认编辑器
 存储面板从「面积条 + 五段图例」压成**四个数字**（文档 / 会话 / 缓存 / 磁盘剩余）。
 为什么不照搬 DeepSeek、跟同类开源项目各借了什么，见 [docs/COMPARISON.md](docs/COMPARISON.md)。
 
+## 4.16 接入 Dify：把本项目注册成「外部知识库」（v1.32.0）
+
+Dify 里的 Agent 需要一个知识源。两种接法，这里只做第一种，原因如下。
+
+| 接法 | 做法 | 结论 |
+|---|---|---|
+| **外部知识库** | Dify 调本服务的 `/dify/retrieval` 拿片段，自己生成答案 | **推荐**。职责清晰：本项目管检索，Dify 管编排与生成 |
+| 自定义工具 | 把 `/api/ask` 包成 OpenAPI 工具让 Agent 调 | 不推荐。一次提问烧两次模型；`citations` 全文塞进 Agent 上下文；本项目的拒答语义与 Agent 的「自己答」互相打架 |
+
+> C3 的判断：**这里不需要在本项目里加 Agent**。Dify 那边已经是 Agent 了，
+> 本项目再加一层循环只会变成「Agent 套 Agent」，两边都不知道最终由谁负责停。
+> 本项目要做的是把「检索」这件事做成一个稳定的原子能力。
+
+### 服务端已经做好什么
+
+`POST /dify/retrieval`，实现 Dify 官方 External Knowledge API：
+
+```bash
+curl -X POST http://127.0.0.1:8000/dify/retrieval \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <API_KEYS 里的任意一个>' \
+  -d '{"knowledge_id":"finance","query":"稳盈 Plus 的起购金额",
+       "retrieval_setting":{"top_k":3,"score_threshold":0.5}}'
+```
+
+```json
+{"records": [
+  {"content": "01_理财产品要素说明 · 一、「稳盈」系列产品\n「稳盈」系列…起购金额为 1 元…",
+   "score": 0.795, "title": "01_理财产品要素说明",
+   "metadata": {"doc": "01_理财产品要素说明", "section": "一、「稳盈」系列产品", "chunk": 0}}
+]}
+```
+
+几个刻意的取舍：
+
+- **只检索，不生成**。外部知识库的语义就是「给 Dify 提供上下文」。这里再调一次模型，
+  等于一次提问付两次钱，而且两段答案会互相打架。
+- **`content` 首行带「文档 · 小节」**。Dify 只把 `content` 交给模型，不传 `title`；
+  没有这一行，模型写得出答案却说不出来源，本项目「引用可核」的主张直接失效。
+- **`score` 用本项目自己的归一化分**（0–1），与 Dify 的 `score_threshold` 同一量纲，
+  面板上调 0.5 就是真的 0.5。
+- **没命中返回 `{"records": []}`，不返回错误**。Dify 的约定是「检索不到不算错」，
+  回 404/500 会让整个应用报错。
+- **`metadata` 一定是对象，不会是 null**。Dify 明确说 null 会让它的检索流水线报错。
+- **不区分 `knowledge_id`**：本服务只有一个语料库，填什么都接受。多库需求要改检索器
+  支持按文档过滤，不是加个 if 能解决的。
+
+### 在 Dify 里怎么配（三步）
+
+前提：本项目服务在跑，端口 8000。
+
+1. **注册 API 连接**：知识库 → 右上角「外部知识库 API」→ 添加
+   - 名称：`本地金融问答`
+   - API 接口地址：`http://host.docker.internal:8000/dify`（**不要**自己加 `/retrieval`，Dify 会追加）
+   - API Key：配了 `API_KEYS` 就填其中一个；没配就随便填（服务端不校验）
+   - 保存时 Dify 会打一次测试请求，成功才算通
+2. **创建外部知识库**：知识库 → 连接外部知识库
+   - 外部知识库 API：选上一步那个
+   - 外部知识库 ID：`finance`（任意，仅回显）
+   - Top K 填 3–5；分数阈值建议开，取 **0.5**（本项目的检索分实测：正常命中 0.6–0.95，
+     误答区间 0.64–0.78，所以阈值卡太低等于没卡）
+3. **建 Agent 应用**：创建应用 → Agent → 关联这个知识库 → 选模型 → 写提示词
+
+### 排障：连不上先看这三处
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 报「连接失败」，本服务日志**没有任何请求** | Dify 的出站被 Squid 拦了（默认拒绝一切私有网段） | 见下一节 |
+| 返回 403 `host_not_allowed` | 请求的 Host 不在白名单 | v1.32.0 起 `host.docker.internal` 已算本机别名，不用再配 `ALLOWED_HOSTS` |
+| 返回 401 | 配了 `API_KEYS` 但 Dify 里填的 Key 不对 | 两边改成同一个值 |
+
+Dify 的 SSRF 代理放行（官方扩展点，不改默认配置）：
+
+```bash
+# Dify 的 docker 目录下，新建 envs/infrastructure/ssrf-proxy.env
+SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
+# 然后重建代理容器
+docker compose up -d ssrf_proxy
+# 验证：应看到生成的白名单里出现 host.docker.internal
+docker exec docker-ssrf_proxy-1 cat /etc/squid/dify_allow_private.conf
+```
+
+只放行这一个域名，**不要**去设 `SSRF_PROXY_ALLOW_PRIVATE_IPS`——那是按网段放行，
+等于把整个私有网段对 Dify 的插件与工具敞开。
+
 ## 5. 评测
 
 ```bash

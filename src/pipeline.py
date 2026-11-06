@@ -174,16 +174,20 @@ class RAGPipeline:
         """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
         return bool(api_key())
 
-    def _retrieve(self, query: str, focus: str | None = None):
+    def _retrieve(self, query: str, focus: str | None = None, top_k: int | None = None):
         """检索一次，返回 (hits, meta)。
 
         检索器支持 `search_ex` 就用它拿元数据；老实现只有 `search`，包一层空 meta。
         元数据走返回值而不是实例字段，是为了并发下不把 A 的失败算到 B 头上。
+
+        `top_k` 默认用配置值。外部调用方（Dify 外部知识库）有自己的条数诉求，
+        传进来就用它——否则对方设 5 条、这里按 4 条截断，少的那条没有任何提示。
         """
+        want = top_k if top_k and top_k > 0 else self.settings.top_k
         fn = getattr(self.retriever, "search_ex", None)
         if callable(fn):
-            return fn(query, self.settings.top_k, focus_query=focus or query)
-        return self.retriever.search(query, self.settings.top_k,
+            return fn(query, want, focus_query=focus or query)
+        return self.retriever.search(query, want,
                                      focus_query=focus or query), {}
 
     def _search(self, query: str, result: dict):

@@ -42,6 +42,7 @@ def _tags() -> list:
         {"name": "问答", "description": "检索、生成与反馈"},
         {"name": "知识库", "description": "文档、版本与审批"},
         {"name": "笔记", "description": "对话整理成个人笔记：保存、查询、修改、删除"},
+        {"name": "集成", "description": "给外部平台用的适配端点（Dify 外部知识库）"},
         {"name": "运维", "description": "健康检查与指标"},
     ]
 
@@ -541,6 +542,43 @@ def _components() -> dict:
                            "description": "与 Bearer 二选一"},
         },
         "schemas": {
+            "DifyRetrievalRequest": {
+                "type": "object", "required": ["query"],
+                "properties": {
+                    "knowledge_id": {"type": "string",
+                                     "description": "Dify 面板上填的「外部知识库 ID」，本服务不区分来源，仅回显用"},
+                    "query": {"type": "string", "maxLength": 500,
+                              "example": "稳盈 Plus 30 天的起购金额是多少？"},
+                    "retrieval_setting": {
+                        "type": "object",
+                        "properties": {
+                            "top_k": {"type": "integer", "minimum": 1, "maximum": 20,
+                                      "default": 4, "description": "超过 20 按 20 处理"},
+                            "score_threshold": {"type": "number", "minimum": 0,
+                                                "maximum": 1, "default": 0,
+                                                "description": "0 表示不过滤，与本项目检索分同一量纲"},
+                        },
+                    },
+                    "metadata_condition": {"type": "object",
+                                           "description": "Dify 预留字段，本服务接受但不生效"},
+                },
+            },
+            "DifyRetrievalResult": {
+                "type": "object", "required": ["records"],
+                "properties": {
+                    "records": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string",
+                                        "description": "首行为「文档名 · 小节」，其后是正文"},
+                            "score": {"type": "number", "minimum": 0, "maximum": 1},
+                            "title": {"type": "string", "description": "文档名"},
+                            "metadata": {"type": "object",
+                                         "description": "doc / section / chunk，供 Dify 侧展示出处"},
+                        },
+                    }},
+                },
+            },
             "AskRequest": {
                 "type": "object", "required": ["query"],
                 "properties": {
@@ -615,6 +653,40 @@ def _components() -> dict:
     }
 
 
+def _paths_dify(secured: list) -> dict:
+    """Dify 外部知识库适配。
+
+    单独成一组：它的消费者是 Dify，不是本项目的页面或 SDK。字段名由 Dify 规定
+    （`knowledge_id` / `retrieval_setting` / `records`），这里不做「统一风格」的
+    重命名——改了对面就接不上。
+    """
+    return {
+        "/dify/retrieval": {
+            "post": {
+                "tags": ["集成"],
+                "summary": "Dify 外部知识库检索（Dify External Knowledge API）",
+                "description": ("在 Dify 里把本服务注册为「外部知识库」时调用。"
+                                "只检索、不生成：上下文交给 Dify 自己的模型，"
+                                "一次提问不会计两次模型费用。"
+                                "端点填 `http://host.docker.internal:8000/dify`，"
+                                "Dify 会自动拼上 `/retrieval`。"),
+                "operationId": "difyRetrieval",
+                **_sec(secured),
+                "requestBody": {"required": True, "content": {"application/json": {
+                    "schema": {"$ref": "#/components/schemas/DifyRetrievalRequest"}}}},
+                "responses": {
+                    "200": {"description": "检索结果；没有命中时返回 `{\"records\": []}`",
+                            "content": {"application/json": {
+                                "schema": {"$ref": "#/components/schemas/DifyRetrievalResult"}}}},
+                    "400": {"description": "请求不合法（`{error_code, error_msg}`）"},
+                    "401": _err("缺少或无效的 API Key"),
+                    "500": {"description": "检索失败（`{error_code, error_msg}`）"},
+                },
+            }
+        },
+    }
+
+
 def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
     secured = [{"bearerAuth": []}, {"apiKeyAuth": []}] if auth.get("mode") == "key" else []
     spec = {
@@ -624,7 +696,7 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
         "tags": _tags(),
         "paths": {**_paths_qa(secured), **_paths_ops(), **_paths_kb(),
                   **_paths_admin(), **_paths_data(), **_paths_client(),
-                  **_paths_meta()},
+                  **_paths_dify(secured), **_paths_meta()},
         "components": _components(),
     }
     spec["paths"].update(notes_paths())

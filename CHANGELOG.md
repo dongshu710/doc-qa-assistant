@@ -2,6 +2,54 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.32.0] - 2026-11-06
+
+把本项目注册成 Dify 的**外部知识库**：Dify 的 Agent 负责编排与生成，本项目负责检索。
+
+### 新增
+
+- **`POST /dify/retrieval`**，实现 Dify 官方 External Knowledge API 规范。
+  在 Dify 里把端点填成 `http://host.docker.internal:8000/dify` 即可——Dify 会自动
+  追加 `/retrieval`，所以配置时**不要**自己带上那一段。
+- **只检索、不生成**。外部知识库的语义是「提供上下文」，这里再调一次模型等于
+  一次提问付两次钱；更糟的是 Dify 会拿到一段写好的答案并复述它，本项目的引用编号
+  与「无法找到答案」的拒答语义全部失效。
+- **`content` 首行带「文档 · 小节」**：Dify 只把 `content` 交给模型，不传 `title`。
+  没有这一行，模型答得出却说不出来源，本项目「引用可核」的主张在 Dify 里直接失效。
+- `score` 复用本项目的归一化分（0–1），与 Dify 的 `score_threshold` 同一量纲；
+  `metadata` 恒为对象（Dify 明确说 null 会让它的检索流水线报错）；
+  检索不到返回 `{"records": []}` 而不是错误——Dify 把「空结果」当正常情况。
+- `top_k` 会真正透传给检索器（此前 `_retrieve` 只认配置值，对方设 5 条会被截成 4 条
+  且没有任何提示），上限 20。
+- 新增 `tests/test_dify_retrieval.py`（26 项）并进 CI：消费者在外部，字段名错一个的
+  表现是「Dify 界面上一句连接失败」，本地跑页面完全看不出来。
+
+### 修复
+
+- **`host.docker.internal` 被 Host 校验拦下**：Dify 跑在容器里，访问宿主机只能用它，
+  而它不在回环名单里，结果保存外部知识库时报「连接失败」，本服务日志一条记录都没有。
+  现在把它（以及 `gateway.docker.internal`）算作本机别名——这两个名字由 Docker 的 DNS
+  提供，公网无法注册同名域名，DNS rebinding 也借不到；浏览器请求仍要过 Origin /
+  Sec-Fetch-Site / X-Jiyi-Client 三道校验。测试确认其他外部 Host 仍然 403。
+
+### 文档
+
+- README 4.16：两种接法的取舍（外部知识库 vs 自定义工具）、Dify 面板三步配置、
+  排障三行表、SSRF 代理放行怎么做。
+- 明确写了**不推荐**把 `/api/ask` 包成工具给 Agent 调：双重生成、`citations` 全文
+  塞进上下文、拒答语义与 Agent 的「自己答」冲突。
+
+### 部署提示
+
+Dify 社区版默认拒绝一切私有网段出站（Squid），同宿主机的服务会被拦成 403。
+用官方扩展点放行，只放这一个域名：
+
+```bash
+# Dify 的 docker 目录
+echo 'SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal' > envs/infrastructure/ssrf-proxy.env
+docker compose up -d ssrf_proxy
+```
+
 ## [1.31.1] - 2026-11-06
 
 推完 v1.31.0 才发现一个重要事实：**CI 从来没绿过**。上一次能查到的最早记录起，
