@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +48,10 @@ def main() -> int:
     report = {
         "channel": pipe.settings.channel,
         "model": pipe.settings.model,
+        # 报告必须自带时间：汇报页以前只能拿文件 mtime 当「生成于」，
+        # 而 `git checkout` 恢复旧报告会把 mtime 刷成今天，
+        # 页面就会把一份两周前的结论标成刚跑的。
+        "run_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         **summary,
         "results": results,
     }

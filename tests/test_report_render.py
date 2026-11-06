@@ -4,6 +4,7 @@
 改一处配色要滚三屏。现在每个区块是独立函数，这里锁住三件事——
 字段表标签固定、空数据不崩、有数据才出现对应 section。
 """
+import re
 import sys
 from pathlib import Path
 
@@ -77,6 +78,20 @@ def test_kpi_table() -> None:
     check("无 L1 时给占位符", rows["L1 通过率"] == "-", rows["L1 通过率"])
     check("无引用覆盖率时给占位符", rows["引用覆盖率"] == "-", rows["引用覆盖率"])
 
+    # 没有样本量的通过率等于没有信息：副标题必须逐项给出条数与口径
+    subs = report.kpi_subs(sample())
+    check("每个 KPI 都有口径副标题", len(subs) == 6 and all(subs), str(subs))
+    check("L1 副标题带条数", subs[2].startswith("26 条"), subs[2])
+    # 报告条数 ≠ 当前用例集时必须点明：否则「100%」会被读成覆盖了全集
+    grown = sample()
+    grown["cases"] = {"total": 36, "curated": 25, "uncovered": 10, "feedback": 1}
+    check("用例集扩容后副标题点明", "36" in report.kpi_subs(grown)[2],
+          report.kpi_subs(grown)[2])
+    check("用例集构成分项列出", "拒答 10" in report.kpi_subs(grown)[1],
+          report.kpi_subs(grown)[1])
+    empty_subs = report.kpi_subs(empty)
+    check("无数据时副标题不说谎", empty_subs[2] == "尚无 L1 报告", empty_subs[2])
+
 
 def test_blocks() -> None:
     print("区块：空数据不崩、有数据出结构")
@@ -102,9 +117,29 @@ def test_render() -> None:
     check("非 standalone 有下载按钮", "下载独立 HTML" in full)
     check("KPI 值进了页面", "120 块 / 2 份" in full)
 
+    # 展示区与管理面板靠 data-admin-jump / data-group 连接：
+    # 入口指向一个不存在的分组，点了只会静默无反应——线上很难发现，这里锁住。
+    groups = set(re.findall(r'data-group="([^"]+)"', full))
+    jumps = set(re.findall(r'data-admin-jump="([^"]+)"', full))
+    check("管理面板五个数据组齐全",
+          {"content", "approval", "eval", "ops", "diag"} <= groups, str(sorted(groups)))
+    check("每个管理入口都指向存在的分组", jumps <= groups, str(sorted(jumps - groups)))
+    check("展示区挂着管理入口", len(jumps) >= 3, str(sorted(jumps)))
+
     standalone = report.render(sample(), standalone=True)
     check("standalone 去掉下载按钮", "下载独立 HTML" not in standalone)
     check("standalone 仍保留数据", "120 块 / 2 份" in standalone)
+
+    # 首屏两栏 + 三个主指标：信息架构靠这条锁住，不然容易被改回「一大段自述」
+    check("首屏是两栏", 'class="hero-grid"' in full and 'class="hero-stats"' in full)
+    check("首屏只放三个主指标", full.count('class="hs"') == 3, str(full.count('class="hs"')))
+    check("能力区是三组", 'class="sec three-col"' in full and
+          full.count('id="s-scope"') == 1)
+    check("有边界与失败区块", 'id="s-edge"' in full)
+
+    # 编号必须连续且不重复：插区块时手写数字撞过号（两个 05、没有 06）
+    nums = [int(n) for n in re.findall(r'<span class="n">(\d{2})</span>', full)]
+    check("区块编号连续且唯一", nums == list(range(1, len(nums) + 1)), str(nums))
 
     minimal = sample()
     minimal["l1"] = []

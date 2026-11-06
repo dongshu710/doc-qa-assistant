@@ -36,7 +36,7 @@ try:
 
     pages = {}
     for page, needle in (("/ask", "今天想记住什么"), ("/kb", "拖拽或点击上传"),
-                         ("/files", "pf-grid")):
+                         ("/files", "pf-grid"), ("/report", 'id="rpAdmin"')):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             pages[page] = resp.read().decode("utf-8")
         assert needle in pages[page], page
@@ -45,7 +45,19 @@ try:
     assert "<title>文件 ·" in pages["/files"], "文件页标题没带上品牌名"
     assert 'id="setPanel"' in pages["/files"], "文件页也要有设置抽屉骨架"
     assert 'id="filesDot"' in pages["/files"], "文件页导航上要有红点按钮"
-    print("pages OK（问答 / 知识库 / 文件）")
+    print("pages OK（问答 / 知识库 / 文件 / 汇报）")
+
+    # 下载分支：同一路径加 ?download=1，必须是附件，且不套应用外壳（离线副本不装侧栏）。
+    # 这条分支以前完全没测过——`?download=0` 也返回附件的旧写法就是靠它才发现的。
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/report?download=1", timeout=10) as resp:
+        disp = resp.headers.get("Content-Disposition") or ""
+        dl = resp.read().decode("utf-8")
+    assert "attachment" in disp and "report.html" in disp, disp
+    assert 'data-standalone="1"' in dl, "下载版要打上离线标记，否则脚本会去探活"
+    assert '<aside class="side"' not in dl, "下载版不该套会话侧栏"
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/report?download=0", timeout=10) as resp:
+        assert not (resp.headers.get("Content-Disposition") or ""), "download=0 不该返回附件"
+    print("report download OK")
 
     # 笔记入口：问答页能发起保存，完整管理在 /files；知识库只剩文档一个分区。
     # 1.29.0 起 /kb 的「笔记」tab 已移除（与 /files 能力完全重复），
@@ -89,7 +101,7 @@ try:
 
     opener = urllib.request.build_opener(NoRedirect)
     for page, want in (("/", "/ask"), ("/index.html", "/ask"), ("/insights", "/ask"),
-                       ("/dashboard", "/ask"), ("/report", "/ask")):
+                       ("/dashboard", "/ask")):
         try:
             opener.open(f"http://127.0.0.1:{port}{page}", timeout=10)
             raise AssertionError(f"{page} 未重定向")

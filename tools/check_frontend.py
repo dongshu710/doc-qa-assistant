@@ -100,9 +100,22 @@ def check_pages() -> None:
     单文件语法对，拼起来不一定对：多个脚本串成一页、模板占位符替换出错，
     这些都只有看最终产物才发现。这里直接拿线上渲染结果再过一遍 node。
     """
+    from src import report as report_mod
     from src import theme, web_pages
 
     pages = {"ask": web_pages.ASK_HTML, "kb": web_pages.KB_HTML, "files": theme.FILES_PAGE}
+    # 汇报页是 f-string 手写模板 + 运行期注入脚本，最容易漂；用一份最小数据渲染出来一起过 node。
+    # 不连服务：只验证「拼出来的这一页」脚本能解析、占位符已替换、没引外部资源。
+    pages["report"] = report_mod.render({
+        "knowledge": {"chunks": 12, "files": [{"name": "a.md", "chunks": 12}]},
+        "cases": {"total": 3, "curated": 3, "feedback": 0},
+        "metrics": {"requests": 0},
+        "l1": [], "l3": None,
+        "config": {"keyword_top_n": 3, "top_k": 4, "min_score": 0.3,
+                   "timeout": 30, "retries": 2},
+        "channel": "offline", "model": "extractive",
+        "generated_at": "2026-01-01 00:00",
+    }, standalone=True)
     for name, html in pages.items():
         blocks = page_scripts(html)
         check(f"page {name} 有可执行脚本", len(blocks) >= 4, f"实际 {len(blocks)} 段")

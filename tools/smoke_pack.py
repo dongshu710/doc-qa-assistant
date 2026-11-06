@@ -69,10 +69,19 @@ def main() -> int:
                 print("错误：服务没起来")
                 return 1
 
-            for page in ("/ask", "/kb", "/files"):
+            for page in ("/ask", "/kb", "/files", "/report"):
                 st, body = get(base + page)
                 print(f"{'ok  ' if st == 200 and body else 'FAIL'} {page} 200 · {len(body)} B")
                 ok = ok and st == 200 and bool(body)
+
+            # `/report` 200 不代表管理面板能用：脚本是独立文件 `src/web/report_admin.js`，
+            # 打包清单漏了它页面照样 200，只是「管理」按钮点下去毫无反应。
+            # 用脚本里的独有标识确认它真的被内联进了导出页。
+            st, body = get(base + "/report")
+            html = body.decode("utf-8")
+            wired = "rp_receipts" in html and 'id="rpAdminBtn"' in html
+            print(f"{'ok  ' if wired else 'FAIL'} /report 管理脚本已内联")
+            ok = ok and wired
 
             st, body = get(base + "/api/settings/setup")
             print(f"{'ok  ' if st == 200 else 'FAIL'} /api/settings/setup 200")

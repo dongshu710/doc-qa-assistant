@@ -28,6 +28,9 @@ NEEDED = (
     "agent.css", "agent.html", "agent.js",
     "setup.css", "setup.html", "setup.js",
     "ask.css", "ask.html", "ask.js", "art.txt", "kb.css", "kb.html", "kb.js",
+    # 汇报页的管理面板脚本：theme 在导入期 load() 它，缺文件会让整个服务起不来，
+    # 所以必须进这份清单（原来漏登记，删了也拦不住）
+    "report_admin.js",
 )
 
 

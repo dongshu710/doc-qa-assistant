@@ -13,6 +13,7 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 from .. import (kbstore,
+                report,
                 routing,
                 suggest)
 from .. import update as update_mod
@@ -25,6 +26,19 @@ from ..web_pages import ASK_HTML, KB_HTML
 from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
                      _safe_name)
 from .base import sse_acquire, sse_release
+
+
+def _int_qs(qs: dict, key: str, default: int, low: int, high: int) -> int:
+    """URL 里的整数参数：坏值一律回落默认值，并夹在区间内。
+
+    不直接 `int(...)`：`?limit=abc` 会抛 ValueError 穿过 do_GET，
+    客户端只看得到连接重置——项目里最难查的一类故障（没有状态码、没有响应体）。
+    """
+    try:
+        value = int((qs.get(key) or [""])[0])
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, value))
 
 
 def make_read(deps):
@@ -137,15 +151,47 @@ def make_read(deps):
         def _get_page_html(self, path: str, qs: dict) -> None:
             """页面分派：清单在 `routing.PAGE_ROUTES`，这里只负责把键换成 HTML。"""
             if path in routing.PAGE_ALIASES:
-                # 只留问答、知识库、文件三页，旧入口统一回落到问答页
+                # 只留问答、知识库、文件、汇报四页，旧入口统一回落到问答页
                 self._redirect("/ask")
                 return
             page = routing.PAGE_ROUTES.get(path)
             if page is None:
                 self._not_found(self.command, path)
                 return
+            if page == "report":
+                # 汇报页的数据每次都可能变（trace、知识库、配置），不能像静态页那样预拼
+                self._report_page(qs)
+                return
             html = {"ask": ASK_HTML, "files": FILES_PAGE, "kb": KB_HTML}[page]
             self._send(200, html, "text/html; charset=utf-8")
+
+        def _report_page(self, qs: dict) -> None:
+            """汇报页：展示 + 管理台入口；`?download=1` 返回可离线打开的独立副本。
+
+            复用同一路径而不是新开 `/api/report/export`：少一个端点就少一份契约要维护，
+            而且下载下来的文件和页面上看到的确实是同一套渲染。
+            """
+            # 只认 1/true/yes。`?download=0` 也返回附件的话，页面会进入离线态、按钮全灰。
+            flag = (qs.get("download") or [""])[0].lower()
+            as_file = flag in ("1", "true", "yes")
+            # 页面在鉴权表里是 open（汇报页的用途就是能发给别人看），但它渲染了
+            # 文档清单与模型端点。配了 API_KEYS 又没带 Key 时降级成「公开视图」：
+            # 删清单、隐端点，而不是整页 403——参考 AnythingLLM 的做法，
+            # 按角色裁剪内容，而不是把人挡在门外。
+            _name, err = self._api_auth()
+            redacted = bool(err)
+            try:
+                data = report.collect(pipe)
+                if redacted:
+                    data = report.redact(data)
+                html = report.render(data, standalone=as_file, redacted=redacted)
+            except Exception as exc:   # 未捕获异常会让客户端只看到连接重置
+                self._json({"ok": False, "error": "report_failed",
+                            "message": self._error_text(exc, "汇报页渲染失败")}, 500)
+                return
+            extra = ({"Content-Disposition": 'attachment; filename="report.html"'}
+                     if as_file else None)
+            self._send(200, html, "text/html; charset=utf-8", extra)
 
         def _get_meta(self, path: str, qs: dict) -> None:
             """发布与运行时自述：L3 报表、OpenAPI、健康检查、Prometheus。"""
@@ -245,11 +291,16 @@ def make_read(deps):
                 fb_cases = _read_jsonl(feedback_cases_path, 100000)
                 doc_cases = _read_jsonl(doc_cases_path, 100000)
                 last_run = None
-                if os.path.exists(run_report_path):
-                    with open(run_report_path, encoding="utf-8") as f:
-                        rep = json.load(f)
-                    last_run = {k: rep.get(k) for k in
-                                ("run_at", "scope", "total", "passed", "pass_rate", "channel", "model")}
+                try:
+                    if os.path.exists(run_report_path):
+                        with open(run_report_path, encoding="utf-8") as f:
+                            rep = json.load(f)
+                        last_run = {k: rep.get(k) for k in
+                                    ("run_at", "scope", "total", "passed", "pass_rate", "channel", "model")}
+                except (OSError, ValueError, TypeError):
+                    # 上次运行被中断会留下截断的 JSON。这里不能让它冒泡：
+                    # 一次异常会让 /api/cases 永久 500，管理面板的「评测」组整块打不开。
+                    last_run = None
                 self._json({
                     "curated": len(curated),
                     "feedback": len(fb_cases),
@@ -372,10 +423,10 @@ def make_read(deps):
                 src["version"] = store.active_version() if store is not None else None
                 self._json(src)
             elif path == "/api/feedback/list":
-                limit = int(qs.get("limit", ["20"])[0])
+                limit = _int_qs(qs, "limit", 20, 1, 200)
                 self._json({"items": list(reversed(_read_jsonl(feedback_path, limit)))})
             elif path == "/api/trace":
-                limit = int(qs.get("limit", ["20"])[0])
+                limit = _int_qs(qs, "limit", 20, 1, 200)
                 rows = list(reversed(_read_jsonl(pipe.log_path, limit)))
                 items = [{
                     "ts": r.get("ts"),

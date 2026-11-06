@@ -564,8 +564,10 @@ def make_write(deps):
                     "duration_ms": int((time.monotonic() - started) * 1000),
                     "results": results,
                 }
-                with open(run_report_path, "w", encoding="utf-8") as f:
-                    json.dump(report, f, ensure_ascii=False, indent=2)
+                # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
+                # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
+                # 管理面板「评测」组永久打不开。复用版本库的原子写。
+                kbstore._atomic_json(run_report_path, report)
                 guards.audit.write("cases.run", client=self._client(), scope=scope,
                                    total=summary["total"], passed=summary["passed"],
                                    duration_ms=report["duration_ms"])

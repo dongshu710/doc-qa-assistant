@@ -61,9 +61,12 @@ PAGE_ROUTES: dict[str, str] = {
     "/ask": "ask",
     "/files": "files",      # 能被收藏、能被智能体直接打开的固定地址
     "/kb": "kb",
+    # 汇报页：既是展示页，也是管理台入口。内容随数据变，所以由 handler 实时渲染
+    # （`?download=1` 走同一个路径返回附件，不新增 API 端点）。
+    "/report": "report",
 }
 # 旧入口：只做跳转，收藏夹里的老地址不至于 404
-PAGE_ALIASES: tuple[str, ...] = ("/", "/index.html", "/insights", "/dashboard", "/report")
+PAGE_ALIASES: tuple[str, ...] = ("/", "/index.html", "/insights", "/dashboard")
 
 
 def _matches(path: str, prefix: str) -> bool:
@@ -92,31 +95,15 @@ def describe() -> list[dict]:
 
 
 # ---------- 方法表：只用于「方法用错时报 405 而不是 404」 ----------
-# 为什么不手写一张：手写的表一定会跟真实路由漂移。这里从 OpenAPI 里取——
-# 那份规格本来就被 `test_contract.py` 盯着与 dispatch 双向对齐。
+# 为什么不再手写：手写的表一定会跟真实路由漂移。上一版这里有一张
+# `_EXTRA_METHODS` 补丁表（列 OpenAPI 没登记但真实存在的端点），漂了两处：
+# `/api/storage/usage` 与 `/api/storage/cleanup` 早已没有实现，
+# 而真存在的 `/api/storage/restore` 反倒没登记——对 `GET /api/storage/restore`
+# 会回 404（应该 405）。现在补丁表已删除，OpenAPI 补齐了全部端点，
+# 路径与方法只有这一份来源。
 # 只在 dispatch 已经判定「没有这个路由」时才查这张表，所以即使取错了，
 # 最坏结果是 404 变 405，不会把一个本来能用的请求挡掉。
 _SPEC_METHODS: dict[str, set[str]] | None = None
-_EXTRA_METHODS = {
-    # OpenAPI 没登记、但确实存在的路由（补在这里而不是改文档：
-    # 它们属于内部/页面用的接口，先保证报错语义正确）
-    "/api/threads": {"GET", "POST", "PUT", "DELETE"},
-    "/api/settings": {"GET", "POST"},
-    "/api/settings/test": {"POST"},
-    "/api/settings/setup": {"POST"},
-    "/api/settings/pick": {"POST"},
-    "/api/files/raw": {"GET", "PUT"},
-    "/api/storage/usage": {"GET"},
-    "/api/storage/backups": {"GET"},
-    "/api/storage/backup": {"POST"},
-    "/api/storage/cleanup": {"POST"},
-    "/api/trace": {"GET"},
-    "/api/feedback/list": {"GET"},
-    "/api/admin/config": {"GET", "POST"},
-    "/api/admin/cost": {"GET"},
-    "/api/audit": {"GET"},
-    "/mcp": {"GET", "POST"},
-}
 
 
 def _spec_methods() -> dict[str, set[str]]:
@@ -131,7 +118,6 @@ def _spec_methods() -> dict[str, set[str]]:
                                if m.lower() in ("get", "post", "put", "patch", "delete")}
         except Exception:      # noqa: BLE001 —— 规格生成失败不该影响请求处理
             table = {}
-        table.update(_EXTRA_METHODS)
         _SPEC_METHODS = table
     return _SPEC_METHODS
 

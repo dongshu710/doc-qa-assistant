@@ -8,7 +8,8 @@
 
 路由总览（鉴权等级见 `src/routing.py`）：
 
-    页面    GET  /ask /kb /files；/ /index.html /insights /dashboard /report → 302 /ask
+    页面    GET  /ask /kb /files；/report（实时渲染，?download=1 返回附件）
+                 / /index.html /insights /dashboard → 302 /ask
 
     只读    GET  /api/health /openapi.json /metrics /api/metrics /api/examples /api/l3
                  /api/knowledge /api/keywords /api/kb/versions /api/kb/changes

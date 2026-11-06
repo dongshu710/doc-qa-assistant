@@ -23,7 +23,7 @@
 
 | 包 | 里面有什么 | 适合谁 | 文件 |
 |---|---|---|---|
-| **应用包** | 问答 + 知识库 + 笔记 + 三页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
+| **应用包** | 问答 + 知识库 + 笔记 + 四页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
 | **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `jiyi-plugin-<版本>.zip` |
 | **技能包** | `jiyi-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `jiyi-skill-<版本>.zip` |
 
@@ -50,7 +50,10 @@
 界面与交互见 [docs/LAYOUT.md](docs/LAYOUT.md)；为什么长这样、跟同类开源项目学了什么，
 见 [docs/COMPARISON.md](docs/COMPARISON.md)（AnythingLLM / RAGFlow / Reor / Khoj / Mem0 / Logseq 逐个拆）。
 
-> 页面只有问答与知识库两页；对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
+> 页面四页：问答 `/ask`、知识库 `/kb`、文件 `/files`（可收藏的固定地址）、汇报 `/report`。
+> `/report` 同时是展示页和管理台：在线时右侧滑出管理面板（文档、审批、灰度、诊断），
+> 离线副本只读并说明怎么连上服务；`?download=1` 导出的是同一套渲染结果。
+> 对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
 > 截图使用演示知识库与离线抽取模式，示例笔记见 [docs/examples/note-example.md](docs/examples/note-example.md)。
 
 ## 0. 定位：这是「文档问答 + 笔记」，不是只服务金融
@@ -163,7 +166,7 @@ doc-qa-assistant/
 │  │   ├─ write.py             #   问答（含 SSE）/ 知识库 / 设置写入 / 评测用例
 │  │   └─ common.py            #   上限常量与纯函数（文件名净化、项目根、jsonl 尾读）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
-│  ├─ openapi.py               # OpenAPI 3.0 契约（21 个路径，含笔记接口）
+│  ├─ openapi.py               # OpenAPI 3.0 契约（64 个路径 / 78 个方法，含笔记与内部端点）
 │  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点
 │  ├─ web_pages.py             # 两页装配（占位符替换 + shell()）
 │  ├─ webassets.py             # src/web/ 的读取与缓存
@@ -431,8 +434,9 @@ python -m src.server --port 8000
 | `/ask` | 问答：按文档生成的示例问题 → 答案 + 引用 → 未命中提示 + 相似问题 → 反馈 | ②③④⑤⑥ |
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
 
-`/`、`/index.html`、`/insights`、`/dashboard`、`/report` 一律 302 到 `/ask`——旧链接不会 404，
-但页面上只剩问答与知识库两项导航。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.13](#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道)。
+`/`、`/index.html`、`/insights`、`/dashboard` 一律 302 到 `/ask`——旧链接不会 404。
+页面有四个：`/ask` 问答、`/kb` 知识库、`/files` 文件、`/report` 汇报；
+`/report` 同时是管理台入口（在线时右侧滑出面板，离线副本只读）。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.13](#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道)。
 
 页面统一走 `src/theme.py` 的外壳与 `src/web/` 里的资源（样式 / 脚本 / 片段都是真文件，
 运行时内联进 HTML），零 CDN、断网可开；
@@ -450,7 +454,7 @@ API：
 - `GET /api/metrics` → 业务聚合指标（P50/P95、降级率、引用覆盖率、token 用量）
 - `GET /metrics` → Prometheus 文本指标（请求 / 延迟直方图 / 限流 / 幂等重放 / 降级 / token / 版本）
 - `GET /api/l3` → L3 语义评分摘要（忠实度 / 相关性 / 完整性、门禁结论）
-- `GET /api/report/export` → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开）
+- `GET /report?download=1` → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开；1.30.0 起用这个地址，旧的 `/api/report/export` 从未实现）
 - `GET /api/knowledge` → 知识库文件与块数、当前版本、待审批数、每份文档的关键词
 - `GET /api/keywords` → 关键词总览（每份文档的 top 词与条目数）
 - `GET /api/keywords?name=...` → 单份文档的摘要、条目、原文片段
@@ -624,7 +628,7 @@ python tests/eval_run.py --include-hard  # 再叠加难题集（诊断用）
 
 ## 4.5 界面与「文件」入口（v1.15.0）
 
-页面只有两页：`/ask` 问答、`/kb` 知识库。已存内容不在设置抽屉里，入口固定两处：
+页面四页：`/ask` 问答、`/kb` 知识库、`/files` 文件、`/report` 汇报。已存内容不在设置抽屉里，入口固定两处：
 
 | 入口 | 位置 | 交互 |
 |---|---|---|
@@ -1036,7 +1040,7 @@ API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥
 - 限流、灰度、成本统计的身份从 IP 换成 `key:<name>`，多调用方互不挤占；Prometheus 增加
   `rag_api_tokens_total{key}` 与 `rag_api_cost_usd_total{key}`。
 - 问答页检测到 `auth.mode=key` 时显示 Key 输入条（存 `sessionStorage`，关标签页即清），401 会自动展开。
-- `GET /openapi.json` 输出 OpenAPI 3.0.3：21 个路径、请求/响应 schema、两种鉴权方案，以及当前实例的
+- `GET /openapi.json` 输出 OpenAPI 3.0.3：64 个路径 / 78 个方法（其中 46 个标 `x-internal`：页面专用，登记只为方法表有单一来源）、请求/响应 schema、两种鉴权方案，以及当前实例的
   `x-retrieval` / `x-model`，可直接导入 Postman / Apifox / Swagger UI。
 
 ### 两页 Playwright E2E
@@ -1452,9 +1456,9 @@ python tests/eval_run.py --out tests/baseline.json        # 更新基线
 python tests/eval_run.py --sleep 2 --out tests/report_llm.json   # 接模型跑一轮
 ```
 
-- 基础用例 25 条：正常 12 / 边界 7 / 对抗 6；反馈用例由看板「生成用例」写入 `eval_cases_feedback.jsonl`（`regression`）；上传文档的自动出题写入 `eval_cases_docs.jsonl`（`doc`）——**三类默认一起跑**
+- 基础用例 25 条：正常 12 / 边界 7 / 对抗 6；拒答基线 10 条（`eval_cases_uncovered.jsonl`，期望行为是明确说「不知道」）；反馈用例由看板「生成用例」写入 `eval_cases_feedback.jsonl`（`regression`）；上传文档的自动出题写入 `eval_cases_docs.jsonl`（`doc`）——**默认一起跑，共 36 条**
 - 门禁：**对抗用例 100% 通过**（一条失败即非零退出，阻断发布）+ 总通过率 ≥ 90%
-- 当前基线：**离线 26/26 = 100%**（`tests/baseline.json`）；**接入模型 26/26 = 100%**（`tests/report_llm.json`，由评测者自备模型跑出）
+- 仓库存留的报告：**离线 26/26 = 100%**（`tests/baseline.json`）、**接入模型 26/26 = 100%**（`tests/report_llm.json`，由评测者自备模型跑出）。这两份生成于拒答基线并入默认集**之前**，所以汇报页会把它们标成「旧」并提示重跑——页面不藏这件事
 - L1 断言只锁「行为 / 事实 / 安全」，不绑死措辞（如风险等级接受「R1 / R5 / 五档 / 五级」任一）；语义质量交给 L3。
 
 改动 prompt、换模型、调切分后，**必须重跑并与 `baseline.json` 逐条 diff**，只允许变好不允许变差。

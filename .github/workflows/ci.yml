@@ -46,6 +46,15 @@ jobs:
       - name: 语法检查
         run: python -m compileall -q src tests tools
 
+      # 这两条是「结构性」门禁，改接口或拆函数时最先报警，所以放前面。
+      # test_openapi_routes 静态扫 dispatch 的路径字面量与 build_spec 双向比对：
+      # OpenAPI 漏登记会让 routing 的方法判定一起错（405 变 404）。
+      - name: 结构门禁（函数长度 / 契约与路由对齐 / CI 覆盖）
+        run: |
+          python tests/test_size.py
+          python tests/test_openapi_routes.py
+          python tests/test_ci_coverage.py
+
       # 前端资源是 .js/.css/.html 文件，语法错不该等到浏览器里白屏才发现
       - name: 前端资源（node --check / CSS 括号 / 内联脚本）
         run: python tools/check_frontend.py
@@ -109,6 +118,19 @@ jobs:
 
       - name: 笔记 MCP（握手 / 7 工具 / 资源 / 协议错误）
         run: python tests/test_notes_mcp.py
+
+      # 笔记附件、检索、MCP over HTTP、独立 dispatch 的契约与路由
+      - name: 笔记增强（附件 / 检索 / MCP HTTP / 会话与契约）
+        env:
+          # 这两个测试会读真实配置并顺着去联网，CI 里必须切断
+          APP_CONFIG: /nonexistent/none.json
+          EMBEDDING_PROVIDER: none
+        run: |
+          python tests/test_notes_assets.py
+          python tests/test_notes_search.py
+          python tests/test_mcp_http.py
+          python tests/test_threads.py
+          python tests/test_contract.py
 
       - name: 模型摘要（校验 / 回落 / 严格模式）
         run: python tests/test_notes_digest_llm.py
@@ -181,9 +203,41 @@ jobs:
           python tests/test_backup.py
           python tests/test_client_api.py
 
+      # 之前没进 CI 的一批：报了问题也拦不住回归，等于没有
+      - name: 底层机制（切分 / 索引换页 / 文件锁 / 文件读写 / 关键词词表）
+        run: |
+          python tests/test_chunking.py
+          python tests/test_index_swap.py
+          python tests/test_lock.py
+          python tests/test_fileops.py
+          python tests/test_keyword_lexicon.py
+
+      - name: 并发与协议语义
+        run: |
+          python tests/test_concurrency.py
+          python tests/test_routing.py
+          python tests/test_post_dispatch.py
+          python tests/test_http_semantics.py
+          python tests/test_citation_source.py
+
+      - name: 汇报页渲染 / 打包契约
+        run: |
+          python tests/test_report_render.py
+          python tests/test_packaging.py
+
       - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'
         run: python tools/build_release.py
+
+      # 打包成功不代表包能用：解包、起服务、打页面。
+      # 以前只在本地发布前手动跑，结果「包里的 src 是旧的」这类问题一路漏到用户手里。
+      - name: 冒烟解包（解压 → 起服务 → 打关键页面与接口）
+        if: matrix.python == '3.13'
+        env:
+          # 脚本用 urlopen 访问 127.0.0.1；runner 上若有代理变量会被劫持成 502
+          NO_PROXY: "127.0.0.1,localhost"
+          no_proxy: "127.0.0.1,localhost"
+        run: python tools/smoke_pack.py
 
       - name: 上传发布包
         if: matrix.python == '3.13'

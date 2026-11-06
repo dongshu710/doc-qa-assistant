@@ -124,6 +124,12 @@ def _paths_ops() -> dict:
             "get": {"tags": ["运维"], "summary": "业务聚合指标",
                     "responses": {"200": {"description": "请求量、延迟、降级与 token"}}}
         },
+        "/metrics": {
+            "get": {"tags": ["运维"],
+                    "summary": "Prometheus 文本格式指标（需管理员，含成本与 Key 标签）",
+                    "responses": {"200": {"description": "text/plain; version=0.0.4"},
+                                  "403": _err("需要管理员令牌或本机访问")}}
+        },
     }
 
 
@@ -215,6 +221,19 @@ def _paths_kb() -> dict:
                                    "400": _err("文件头不匹配"),
                                    "422": _err("解析失败或扫描件需 OCR")}}
         },
+        "/api/knowledge/upload_pdf": {
+            "post": {"tags": ["知识库"],
+                     "summary": "上传 PDF（`upload_file` 的旧别名，行为完全一致）",
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "required": ["name", "data_b64"],
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "data_b64": {"type": "string",
+                                                     "description": "文件 base64，解码后 ≤ 6 MB"}}}}}},
+                     "responses": {"200": {"description": "解析并入库"},
+                                   "400": _err("文件头不匹配"),
+                                   "422": _err("解析失败或扫描件需 OCR")}}
+        },
         "/api/knowledge/delete": {
             "post": {"tags": ["知识库"], "summary": "删除文档",
                      "requestBody": {"required": True, "content": {"application/json": {
@@ -222,6 +241,293 @@ def _paths_kb() -> dict:
                              "name": {"type": "string"}}}}}},
                      "responses": {"200": {"description": "已删除"},
                                    "404": _err("文件不存在")}}
+        },
+    }
+
+
+def _x_internal() -> dict:
+    """页面专用端点标记。
+
+    为什么这些也要写进契约：`routing.allowed_methods()` 从这份规格里读
+    路径 → 方法表，用来把「方法用错」判成 405 而不是 404。它们以前列在
+    `routing._EXTRA_METHODS` 那张补丁表里，结果补丁表自己漂了——
+    `/api/storage/usage`、`/api/storage/cleanup` 两个端点早已不存在，
+    而真存在的 `/api/storage/restore` 反倒没登记（回 404 而不是 405）。
+    现在路径只有这一份来源。
+    """
+    return {"x-internal": True}
+
+
+def _no_body(desc: str) -> dict:
+    return {"200": {"description": desc}}
+
+
+def _paths_admin() -> dict:
+    """管理面。级别在 `routing.RULES` 里是 ADMIN：要令牌，或从本机访问。"""
+    denied = {"403": _err("需要管理员令牌（ADMIN_TOKEN），或从本机访问")}
+    return {
+        "/api/admin/config": {
+            "get": {"tags": ["运维"], "summary": "当前灰度与运行时配置", **_x_internal(),
+                    "responses": {"200": {"description": "grayscale / canary / overrides"}}},
+            "post": {"tags": ["运维"], "summary": "调整灰度比例与模型", **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "properties": {
+                             "canary_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+                             "canary_model": {"type": "string"}}}}}},
+                     "responses": {"200": {"description": "新配置与 revision"},
+                                   **denied}},
+        },
+        "/api/admin/rollback": {
+            "post": {"tags": ["运维"], "summary": "回滚上一版运行时配置", **_x_internal(),
+                     "responses": {"200": {"description": "回滚后的配置"}, **denied}},
+        },
+        "/api/admin/cost": {
+            "get": {"tags": ["运维"], "summary": "当日 token 消耗与预算余量", **_x_internal(),
+                    "responses": {"200": {"description": "used / budget / ratio"}}},
+        },
+        "/api/audit": {
+            "get": {"tags": ["运维"], "summary": "审计日志尾条", **_x_internal(),
+                    "parameters": [{"name": "limit", "in": "query", "required": False,
+                                    "schema": {"type": "integer", "minimum": 1,
+                                               "maximum": 200, "default": 20}}],
+                    "responses": {"200": {"description": "按时间倒序的动作记录"}, **denied}},
+        },
+    }
+
+
+def _paths_data() -> dict:
+    """评测数据面：用例、运行、关键词、轨迹、反馈。"""
+    return {
+        "/api/cases": {
+            "get": {"tags": ["运维"], "summary": "评测用例概览与上一次运行结果", **_x_internal(),
+                    "responses": {"200": {"description": "curated / feedback / docs / last_run"}}},
+        },
+        "/api/cases/run": {
+            "post": {"tags": ["运维"], "summary": "跑一遍 L1 用例（同步）", **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "properties": {
+                             "scope": {"type": "string",
+                                       "enum": ["all", "curated", "feedback", "docs"],
+                                       "default": "all",
+                                       "description": "docs 依赖 tests/eval_cases_docs.jsonl，"
+                                                      "文件不存在时会正常返回 total=0"}}}}}},
+                     "responses": {"200": {"description": "passed / total / failed[] / run_at"}}},
+        },
+        "/api/cases/from_doc": {
+            "post": {"tags": ["运维"], "summary": "从文档自动出题", **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "required": ["doc_id"], "properties": {
+                             "doc_id": {"type": "string"},
+                             "count": {"type": "integer", "minimum": 1, "maximum": 20}}}}}},
+                     "responses": {"200": {"description": "生成的用例（已落盘）"}}},
+        },
+        "/api/cases/from_feedback": {
+            "post": {"tags": ["运维"], "summary": "把用户反馈转成评测用例", **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "required": ["trace_id"], "properties": {
+                             "trace_id": {"type": "string"}}}}}},
+                     "responses": {"200": {"description": "新增用例数"}}},
+        },
+        "/api/examples": {
+            "get": {"tags": ["问答"], "summary": "首页示例问题", **_x_internal(),
+                    "parameters": [{"name": "n", "in": "query", "required": False,
+                                    "schema": {"type": "integer", "minimum": 1,
+                                               "maximum": 8, "default": 4}}],
+                    "responses": {"200": {"description": "示例问题列表"}}},
+        },
+        "/api/keywords": {
+            "get": {"tags": ["知识库"], "summary": "关键词库总览或单文档视图", **_x_internal(),
+                    "parameters": [{"name": "name", "in": "query", "required": False,
+                                    "schema": {"type": "string"},
+                                    "description": "给定时返回该文档的词条，否则返回全部"}],
+                    "responses": {"200": {"description": "docs / summary"},
+                                  "404": _err("文档不存在或未生成关键词")}},
+        },
+        "/api/keywords/rebuild": {
+            "post": {"tags": ["知识库"], "summary": "重建关键词库", **_x_internal(),
+                     "responses": {"200": {"description": "重建计数与耗时"}}},
+        },
+        "/api/trace": {
+            "get": {"tags": ["运维"], "summary": "调用轨迹尾条", **_x_internal(),
+                    "parameters": [{"name": "limit", "in": "query", "required": False,
+                                    "schema": {"type": "integer", "minimum": 1,
+                                               "maximum": 200, "default": 20}}],
+                    "responses": {"200": {"description": "ts / query / behavior / latency_ms"}}},
+        },
+        "/api/feedback/list": {
+            "get": {"tags": ["问答"], "summary": "反馈记录尾条", **_x_internal(),
+                    "parameters": [{"name": "limit", "in": "query", "required": False,
+                                    "schema": {"type": "integer", "minimum": 1,
+                                               "maximum": 200, "default": 20}}],
+                    "responses": {"200": {"description": "反馈条目"}}},
+        },
+        "/api/kb/doc_history": {
+            "get": {"tags": ["知识库"], "summary": "单文档的版本历史", **_x_internal(),
+                    "parameters": [{"name": "name", "in": "query", "required": True,
+                                    "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "各版本与是否仍在使用"},
+                                  "400": _err("文档名为空或库里没有这份文档")}},
+        },
+    }
+
+
+def _paths_client() -> dict:
+    """页面与本地客户端专用：设置、存储区文件、会话记录、MCP。
+
+    全部标 `x-internal`——它们不是给外部集成用的（`/api/settings` 里的
+    `llm.api_key` 是明文凭据，`/api/files/raw` 能读写存储区任意文件）。
+    登记进契约只是为了让方法表有单一来源，不改变它们的权限等级。
+    """
+    return {
+        "/api/settings": {
+            "get": {"tags": ["运维"], "summary": "当前设置（配了 Key 且未带 Key 时脱敏）",
+                    **_x_internal(), "responses": {"200": {"description": "设置全量"}}},
+            "post": {"tags": ["运维"], "summary": "写入设置", **_x_internal(),
+                     "responses": {"200": {"description": "新设置与 notes_reloaded"},
+                                   "403": _err("非本机修改需要 X-Admin-Token")}},
+        },
+        "/api/settings/setup": {
+            "get": {"tags": ["运维"], "summary": "首启引导状态", **_x_internal(),
+                    "responses": {"200": {"description": "needed / current"}}},
+            "post": {"tags": ["运维"], "summary": "选存储区并完成引导", **_x_internal(),
+                     "responses": {"200": {"description": "存储区已生效"}}},
+        },
+        "/api/settings/pick-folder": {
+            "post": {"tags": ["运维"], "summary": "唤起系统目录选择框", **_x_internal(),
+                     "responses": {"200": {"description": "选中的路径，取消时为空"}}},
+        },
+        "/api/settings/test": {
+            "post": {"tags": ["运维"], "summary": "测试模型连通性", **_x_internal(),
+                     "responses": {"200": {"description": "ok / latency_ms / error"}}},
+        },
+        "/api/settings/open": {
+            "post": {"tags": ["运维"], "summary": "在系统文件管理器中打开存储区", **_x_internal(),
+                     "responses": {"200": {"description": "打开与否"}}},
+        },
+        "/api/settings/mcp": {
+            "get": {"tags": ["运维"], "summary": "导出 MCP 客户端配置", **_x_internal(),
+                    "responses": {"200": {"description": "claude / vscode 两种片段"}}},
+            "post": {"tags": ["运维"], "summary": "写入 MCP 客户端配置", **_x_internal(),
+                     "responses": {"200": {"description": "写入的文件"}}},
+        },
+        "/api/settings/mcp/install": {
+            "post": {"tags": ["运维"], "summary": "安装 MCP 配置到指定客户端", **_x_internal(),
+                     "responses": {"200": {"description": "写入结果"}}},
+        },
+        "/api/settings/notes/migrate": {
+            "post": {"tags": ["运维"], "summary": "把旧位置的笔记搬到当前存储区", **_x_internal(),
+                     "responses": {"200": {"description": "copied / skipped / failed"},
+                                   "400": _err("路径非法或旧位置没有 notes 目录")}},
+        },
+        "/api/settings/storage/clean": {
+            "post": {"tags": ["运维"], "summary": "清理历史版本（保留 N 个）", **_x_internal(),
+                     "responses": {"200": {"description": "删除数与释放字节"},
+                                   "400": _err("keep 不是 0 或正整数")}},
+        },
+        "/api/files/raw": {
+            "get": {"tags": ["运维"], "summary": "读存储区里的一个文件", **_x_internal(),
+                    "parameters": [{"name": "path", "in": "query", "required": True,
+                                    "schema": {"type": "string"},
+                                    "description": "相对存储区的路径"}],
+                    "responses": {"200": {"description": "content / rev"},
+                                  "404": _err("文件不存在")}},
+            "put": {"tags": ["运维"], "summary": "写存储区里的一个文件", **_x_internal(),
+                    "requestBody": {"required": True, "content": {"application/json": {
+                        "schema": {"type": "object", "required": ["path", "content"],
+                                   "properties": {
+                                       "path": {"type": "string"},
+                                       "content": {"type": "string"},
+                                       "base_rev": {"type": "string",
+                                                    "description": "覆盖时必须与当前 rev 一致，否则 428"},
+                                       "create": {"type": "boolean"}}}}}},
+                    "responses": {"200": {"description": "写入后的 rev"},
+                                  "409": _err("文件已被删除"), "428": _err("缺少 base_rev")}},
+        },
+        "/api/files/open": {
+            "post": {"tags": ["运维"], "summary": "用系统默认程序打开文件", **_x_internal(),
+                     "responses": {"200": {"description": "已交给系统"}}},
+        },
+        "/api/files/open-folder": {
+            "post": {"tags": ["运维"], "summary": "打开存储区所在目录", **_x_internal(),
+                     "responses": {"200": {"description": "目录路径"}}},
+        },
+        "/api/storage/backups": {
+            "get": {"tags": ["运维"], "summary": "备份清单", **_x_internal(),
+                    "responses": {"200": {"description": "name / at / files / bytes"}}},
+        },
+        "/api/storage/backup": {
+            "post": {"tags": ["运维"], "summary": "立即备份整个存储区", **_x_internal(),
+                     "responses": {"200": {"description": "备份名与字节数"}}},
+        },
+        "/api/storage/restore": {
+            "post": {"tags": ["运维"], "summary": "从备份恢复（恢复前自动再备份）", **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object", "required": ["name"], "properties": {
+                             "name": {"type": "string"}, "force": {"type": "boolean"}}}}}},
+                     "responses": {"200": {"description": "restored / pre_backup"},
+                                   "409": _err("目标非空且未加 force")}},
+        },
+        "/api/threads": {
+            "get": {"tags": ["问答"], "summary": "会话列表", **_x_internal(),
+                    "responses": {"200": {"description": "items（按更新时间倒序）"}}},
+            "post": {"tags": ["问答"], "summary": "批量导入会话", **_x_internal(),
+                     "responses": {"200": {"description": "imported"}}},
+        },
+        "/api/threads/{id}": {
+            "get": {"tags": ["问答"], "summary": "读一条会话", **_x_internal(),
+                    "parameters": [{"name": "id", "in": "path", "required": True,
+                                    "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "会话内容"},
+                                  "404": _err("会话不存在")}},
+            "put": {"tags": ["问答"], "summary": "写入会话（按 id 覆盖）", **_x_internal(),
+                    "parameters": [{"name": "id", "in": "path", "required": True,
+                                    "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "写入后的元信息"}}},
+            "delete": {"tags": ["问答"], "summary": "删除会话", **_x_internal(),
+                       "parameters": [{"name": "id", "in": "path", "required": True,
+                                       "schema": {"type": "string"}}],
+                       "responses": {"200": {"description": "已删除"}}},
+        },
+        "/api/threads/import": {
+            "post": {"tags": ["问答"], "summary": "导入会话（同 `/api/threads` 的 POST）",
+                     **_x_internal(),
+                     "responses": {"200": {"description": "imported"}}},
+        },
+        "/mcp": {
+            "get": {"tags": ["笔记"], "summary": "Streamable HTTP 下行流（SSE）", **_x_internal(),
+                    "responses": {"200": {"description": "text/event-stream：connected / ping"},
+                                  "405": _err("未要求 event-stream 时只接受 POST")}},
+            "post": {"tags": ["笔记"], "summary": "MCP JSON-RPC（与 stdio 同一份实现）",
+                     **_x_internal(),
+                     "requestBody": {"required": True, "content": {"application/json": {
+                         "schema": {"type": "object",
+                                    "description": "单条或批量 JSON-RPC 请求；通知回 202"}}}},
+                     "responses": {"200": {"description": "JSON-RPC 响应（要 SSE 时是单条 message）"},
+                                   "202": _no_body("通知类请求，无正文")}},
+        },
+    }
+
+
+def _paths_meta() -> dict:
+    """自述与契约本身。这几条都是 open 级：不需要 Key 也能读。"""
+    return {
+        "/openapi.json": {
+            "get": {"tags": ["运维"], "summary": "本规格", **_x_internal(),
+                    "responses": {"200": {"description": "OpenAPI 3.0.3 文档"}}},
+        },
+        "/tools.json": {
+            "get": {"tags": ["笔记"], "summary": "function calling 工具清单", **_x_internal(),
+                    "responses": {"200": {"description": "OpenAI 兼容的 tools 数组"}}},
+        },
+        "/api/update/check": {
+            "get": {"tags": ["运维"], "summary": "检查新版本（只查不装）", **_x_internal(),
+                    "parameters": [{"name": "force", "in": "query", "required": False,
+                                    "schema": {"type": "boolean", "default": False}}],
+                    "responses": {"200": {"description": "latest / url / has_update"}}},
+        },
+        "/api/l3": {
+            "get": {"tags": ["运维"], "summary": "L3 语义评分摘要", **_x_internal(),
+                    "responses": {"200": {"description": "available / avg / gate"}}},
         },
     }
 
@@ -316,7 +622,9 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
         "info": _info(version, secured),
         "servers": [{"url": "/", "description": "当前实例"}],
         "tags": _tags(),
-        "paths": {**_paths_qa(secured), **_paths_ops(), **_paths_kb()},
+        "paths": {**_paths_qa(secured), **_paths_ops(), **_paths_kb(),
+                  **_paths_admin(), **_paths_data(), **_paths_client(),
+                  **_paths_meta()},
         "components": _components(),
     }
     spec["paths"].update(notes_paths())

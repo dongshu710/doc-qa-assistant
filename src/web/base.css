@@ -3,6 +3,9 @@
 :root{
   --ink:#211f1a; --text:#3b3833; --muted:#6d6961; --faint:#97928a;
   --line:#eae4d8; --line-2:#ded6c7;
+  /* 控件边界专用：--line-2 在面板底上只有 1.35:1，WCAG 1.4.11 要求 3:1。
+     分隔线继续用 --line-2，输入框边框用这一档。 */
+  --line-3:#948e84;
   --bg:#faf7f1; --surface:#fffdf9; --surface-2:#f4efe5;
   /* 墨绿 + 米纸：这是「档案/记忆」的调子，不是聊天工具的蓝白。
      同一个蓝用得太多，界面就变成另一个 DeepSeek 了。 */
@@ -280,7 +283,7 @@ body.side-mini .sb-item{justify-content:center;padding:0;}
 .btn:hover{background:var(--brand-600);box-shadow:0 8px 18px -14px rgba(47,111,94,.8);}
 .btn:active{transform:translateY(1px);}
 .btn[disabled]{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none;}
-.btn.ghost{background:#fff;color:var(--text);border-color:var(--line-2);box-shadow:var(--sh-1);}
+.btn.ghost{background:var(--surface);color:var(--text);border-color:var(--line-2);box-shadow:var(--sh-1);}
 .btn.ghost:hover{background:var(--brand-tint);border-color:var(--brand-line);color:var(--ink);}
 
 .btn.danger-ghost{background:var(--surface);color:var(--bad);border-color:var(--bad-soft);box-shadow:none;}
@@ -309,7 +312,7 @@ body.side-mini .sb-item{justify-content:center;padding:0;}
 /* ============ 指标卡 ============ */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
 .kpi{
-  position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;
+  position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;
   box-shadow:var(--sh-1);transition:box-shadow .18s ease, transform .18s ease, border-color .18s ease;
 }
 .kpi:hover{box-shadow:var(--sh-2);transform:translateY(-1px);border-color:var(--line-2);}
@@ -322,11 +325,11 @@ body.side-mini .sb-item{justify-content:center;padding:0;}
 @media (max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);}}
 
 /* ============ 表格 ============ */
-.table-wrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;}
+.table-wrap{border:1px solid var(--line);border-radius:12px;overflow-x:auto;overflow-y:hidden;background:var(--surface);}
 table{width:100%;border-collapse:collapse;font-size:13px;}
 thead th{
   text-align:left;padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--line);
-  font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--faint);text-transform:uppercase;white-space:nowrap;
+  font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--muted);text-transform:uppercase;white-space:nowrap;
 }
 tbody td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);color:var(--text);vertical-align:middle;}
 tbody tr:last-child td{border-bottom:none;}
@@ -404,7 +407,7 @@ pre.cmd .c{color:#8a857c;}
 [data-theme="dark"]{
   color-scheme:dark;
   --ink:#f2efe8; --text:#d8d3c8; --muted:#a7a199; --faint:#7f7a72;
-  --line:#2e2b26; --line-2:#3a362f;
+  --line:#2e2b26; --line-2:#3a362f; --line-3:#787165;
   --bg:#181714; --surface:#201f1b; --surface-2:#272520;
   --side-bg:#161512; --side-line:#2c2a25; --hover:#282520;
   --brand:#82c0a9; --brand-600:#9ad2bc; --brand-2:#82c0a9; --brand-soft:#22332c; --brand-tint:#1d2621;
@@ -430,10 +433,8 @@ pre.cmd .c{color:#8a857c;}
 
 [data-theme="dark"] .btn.danger-ghost{background:var(--surface);border-color:var(--bad);color:var(--bad);}
 [data-theme="dark"] .btn.danger-ghost:hover{background:var(--bad-soft);}
-[data-theme="dark"] .kpi{background:var(--surface);}
 [data-theme="dark"] .kpi:hover{border-color:var(--line-2);}
 
-[data-theme="dark"] .table-wrap{background:var(--surface);}
 [data-theme="dark"] thead th{background:var(--surface-2);color:var(--faint);border-bottom-color:var(--line);}
 [data-theme="dark"] tbody td{border-bottom-color:var(--line);}
 [data-theme="dark"] tbody tr:hover td{background:var(--surface-2);}
@@ -471,7 +472,6 @@ pre.cmd .c{color:#8a857c;}
 [data-theme="dark"] .tabs a.active{background:var(--surface);border-color:var(--line);}
 
 /* ---------- 汇报页 ---------- */
-[data-theme="dark"] .rp-nav{background:linear-gradient(180deg,rgba(24,22,18,.97) 62%,rgba(24,22,18,0));}
 [data-theme="dark"] .rp-nav a:hover{background:var(--hover);color:var(--ink);}
 [data-theme="dark"] .rp-nav a.active{background:var(--surface);border-color:var(--line);}
 

@@ -370,6 +370,10 @@ class KnowledgeStore:
             return {"change": request, "active": active}
 
     def _load_request(self, change_id: str) -> dict:
+        # 变更编号只可能是 chg_0001 这种形状。不校验就直接 join 进路径的话，
+        # `?id=../..` 能读出项目内任意目录下的 request.json。
+        if not (change_id.startswith("chg_") and change_id[4:].isdigit()):
+            raise KnowledgeError(f"变更编号不合法: {change_id}")
         path = os.path.join(self.pending_dir, change_id, "request.json")
         if not os.path.exists(path):
             raise KnowledgeError(f"待审批变更不存在: {change_id}")
