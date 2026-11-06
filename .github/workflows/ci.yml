@@ -231,12 +231,10 @@ jobs:
 
       # 打包成功不代表包能用：解包、起服务、打页面。
       # 以前只在本地发布前手动跑，结果「包里的 src 是旧的」这类问题一路漏到用户手里。
+      # 不需要配 NO_PROXY：GitHub runner 默认没有 http(s)_proxy 变量，
+      # 而 step 级 env 里同时写 NO_PROXY / no_proxy 会被 workflow 校验判成重复键。
       - name: 冒烟解包（解压 → 起服务 → 打关键页面与接口）
         if: matrix.python == '3.13'
-        env:
-          # 脚本用 urlopen 访问 127.0.0.1；runner 上若有代理变量会被劫持成 502
-          NO_PROXY: "127.0.0.1,localhost"
-          no_proxy: "127.0.0.1,localhost"
         run: python tools/smoke_pack.py
 
       - name: 上传发布包
