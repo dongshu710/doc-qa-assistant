@@ -353,6 +353,25 @@ def make_base(deps):
             if mode == "on":
                 return False
             return self._is_admin()
+
+        def _stage_and_maybe_approve(self, files, *, deletes=None, note: str = "",
+                                     author: str | None = None):
+            """入库一次变更，并按审批模式决定要不要立刻生效。
+
+            文本上传、文档解析上传、删除三个入口走的是同一套：stage →（自动审批）→ 重载。
+            以前这三段各写一遍，代价不是行数，而是「改一处漏两处」：
+            审批策略一调整，会有入口保持旧行为，用户看到的是「有时要审批有时不用」。
+            返回 (staged, change_id, approved, total)，approved 为 None 表示还在待审。
+            """
+            who = author or self._client()
+            staged = store.stage(files, author=who, note=note, deletes=deletes or [])
+            change_id = staged["change"]["change_id"]
+            approved = None
+            total = None
+            if self._auto_approve():
+                approved = store.approve(change_id, approver=who, note="auto-approve")
+                total = reload_kb()
+            return staged, change_id, approved, total
         def _guard(self, method: str, path: str) -> bool:
             """所有请求的唯一入口闸门：Host → 鉴权等级 → 来源/内容类型。
 

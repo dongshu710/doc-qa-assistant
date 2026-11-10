@@ -156,6 +156,46 @@ class ThreadStore:
 
     # ---- 写 ----
 
+    def queries_for_sid(self, sid: str, limit: int = 6) -> list[str]:
+        """按会话 id 找最近的一条对话，取最后几轮的「问句」。
+
+        只取 `q`，不取答案：追问改写需要的是「上一轮问的什么」，
+        把答案塞进上下文反而会把改写往上一轮的主题上带偏。
+        取 updated 最大的那条：同一个 sid 理论上只属于一条对话，
+        但用户可能从浏览器旧数据导入过重复的，取最新的是最不坏的选择。
+        """
+        sid = str(sid or "").strip()
+        if not sid:
+            return []
+        newest: tuple[str, dict] | None = None
+        try:
+            entries = list(self.dir.glob("*.json"))
+        except OSError:
+            return []
+        for path in entries:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                continue          # 坏文件不该让追问上下文整体失效
+            if not isinstance(data, dict) or str(data.get("sid") or "") != sid:
+                continue
+            updated = str(data.get("updated") or data.get("created") or "")
+            if newest is None or updated > newest[0]:
+                newest = (updated, data)
+        if newest is None:
+            return []
+        turns = newest[1].get("turns")
+        if not isinstance(turns, list):
+            return []
+        questions = []
+        for item in turns:
+            if isinstance(item, dict):
+                text = str(item.get("q") or "").strip()
+                if text:
+                    questions.append(text)
+        return questions[-max(1, int(limit)):]
+
     def put(self, thread_id: str, data: dict) -> dict:
         path = self.path_for(thread_id)
         if not isinstance(data, dict):

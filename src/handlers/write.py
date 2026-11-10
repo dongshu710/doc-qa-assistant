@@ -266,15 +266,8 @@ def make_write(deps):
 
                 if store is not None:
                     try:
-                        staged = store.stage({name: content}, author=self._client(),
-                                             note=str(payload.get("note") or "")[:200])
-                        change_id = staged["change"]["change_id"]
-                        approved = None
-                        total = None
-                        if self._auto_approve():
-                            approved = store.approve(change_id, approver=self._client(),
-                                                     note="auto-approve")
-                            total = reload_kb()
+                        staged, change_id, approved, total = self._stage_and_maybe_approve(
+                            {name: content}, note=str(payload.get("note") or "")[:200])
                     except (kbstore.KnowledgeError, ValueError) as exc:
                         self._json({"ok": False, "error": str(exc)}, 400)
                         return
@@ -373,15 +366,9 @@ def make_write(deps):
 
                 if store is not None:
                     try:
-                        staged = store.stage({res["md"]: md_bytes}, author=self._client(),
-                                             note=f"由 {name} 解析（{res.get('engine')}）")
-                        change_id = staged["change"]["change_id"]
-                        approved = None
-                        total = None
-                        if self._auto_approve():
-                            approved = store.approve(change_id, approver=self._client(),
-                                                     note="auto-approve")
-                            total = reload_kb()
+                        staged, change_id, approved, total = self._stage_and_maybe_approve(
+                            {res["md"]: md_bytes},
+                            note=f"由 {name} 解析（{res.get('engine')}）")
                     except (kbstore.KnowledgeError, ValueError) as exc:
                         shutil.rmtree(stage_dir, ignore_errors=True)
                         self._json({"ok": False, "error": str(exc)}, 400)
@@ -456,15 +443,8 @@ def make_write(deps):
 
                 if store is not None:
                     try:
-                        staged = store.stage({}, author=self._client(), deletes=[name],
-                                             note=f"删除 {name}")
-                        change_id = staged["change"]["change_id"]
-                        approved = None
-                        total = None
-                        if self._auto_approve():
-                            approved = store.approve(change_id, approver=self._client(),
-                                                     note="auto-approve")
-                            total = reload_kb()
+                        staged, change_id, approved, total = self._stage_and_maybe_approve(
+                            {}, deletes=[name], note=f"删除 {name}")
                     except (kbstore.KnowledgeError, ValueError) as exc:
                         self._json({"ok": False, "error": str(exc)}, 400)
                         return

@@ -169,6 +169,18 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    """把配置汇总成一个不可变快照。
+
+    配置有两个来源，分工是写死的，不是历史包袱：
+    - **设置面板**（写入 appconfig.json）：用户会在界面上改的东西，改完要重启服务；
+      面板里显式清空的项不会回落到环境变量，否则用户清不干净。
+    - **环境变量**：部署参数，尤其是密钥、监听、Redis 这类不适合放进界面文件的。
+    优先级：面板 > 环境变量 > 本函数的默认值。
+
+    全量变量清单在仓库根的 `.env.example`，由 `tools/gen_env_example.py` 从代码生成；
+    `tests/test_config_fields.py` 会校验「代码读的变量」与「清单」一致，
+    以及 Settings 的每个字段都真的被赋值——防止出现「设了没反应」和「改了名静默降级」。
+    """
     retrieval = (_first_env("RETRIEVAL", default="vector") or "vector").strip().lower()
     if retrieval not in ("bm25", "hybrid", "vector", "embedding"):
         retrieval = "vector"

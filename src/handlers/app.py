@@ -27,6 +27,7 @@ from ..guards import Guards
 from ..metrics_exporter import Metrics
 from ..notes.service import NoteService
 from ..pipeline import RAGPipeline
+from ..threadstore import ThreadStore
 from ..version import __version__
 from .common import (_knowledge_dir, _raw_dir)
 
@@ -112,6 +113,23 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
     except OSError as exc:  # 目录不可写等情况：接口回 503，问答照常
         note_ref = {"service": None, "error": f"{type(exc).__name__}: {exc}"}
 
+    def _bind_session_loader() -> None:
+        """让追问上下文能从磁盘会话回填。
+
+        为什么放在组合根：会话层不该 import 线程存储（两个包的加载顺序会被绑死），
+        而这里同时握着 pipe 与笔记服务，是唯一能看清两者关系的地方。
+        笔记服务不可用时注入 None：宁可不回填，也别让每次提问都去碰一个会抛错的目录。
+        """
+        service = note_ref.get("service")
+        if service is None:
+            pipe.sessions.set_loader(None)
+            return
+        threads = ThreadStore(service.store.home)
+        pipe.sessions.set_loader(
+            lambda sid: threads.queries_for_sid(sid, pipe.sessions.max_turns))
+
+    _bind_session_loader()
+
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
     raw_dir = _raw_dir()
@@ -156,9 +174,12 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         try:
             note_ref["service"] = NoteService()
             note_ref["error"] = None
+            # 换了存储区就换回填来源，否则追问上下文还在读老目录
+            _bind_session_loader()
             return {"ok": True, "home": str(note_ref["service"].store.home)}
         except OSError as exc:
             note_ref["error"] = f"{type(exc).__name__}: {exc}"
+            _bind_session_loader()
             return {"ok": False, "message": note_ref["error"]}
 
     _repo_cache = {"stamp": None, "url": ""}

@@ -41,6 +41,8 @@ BM25_B = 0.75
 # 但纯靠 cosine 排序容易把「同一话题但不相关」的笔记顶上来。
 LEXICAL_WEIGHT = 0.55
 _EMBED_BATCH = 16
+# 分词缓存的条目上限。一千篇笔记约几十 MB，留四倍余量后淘汰最早的四分之一。
+COUNTS_CACHE_MAX = 4000
 
 _CN = re.compile(r"[\u4e00-\u9fff]+")
 _WORD = re.compile(r"[a-z0-9_]{2,}")
@@ -98,16 +100,30 @@ class BM25:
     """标准 BM25（k1=1.2, b=0.75）。笔记规模下 O(N×Q) 足够，不必建倒排。"""
 
     def __init__(self, docs: dict[str, list[str]]):
+        self._init_from_counts({doc_id: Counter(tokens) for doc_id, tokens in docs.items()})
+
+    @classmethod
+    def from_counts(cls, counts: dict[str, Counter]) -> "BM25":
+        """用已算好的词频直接构造。
+
+        检索时每篇都要重算的情况只有「文本变了」；把 `Counter` 缓存下来，
+        一千篇的查询不必每次重新分词——那是这条路径上最贵的一步。
+        传进来的 counts 不会被修改，调用方可以安全复用。
+        """
+        instance = cls.__new__(cls)
+        instance._init_from_counts(counts)
+        return instance
+
+    def _init_from_counts(self, counts: dict[str, Counter]) -> None:
         self.tf: dict[str, Counter] = {}
         self.lengths: dict[str, int] = {}
         df: Counter = Counter()
-        for doc_id, tokens in docs.items():
-            counts = Counter(tokens)
-            self.tf[doc_id] = counts
-            self.lengths[doc_id] = sum(counts.values())
-            for token in counts:
+        for doc_id, doc_counts in counts.items():
+            self.tf[doc_id] = doc_counts
+            self.lengths[doc_id] = sum(doc_counts.values())
+            for token in doc_counts:
                 df[token] += 1
-        self.total = len(docs)
+        self.total = len(counts)
         self.avgdl = (sum(self.lengths.values()) / self.total) if self.total else 0.0
         # 加 1 再取对数：语料很小的时候 idf 会变成负数，负分会把命中项往下压
         self.idf = {token: math.log(1 + (self.total - n + 0.5) / (n + 0.5))
@@ -174,6 +190,10 @@ class NoteSearcher:
         self._mutex = threading.Lock()
         self._rows: dict[str, dict] | None = None
         self._rows_stat: tuple[int, int] | None = None
+        # 分词结果按「笔记 + 版本签名」缓存：文本没变就不该重新分一遍。
+        # 千篇规模下分词占查询耗时的九成以上，打分只要几毫秒。
+        self._counts: dict[str, tuple[tuple, Counter]] = {}
+        self._counts_lock = threading.Lock()
 
     # ---- 索引读写 ----
 
@@ -336,6 +356,44 @@ class NoteSearcher:
         """有没有可用的向量通道。注入的假通道也算——测试正是靠它验证融合。"""
         return self._embed_call is not None or self._provider() is not None
 
+    # ---- 分词缓存 ----
+
+    def _counts_for(self, row: dict) -> Counter:
+        """取一篇笔记的词频，文本没改就直接用上次算好的。
+
+        签名用 `(mtime_ns, size)`：笔记一保存签名就变，缓存自动失效，
+        所以「刚存完搜不到」不会因为这一层缓存出现。
+        缓存长度为 0 的条目也要存——空笔记不该每次都重分一遍。
+        """
+        note_id = str(row.get("id") or "")
+        signature = (row.get("mtime_ns"), row.get("size"))
+        if note_id:
+            with self._counts_lock:
+                item = self._counts.get(note_id)
+            if item is not None and item[0] == signature:
+                return item[1]
+        counts = Counter(tokenize(row.get("text") or ""))
+        if note_id:
+            with self._counts_lock:
+                self._counts[note_id] = (signature, counts)
+                overflow = len(self._counts) - COUNTS_CACHE_MAX
+                if overflow > 0:
+                    # dict 保插入序，丢最早的一批就够。不做精确 LRU：
+                    # 笔记检索的局部性很弱（用户可能翻很久以前的），不值得维护命中计数。
+                    for key in list(self._counts)[:overflow + COUNTS_CACHE_MAX // 4]:
+                        self._counts.pop(key, None)
+        return counts
+
+    def forget_counts(self, note_id: str) -> None:
+        """丢掉一篇的分词缓存。
+
+        签名 `(mtime_ns, size)` 本来就能挡住绝大多数失效场景，但「同一长度、
+        同一时间戳重写」在理论上能凑巧相等。保存与删除时顺手清一下，
+        代价是一次 dict pop，换掉一整类「改了却搜到旧内容」的可能。
+        """
+        with self._counts_lock:
+            self._counts.pop(str(note_id), None)
+
     def _embed_into(self, batch: list[tuple[dict, dict]], docs: dict[str, dict],
                     budget_s: float | None = None) -> tuple[int, str]:
         """分批算向量，到时间预算就停。
@@ -377,8 +435,9 @@ class NoteSearcher:
             docs, indexed, pending, degraded = self._sync(wanted, want_vec, budget)
 
         tokens = tokenize(query)
-        lexical = BM25({note_id: tokenize(row.get("text") or "") for note_id, row in docs.items()}) \
-            .scores(tokens) if tokens else {}
+        lexical = BM25.from_counts({note_id: self._counts_for(row)
+                                    for note_id, row in docs.items()}).scores(tokens) \
+            if tokens else {}
         semantic_scores: dict[str, float] = {}
 
         if want_vec and tokens:

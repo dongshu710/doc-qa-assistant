@@ -91,6 +91,9 @@ jobs:
       - name: 多轮会话上下文
         run: python tests/test_session.py
 
+      - name: 会话重启后回填与清空墓碑
+        run: python tests/test_session_recovery.py
+
       - name: 流式问答 SSE
         run: python tests/test_stream.py
 
@@ -146,6 +149,7 @@ jobs:
         run: |
           python tests/test_notes_assets.py
           python tests/test_notes_search.py
+          python tests/test_notes_search_cache.py
           python tests/test_mcp_http.py
           python tests/test_threads.py
           python tests/test_contract.py
@@ -187,6 +191,9 @@ jobs:
       - name: embedding 接入与索引
         run: python tests/test_embeddings.py
 
+      - name: 向量存储内存与精度
+        run: python tests/test_vector_memory.py
+
       - name: embedding 检索链路
         run: python tests/test_pipeline_embedding.py
 
@@ -213,6 +220,11 @@ jobs:
           python tests/test_storage.py
           python tests/test_skill.py
           python tests/test_update.py
+
+      - name: 配置字段与 .env.example 一致性
+        run: |
+          python tests/test_config_fields.py
+          python tools/gen_env_example.py --check
 
       # 来源校验、注入隔离、引用支持度、备份恢复、桌面客户端接口
       - name: 安全与质量加固

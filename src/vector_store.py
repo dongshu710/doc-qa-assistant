@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import array
 import hashlib
 import heapq
 import inspect
@@ -32,11 +33,18 @@ from .embeddings import EmbeddingCache, EmbeddingError
 INDEX_FORMAT = 1
 
 
-def l2_normalize(vec: list[float]) -> list[float]:
+def l2_normalize(vec, compact: bool = False):
+    """归一化到单位长度。
+
+    `compact=True` 时返回 `array('f')`：一个 Python float 对象 24 字节，
+    1024 维的列表就是 24KB，5000 块常驻 160MB；float32 只占 4KB/块。
+    查询向量走默认（列表），只有入索引的才需要紧凑——那是量级差别所在。
+    """
     norm = math.sqrt(sum(v * v for v in vec))
     if not norm:
-        return [0.0] * len(vec)
-    return [v / norm for v in vec]
+        return array.array("f", [0.0]) * len(vec) if compact else [0.0] * len(vec)
+    values = [v / norm for v in vec]
+    return array.array("f", values) if compact else values
 
 
 def _now() -> str:
@@ -61,19 +69,24 @@ def _try_import_faiss():
 
 
 class PureFlatStore:
-    """纯 Python 精确内积；零依赖，作为所有环境的兜底。"""
+    """纯 Python 精确内积；零依赖，作为所有环境的兜底。
+
+    向量按 `array('f')` 存：同样的 5000×1024 语料，列表要 160 MB 常驻，
+    float32 紧凑数组只要 20 MB。检索路径不变（都是逐元素乘加），
+    只是每个元素的容器从「列表里的 float 对象」换成「数组里的 4 字节」。
+    """
 
     backend = "pure-flat"
 
     def __init__(self, dim: int):
         self.dim = dim
-        self._vectors: list[list[float]] = []
+        self._vectors: list[array.array] = []
 
-    def add(self, vectors: list[list[float]]) -> None:
+    def add(self, vectors) -> None:
         for vec in vectors:
             if len(vec) != self.dim:
                 raise ValueError(f"向量维度 {len(vec)} 与索引维度 {self.dim} 不一致")
-            self._vectors.append(l2_normalize(vec))
+            self._vectors.append(l2_normalize(vec, compact=True))
 
     def search(self, query: list[float], k: int) -> list[tuple[int, float]]:
         q = l2_normalize(query)
@@ -293,15 +306,21 @@ class EmbeddingIndex:
             return None
         return data if isinstance(data, dict) else None
 
-    def _read_vectors(self) -> list[list[float]]:
-        vectors: list[list[float]] = []
+    def _read_vectors(self) -> list[array.array]:
+        """逐行解析成 float32 紧凑向量。
+
+        文件格式不变（仍是 jsonl，能看能手改），只是不再给每一维造一个
+        Python float 对象：那样 5000 块 × 1024 维光容器就要 160 MB，
+        而 add() 里的归一化还会再复制一份。
+        """
+        vectors: list[array.array] = []
         with open(self.vectors_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 row = json.loads(line)
-                vectors.append([float(x) for x in row["v"]])
+                vectors.append(array.array("f", (float(x) for x in row["v"])))
         return vectors
 
     def _write(self, vectors: list[list[float]], fingerprint: str) -> None:

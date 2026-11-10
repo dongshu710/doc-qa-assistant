@@ -373,7 +373,9 @@ python -m src.cli --model deepseek-chat "稳盈系列的起购金额是多少"
 python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 ```
 
-可调环境变量：
+可调环境变量（下面是常用项；**完整清单看仓库根的 [`.env.example`](.env.example)**，
+它由 `tools/gen_env_example.py` 从代码生成，CI 会校验它与代码一致，所以不会出现
+「文档里有的代码不认」）：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|

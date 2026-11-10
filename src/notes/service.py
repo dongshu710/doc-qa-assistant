@@ -141,6 +141,10 @@ class NoteService:
             else:
                 committed = True
 
+        if commit:
+            # 同一篇被覆盖保存时，分词缓存必须跟着失效；靠签名判断只是兜底
+            self._forget_search(note.id)
+
         return {
             "ok": True,
             "committed": committed,
@@ -223,6 +227,7 @@ class NoteService:
                 note.set_section(key, text)
         note.touch(_now_text())
         self.store.save(note, check_duplicate=False)
+        self._forget_search(note_id)
         return self.get(note_id)
 
     # ---- 查询 ----
@@ -280,6 +285,15 @@ class NoteService:
         self._search._embed_call = self.embed_call   # noqa: SLF001 —— 故意做成可随时替换
         return self._search
 
+    def _forget_search(self, note_id: str) -> None:
+        """清掉这篇笔记的分词缓存。
+
+        只在 searcher 已经建过时才清：为了保存一篇笔记去构造一份检索器，
+        等于每次保存都多读一遍目录。
+        """
+        if self._search is not None:
+            self._search.forget_counts(note_id)
+
     def _search_text(self, entry: dict) -> str:
         """把一篇笔记压成检索文本。读 .md 而不是索引：正文只存在文件里。"""
         try:
@@ -327,6 +341,7 @@ class NoteService:
 
     def delete(self, note_id: str) -> dict:
         path = self.store.delete(note_id)
+        self._forget_search(note_id)
         return {"id": note_id, "trashed": str(path)}
 
     def stats(self) -> dict:
