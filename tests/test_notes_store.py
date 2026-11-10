@@ -180,6 +180,35 @@ def main() -> None:
     assert failed.returncode == 2 and "JSON" in failed.stderr, failed.stderr
     print("CLI OK")
 
+    # 索引投毒：index/notes.jsonl 是可写的，一条越界 path 不能把「读笔记」
+    # 变成「读任意文件」（删除接口还会顺着它把文件移进回收站）。
+    index_file = Path(home) / "index" / "notes.jsonl"
+    lines = index_file.read_text(encoding="utf-8").splitlines()
+    victim = json.loads(lines[0])
+    secret = Path(home).parent / f"outside-{victim['id']}.md"
+    secret.write_text("这是存储区外面的文件\n", encoding="utf-8")
+    victim["path"] = f"../../{secret.name}"
+    lines[0] = json.dumps(victim, ensure_ascii=False)
+    index_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        note = service.get(victim["id"])
+    except Exception as exc:  # noqa: BLE001 —— 直接拒绝也算修好
+        print("索引投毒被拒 OK:", type(exc).__name__)
+    else:
+        # 也可能回落到「按 id 扫盘」找到真实那篇笔记——那也是对的。
+        # 唯一的失败是：顺着篡改后的 path 读到了存储区外面的文件。
+        blob = json.dumps(note, ensure_ascii=False, default=str)
+        assert "存储区外面的文件" not in blob, "顺着投毒的 path 读到了外部文件"
+        print("索引投毒被拒 OK（回落到真实笔记，未读到外部文件）")
+    # 带分隔符的 note_id 也不许拼进 rglob
+    for bad_id in ("../x", "a/b", "..\\x"):
+        try:
+            service.get(bad_id)
+        except Exception:  # noqa: BLE001
+            continue
+        raise AssertionError(f"非法 note_id 应被拒: {bad_id}")
+    print("非法 note_id 被拒 OK")
+
     print("\nNOTES STORE OK")
 
 

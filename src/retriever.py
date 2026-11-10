@@ -61,22 +61,34 @@ class BM25:
             for t, df in self.df.items()
         }
 
+    def score_one(self, index: int, q_tokens: list[str]) -> float:
+        """只算第 index 块的 BM25 分。
+
+        重排只需要候选（默认 48 个）的分数，没必要为了这 48 个把全表 5000 块
+        算一遍——实测那一步是 14–35ms/查询，其中 99% 是白算的。
+        抽成方法而不是另写一份：`search` 与重排必须共用同一套打分口径，
+        两份实现迟早会在 k1、平滑项上漂开。
+        """
+        doc = self.docs[index]
+        dl = self.doc_len[index]
+        denom_base = (self.k1 * (1 - self.b + self.b * dl / self.avgdl)
+                      if self.avgdl else self.k1)
+        total = 0.0
+        for token in q_tokens:
+            tf = doc.get(token, 0)
+            if not tf:
+                continue
+            total += self.idf.get(token, 0.0) * (tf * (self.k1 + 1)) / (tf + denom_base)
+        return total
+
     def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
         """focus_query 仅为接口兼容（BM25 无扩展词，召回即重排）。"""
         q = tokenize(query)
         if not q or not self.N:
             return []
         scores: list[tuple[float, int]] = []
-        for i, d in enumerate(self.docs):
-            s = 0.0
-            dl = self.doc_len[i]
-            denom_base = self.k1 * (1 - self.b + self.b * dl / self.avgdl) if self.avgdl else self.k1
-            for t in q:
-                tf = d.get(t, 0)
-                if not tf:
-                    continue
-                idf = self.idf.get(t, 0.0)
-                s += idf * (tf * (self.k1 + 1)) / (tf + denom_base)
+        for i in range(self.N):
+            s = self.score_one(i, q)
             if s > 0:
                 scores.append((s, i))
         scores.sort(key=lambda x: x[0], reverse=True)
@@ -226,6 +238,9 @@ class VectorRerankRetriever:
         self.vector = VectorIndex(chunks, dim=dim)
         self.bm25 = BM25(chunks)
         self.recall_k = max(24, recall_k)
+        # 只在构造时建一次：chunks 是这个实例的快照，不跨代变化。
+        # （pipeline 里那种每次重建的 id→位置 映射才会跨代错位，这里不会。）
+        self._pos = {id(c): i for i, c in enumerate(chunks)}
 
     def search(self, query: str, top_k: int = 4, focus_query: str | None = None):
         """query 用于向量召回（可含扩展词），focus_query 用于重排（原问题）。"""
@@ -235,23 +250,32 @@ class VectorRerankRetriever:
 
         focus = focus_query or query
         q_tokens = set(tokenize(focus))
-        lex = {id(c): s for c, s in self.bm25.search(query, len(self.chunks))}
+        # 只给候选算 BM25。原来为了 48 个候选的分数把全表算一遍（实测 14–35ms/查询）。
+        # 归一化基准也取候选内的最大值：语义变成「候选里词面最匹配的那条算满分」，
+        # 比「全表最大值」更稳——后者会被一条与查询无关的长文档整体压低。
+        q_lex = tokenize(query)
+        lex: dict[int, float] = {}
+        for chunk, _vec in candidates:
+            pos = self._pos.get(id(chunk))
+            if pos is not None:
+                lex[pos] = self.bm25.score_one(pos, q_lex)
         max_vec = candidates[0][1] or 1.0
         max_lex = max(lex.values()) if lex else 1.0
 
         reranked: list[tuple[float, int]] = []
-        index = {id(c): i for i, c in enumerate(self.chunks)}
         for chunk, vec_score in candidates:
+            pos = self._pos.get(id(chunk))
+            if pos is None:
+                continue
             text = chunk.section + " " + chunk.text
-            lex_score = lex.get(id(chunk), 0.0)
             score = (
                 0.45 * (vec_score / max_vec)
                 + 0.25 * _coverage(q_tokens, text)
-                + 0.15 * (lex_score / max_lex if max_lex else 0.0)
+                + 0.15 * (lex.get(pos, 0.0) / max_lex if max_lex else 0.0)
                 + 0.10 * _long_match(focus, text)
                 + 0.05 * _coverage(q_tokens, chunk.title + " " + chunk.section)
             )
-            reranked.append((round(score, 4), index[id(chunk)]))
+            reranked.append((round(score, 4), pos))
 
         reranked.sort(key=lambda x: x[0], reverse=True)
         return [(self.chunks[i], s) for s, i in reranked[:top_k]]
@@ -325,7 +349,14 @@ class EmbeddingRetriever:
             return [], meta
 
         q_tokens = set(tokenize(focus))
-        lex = {id(c): s for c, s in self.bm25.search(query, len(self.chunks))}
+        # 只对候选算 BM25。归一化基准也跟着取候选内的最大值——
+        # 这样 0.15 这一项的语义是「候选里相对词面最匹配的那条算满分」，
+        # 比原来「全表最大值」更稳定：全表最大值会被一条与查询无关的长文档拉高。
+        q_lex = tokenize(query)
+        lex: dict[int, float] = {
+            idx: self.bm25.score_one(idx, q_lex)
+            for idx, _cos in candidates if 0 <= idx < len(self.chunks)
+        }
         max_lex = max(lex.values()) if lex else 1.0
 
         reranked: list[tuple[float, int]] = []
@@ -337,7 +368,7 @@ class EmbeddingRetriever:
             score = (
                 0.50 * max(0.0, cos)
                 + 0.20 * _coverage(q_tokens, text)
-                + 0.15 * (lex.get(id(chunk), 0.0) / max_lex if max_lex else 0.0)
+                + 0.15 * (lex.get(idx, 0.0) / max_lex if max_lex else 0.0)
                 + 0.10 * _long_match(focus, text)
                 + 0.05 * _coverage(q_tokens, chunk.title + " " + chunk.section)
             )

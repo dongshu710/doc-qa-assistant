@@ -53,6 +53,21 @@ def _first_env(*names: str, default: str = "") -> str:
     return default
 
 
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    """读整数型配置：坏值回落默认，不抛异常。
+
+    为什么容错：`load_settings()` 在启动路径上，把 `KB_KEEP_VERSIONS` 手改成
+    「三十」就会让整个服务起不来；而同一个值在设置面板那边（appconfig.keep_versions）
+    是「回默认 30」。同一个配置两个入口两种行为，比坏值本身更难查。
+    写的时候仍然严格（设置面板 update 里报错），这里只管读。
+    """
+    raw = (_first_env(name, default=str(default)) or "").strip()
+    try:
+        return max(minimum, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
 def endpoint_label(base_url: str) -> str:
     """从端点地址推出一个短标识，用于 trace 与页面展示。"""
     host = (urlparse(base_url).hostname or "").strip(".")
@@ -201,6 +216,10 @@ def load_settings() -> Settings:
         keyword_multi_doc="on" if (_first_env("KEYWORD_MULTI_DOC", default="off") or "off").lower() == "on" else "off",
         llm_timeout_s=float(_first_env("LLM_TIMEOUT_S", default="30")),
         llm_max_retries=int(_first_env("LLM_MAX_RETRIES", default="3")),
+        # 这两个字段之前只有 dataclass 默认值，load_settings 从不赋值：
+        # 设 LLM_BACKOFF_BASE_S 完全无效，且没有任何地方能看出来。
+        llm_backoff_base_s=float(_first_env("LLM_BACKOFF_BASE_S", default="1")),
+        llm_backoff_max_s=float(_first_env("LLM_BACKOFF_MAX_S", default="10")),
         wall_clock_budget_s=float(_first_env("WALL_CLOCK_BUDGET_S", default="60")),
         model=_first_env("LLM_MODEL", default=DEFAULT_MODEL) or DEFAULT_MODEL,
         api_base=base,
@@ -219,11 +238,11 @@ def load_settings() -> Settings:
         kb_dir=_first_env("KB_DIR", default="data/kb"),
         kb_seed_dir=_first_env("KB_SEED_DIR", default="data/knowledge"),
         kb_async_reload=(_first_env("KB_ASYNC_RELOAD", default="on") or "on").strip().lower(),
-        kb_keep_versions=max(0, int(_first_env("KB_KEEP_VERSIONS", default="30"))),
+        kb_keep_versions=_env_int("KB_KEEP_VERSIONS", 30),
         api_keys=_first_env("API_KEYS", default="").strip(),
         log_sink=(_first_env("LOG_SINK", default="file") or "file").strip().lower(),
-        log_max_bytes=max(0, int(_first_env("LOG_MAX_BYTES", default=str(16 * 1024 * 1024)))),
-        log_keep=max(1, min(9, int(_first_env("LOG_KEEP", default="3")))),
+        log_max_bytes=_env_int("LOG_MAX_BYTES", 16 * 1024 * 1024),
+        log_keep=min(9, _env_int("LOG_KEEP", 3, minimum=1)),
         token_price_per_1k=float(_first_env("TOKEN_PRICE_PER_1K", default="0")),
         embedding_provider=(_first_env("EMBEDDING_PROVIDER", default="none") or "none").strip().lower(),
         embedding_base_url=_first_env("EMBEDDING_BASE_URL", default=""),

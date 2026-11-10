@@ -110,7 +110,13 @@ if __name__ == "__main__":
     test_bad_url()
     url = find_redis()
     if not url:
-        print("SKIP: 未找到可用 Redis（设置 REDIS_URL 后重跑）")
+        if os.environ.get("CI"):
+            # CI 里 Redis 是由 services 拉起的。连不上说明它没起来，
+            # 这时「跳过」等于把跨实例限流/幂等/成本三类保证静默放行，
+            # 而 step 依旧显示绿色——比直接失败危险得多。
+            print("FAIL: CI 环境必须能连上 Redis，但没找到可用实例")
+            sys.exit(1)
+        print("SKIP: 未找到可用 Redis（本地允许跳过；设置了 CI 就会判失败）")
         sys.exit(0)
     prefix = f"ragtest:{uuid.uuid4().hex[:8]}"
     client = RedisClient(url, 1.0)

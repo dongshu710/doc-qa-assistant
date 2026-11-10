@@ -2,6 +2,83 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.33.0] - 2026-11-10
+
+五路分区审查（架构 / 代码质量 / 性能 / 安全 / 可维护性）后的修复批次。
+详见 `docs/REVIEW-2026-11-10.md`：24 条问题、4 条 P0，另有 12 条经评估明确不做。
+
+### 破坏性变更
+
+- **`--host 0.0.0.0`（或任何非回环地址）必须同时配 `API_KEYS`，否则拒绝启动**。
+  原因：Host 白名单看的是请求头，任何人都能填 `Host: host.docker.internal` 过掉它；
+  服务端此前没有任何对端 IP 校验。监听非回环 + 空 `API_KEYS` = 局域网任意机器
+  一条 curl 读完所有笔记、语料与设置。给容器（如 Dify）用时两边填同一个 Key。
+- **MCP `export_notes` 的 `out` 只接受文件名**，不再接受路径。落点固定为
+  `<存储区>/exports/`。原来接受路径，等于把「能写笔记」升级成「能写任意文件」。
+
+### 安全
+
+- **启动校验**：非回环监听且 `API_KEYS` 为空时直接退出并说明两种改法
+  （`src/server.py::_loopback_only` + `main`）。
+- **问答流纳入长连接名额**：`/api/ask/stream` 此前完全不受 `_SSE_LIMIT` 约束，
+  64 条慢流即可打满线程池；现在是 429 + `Retry-After`，并在客户端断开时
+  **置 cancel 关掉生成器**，不再把整轮 token 跑完却无人接收。
+- **笔记索引投毒**：`index/notes.jsonl` 里的 `path` 现在按不可信输入处理
+  （`resolve` + `relative_to(home)`），越界回落到按 id 扫描；`note_id` 含
+  分隔符或 `..` 直接拒绝。
+- **提示注入边界**：资料正文里的 `</document` / `<document` 会被转义，
+  不能再提前闭合 `trust="untrusted"` 边界（大小写、带空格、自闭合变体都覆盖）。
+- **压缩炸弹**：新增 `src/zipguard.py`，docx / xlsx 解压前检查声明体积总和
+  （64 MB）与单条目压缩比（200:1）。上传口只卡压缩后大小，卡不住解压膨胀。
+- **设置回包脱敏**：`redact_settings` 补上 `notes.home`（原来漏了最直接的那条绝对路径）。
+- **鉴权等级**：`/api/keywords/rebuild` 在 `routing` 表里登记为 `admin`
+  （handler 本来就要求 admin，表里写 `api` 会让权限文档与测试得出错误结论）。
+
+### 修复
+
+- **知识库版本目录半成品会永久占坑**：`_write_version` 改为「同盘临时目录写完整版 →
+  `os.replace` 改名」。此前逐份直写，中途失败留下无 manifest 的目录，
+  而版本号要函数返回后才 +1，导致此后每次上传都报「版本已存在」，
+  只能人工删目录——上传功能等于永久不可用。
+- **过载时不再「没有回应」**：线程槽满时立刻回 503 + `Retry-After`，
+  而不是在 accept 阶段阻塞到客户端 30 秒超时（后者看起来像服务挂了）。
+  Windows 上还处理了「不读请求就 close 会发 RST」的坑。
+- **`KB_KEEP_VERSIONS` 坏值不再让服务起不来**：新增 `_env_int`，读路径宽容回落
+  默认值，与设置面板的行为对齐（写路径仍然严格）。
+- **`LLM_BACKOFF_BASE_S` / `LLM_BACKOFF_MAX_S` 此前设了无效**：字段只有 dataclass
+  默认值，`load_settings()` 从不赋值。现已接入。
+- **设置保存后立即生效**：新增 `RAGPipeline.reload_settings()`，`POST /api/settings`
+  落盘后自动调用。此前 `pipe.settings` 是启动快照，面板显示已改、实际仍按旧值走。
+  重载失败会在响应里带 `reload_error`，不静默。
+- **`/api/knowledge` 文档清单**改走 `kbstore.doc_names()`（manifest 单一来源），
+  与健康检查、汇报页口径一致；并发删除/改名时跳过单条而不是整列表 500。
+
+### 性能（均为本机实测）
+
+- 稠密向量点积改用 `sum(map(operator.mul, ...))`，5000×1024 从 185ms 降到 92ms（-44%）；
+  取 top-k 改 `heapq.nlargest`，全量排序 23.5ms → 7.5ms。
+- `kbstore.status()` 不再读文件内容：200 份文档 138ms → **1.07ms**（原先调
+  `_read_files` 把每份 md 全文读进内存，只为数个数）。
+- `/api/keywords` 的每文档计数从 O(文档数×条目数) 改成一次 `Counter`：
+  500 文档 / 25k 条目实测 338ms → 常数级。
+- 重排只对候选算 BM25（此前为 48 个候选把全表 5000 块算一遍）。归一化基准
+  取自候选内最大值；离线评测 36/36 保持通过，无退化。
+
+### 可维护性
+
+- **CI 覆盖门禁改为只扫 `run:` 块**：此前是全文字符串匹配，把测试注释掉也算已覆盖，
+  门禁失效的样子和通过一样。新增解析器负向自检（注释行必须被排除）。
+- **Redis 测试在 CI 里不许跳过**：`CI` 环境下连不上 Redis 直接失败；本地仍允许 SKIP。
+- **`test_size` 输出白名单实际生效的上限（280）**，并把自检改成真的调用 `measure()`
+  量一段虚构源码（原来是 `201 > 200` 这种纯算术）。
+- README 里写死的「64 个路径 / 78 个方法」「6 css + 9 js + 6 html」改为不写死；
+  「四道闸门」补齐为否定作用域、极性冲突、解释型意图、单文档收敛。
+
+### 新增测试（均进 CI）
+
+`test_server_overload.py`（过载 503）、`test_settings_reload.py`（配置热更新）、
+`test_injection_wrap.py`（资料边界闭合）、`test_zip_guard.py`（压缩炸弹）。
+
 ## [1.32.0] - 2026-11-06
 
 把本项目注册成 Dify 的**外部知识库**：Dify 的 Agent 负责编排与生成，本项目负责检索。

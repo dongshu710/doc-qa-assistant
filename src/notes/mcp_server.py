@@ -10,6 +10,7 @@ import base64
 import json
 import sys
 import traceback
+from pathlib import Path
 from typing import Any
 
 from . import assets as assets_mod, export as export_mod
@@ -138,10 +139,19 @@ def call_tool(service: NoteService, name: str, args: dict) -> str:
         if name == "note_stats":
             return _brief(service.stats())
         if name == "export_notes":
-            out = str(args.get("out") or "").strip()
-            if not out:
-                raise NoteError("需要 out（导出文件路径）")
-            result = export_mod.export(service, out, note_ids=args.get("ids") or None,
+            raw_name = str(args.get("out") or "").strip()
+            if not raw_name:
+                raise NoteError("需要 out（导出文件名，例如 notes.html）")
+            # 只收文件名，拒绝任何目录成分。
+            # 这个工具会真的写磁盘，一旦接受路径，就等于把「能写笔记」升级成
+            # 「能写任意文件」——比如覆盖启动目录里的脚本。落点由服务端拼。
+            if "/" in raw_name or "\\" in raw_name or ".." in raw_name:
+                raise NoteError("out 只能写文件名，不能带目录或 ..")
+            home = getattr(getattr(service, "store", None), "home", None)
+            if not home:
+                raise NoteError("笔记存储区不可用，无法导出")
+            target = Path(str(home)) / "exports" / raw_name
+            result = export_mod.export(service, target, note_ids=args.get("ids") or None,
                                        fmt=str(args.get("format") or "html"),
                                        filters={"tags": args.get("tag") or None,
                                                 "since": args.get("since")},

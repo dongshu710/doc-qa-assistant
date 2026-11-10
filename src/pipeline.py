@@ -546,6 +546,21 @@ class RAGPipeline:
             self.knowledge_dir = knowledge_dir
             return len(chunks)
 
+    def reload_settings(self) -> None:
+        """重新读配置，让设置面板的改动立刻生效，不必重启服务。
+
+        为什么要有这一条：`self.settings` 是构造时的快照，永不刷新。面板把
+        MIN_SCORE 从 0.5 改成 0.3 会显示「已保存」，但判域仍按 0.5 走——
+        用户看到的现象是「配置没生效」，而不是「需要重启」。
+
+        只换对象引用，不重建索引：min_score / hedge_score / 模型名这类
+        每次提问现读的项立即生效；换 embedding 供应商或检索模式需要重建索引，
+        由调用方显式触发 `reload()`，避免「保存一次设置就重建一遍语料」。
+        """
+        fresh = load_settings()
+        with self._swap_lock:
+            self.settings = fresh
+
     def reload(self, knowledge_dir: str | None = None) -> int:
         """同步重建（测试、CLI、KB_ASYNC_RELOAD=off 时使用）。"""
         target = knowledge_dir or self.knowledge_dir

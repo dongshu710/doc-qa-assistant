@@ -20,6 +20,8 @@ import re
 import zipfile
 from xml.etree import ElementTree as ET
 
+from . import zipguard
+
 TABLE_EXT = (".xlsx", ".csv", ".tsv")
 MAX_ROWS = 2000          # 单表最多取多少行：再多也不适合塞进上下文
 MAX_COLS = 60            # 超宽表只取前 60 列，并在 meta 里标注
@@ -212,6 +214,11 @@ def extract_table(data: bytes, filename: str,
     if suffix == ".xlsx":
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                # 同 docx：先卡解压体积，再读条目
+                try:
+                    zipguard.guard(archive)
+                except zipguard.ZipLimitError as exc:
+                    raise TableError(str(exc)) from exc
                 shared = _shared_strings(archive)
                 parts = _sheet_parts(archive)
                 sections: list[tuple[str, list[list[str]]]] = []

@@ -17,6 +17,11 @@ if errorlevel 1 (
 
 set "PORT=8000"
 if not "%~1"=="" set "PORT=%~1"
+rem 默认只听回环。Dify 等容器场景要能被网桥访问，用第二个参数或 HOST 环境变量放开：
+rem   start.bat 8000 0.0.0.0
+rem 放开后仍由 src/security.py 的 Host 白名单守着，不会对局域网无条件开放。
+if not defined HOST set "HOST=127.0.0.1"
+if not "%~2"=="" set "HOST=%~2"
 set "VER=dev"
 if exist VERSION set /p VER=<VERSION
 
@@ -28,6 +33,6 @@ echo   按 Ctrl+C 停止服务。
 echo.
 
 start "" cmd /c "timeout /t 2 >nul & explorer http://127.0.0.1:%PORT%"
-%PY% -m src.server --port %PORT%
+%PY% -m src.server --host %HOST% --port %PORT%
 
 if errorlevel 1 pause

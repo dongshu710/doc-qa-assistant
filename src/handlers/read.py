@@ -334,16 +334,31 @@ def make_read(deps):
             elif path == "/api/knowledge":
                 counts = Counter(c.doc_id for c in pipe.chunks)
                 files = []
-                if os.path.isdir(kb_dir()):
-                    for name in sorted(os.listdir(kb_dir())):
-                        if name.lower().endswith(ALLOWED_EXT):
-                            path = os.path.join(kb_dir(), name)
-                            files.append({
-                                "name": name,
-                                "chunks": counts.get(name.rsplit(".", 1)[0], 0),
-                                "size": os.path.getsize(path),
-                                "mtime": datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M"),
-                            })
+                # 清单来源统一走 kbstore 的 manifest。原来这里是自己 listdir，
+                # 与 /api/health、汇报页各算一遍：审批通过到索引重建完成之间，
+                # kb_dir() 与 pipe.knowledge_dir 必然不同，三个接口会给出不同的文件集。
+                names: list[str] = []
+                if store is not None:
+                    try:
+                        names = store.doc_names()
+                    except (kbstore.KnowledgeError, OSError):
+                        names = []
+                if not names and os.path.isdir(kb_dir()):
+                    # manifest 缺失或知识库未初始化：退回目录扫描，页面至少还能显示
+                    names = sorted(n for n in os.listdir(kb_dir())
+                                   if n.lower().endswith(ALLOWED_EXT))
+                for name in names:
+                    try:
+                        full = os.path.join(kb_dir(), name)
+                        files.append({
+                            "name": name,
+                            "chunks": counts.get(name.rsplit(".", 1)[0], 0),
+                            "size": os.path.getsize(full),
+                            "mtime": datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M"),
+                        })
+                    except OSError:
+                        # 并发删除/改名：跳过这一条。少显示一份，比整个列表 500 好。
+                        continue
                 self._json({
                     "files": [
                         {**f,
@@ -367,11 +382,14 @@ def make_read(deps):
                         return
                     self._json(pipe.keywords.doc_view(doc_id))
                     return
+                # 一次算完每个文档的条目数。原写法是嵌套推导式（文档数 × 全部条目），
+                # 500 文档 / 25k 条时实测 338ms，文档翻倍就是 4 倍。
+                per_doc = Counter(e.doc_id for e in pipe.keywords.entries)
                 self._json({
                     "summary": pipe.keywords.summary(),
                     "docs": [
                         {"doc_id": doc_id, "title": meta.get("title") or doc_id,
-                         "count": sum(1 for e in pipe.keywords.entries if e.doc_id == doc_id),
+                         "count": per_doc.get(doc_id, 0),
                          "terms": pipe.keywords.top_terms(doc_id, 8)}
                         for doc_id, meta in pipe.keywords.docs.items()
                     ],

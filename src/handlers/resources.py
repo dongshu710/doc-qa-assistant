@@ -429,9 +429,21 @@ def make_resources(deps):
                 if method == "POST":
                     before = str(note_ref["service"].store.home) if note_ref["service"] else ""
                     appconfig.update(body or {})
+                    # 配置一落盘就重载，面板上显示「已生效」才不是空话。
+                    # 不重载的话 pipeline 还拿着启动时的快照：改了 MIN_SCORE，
+                    # 面板显示新值，判域却仍按旧阈值走。
+                    reload_error = ""
+                    try:
+                        pipe.reload_settings()
+                    except Exception as exc:  # noqa: BLE001
+                        # 重载失败不能让保存本身失败（配置已经写进去了），
+                        # 但必须让调用方知道「这次没生效」，否则就是静默失败。
+                        reload_error = f"配置已保存，但重载失败：{str(exc)[:200]}"
                     reopened = _reopen_notes()
                     payload = _settings_payload()
                     payload["notes_reloaded"] = reopened
+                    if reload_error:
+                        payload["reload_error"] = reload_error
                     after = str(note_ref["service"].store.home) if note_ref["service"] else ""
                     if before and after and os.path.normcase(before) != os.path.normcase(after):
                         count = _count_notes(before)

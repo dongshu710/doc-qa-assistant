@@ -104,7 +104,9 @@ def redact_settings(payload: dict) -> dict:
     out = json.loads(json.dumps(payload, ensure_ascii=False))
     notes = out.get("notes")
     if isinstance(notes, dict):
-        for key in ("home_effective", "home_default"):
+        # home 是「当前生效的存储区」原始值，与 home_effective 是同一个东西的两种叫法；
+        # 原来只洗了后两个，把最直接的绝对路径漏了。
+        for key in ("home", "home_effective", "home_default"):
             if notes.get(key):
                 notes[key] = redact_path(notes[key])
     for key in ("config_path", "config_backup"):

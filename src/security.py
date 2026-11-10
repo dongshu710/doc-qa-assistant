@@ -30,6 +30,11 @@ LOOPBACK_NAMES = {"localhost", "localhost."}
 # DNS rebinding 也借不到它；浏览器发起的请求仍然要过 Origin / Sec-Fetch-Site /
 # X-Jiyi-Client 三道校验。真正需要防备的是「任意域名解析到 127.0.0.1」，
 # 而这里的做法是把一个不可被外部控制的保留名加进白名单，不是放开域名任意解析。
+#
+# **但 Host 是请求头，不是身份。** 任何人都能手工发 `Host: host.docker.internal`，
+# 所以这一票放行只能保证「合法客户端不被误拦」，它**不构成访问控制**。
+# 一旦监听非回环地址（--host 0.0.0.0），唯一拦住局域网的是 API_KEYS；
+# 两者缺一，整个库就是敞开的。启动校验见 src/server.py::main。
 DOCKER_HOST_NAMES = {"host.docker.internal", "gateway.docker.internal"}
 REASONS = {
     "host": "只接受本机访问（Host 不合法）；需要局域网访问请设置 ALLOWED_HOSTS",

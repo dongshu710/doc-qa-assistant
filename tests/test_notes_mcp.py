@@ -123,13 +123,20 @@ def main() -> int:
           stale["isError"] is True and "rev" in stale["content"][0]["text"],
           stale["content"][0]["text"][:80])
 
-    # 6) 导出：文件真的写出来了，且不含外链资源
+    # 6) 导出：只收文件名，落点由服务端拼到 <home>/exports/
+    exported = json.loads(call(service, 18, "export_notes", {"out": "all.html"})["content"][0]["text"])
     out = os.path.join(home, "exports", "all.html")
-    exported = json.loads(call(service, 18, "export_notes", {"out": out})["content"][0]["text"])
     html = open(out, encoding="utf-8").read()
     check("导出 html 落盘且计数正确", exported["count"] == 1 and os.path.exists(out))
     check("导出文件自包含（无外部 css/js/字体）",
           "<link" not in html and "src=\"http" not in html and "@import" not in html)
+
+    # 6b) 带目录的 out 必须被拒：这个工具会真写盘，放开路径等于任意文件写
+    for bad in ("../escape.html", "sub/x.html", "C:/Windows/temp/x.html", "..\\x.html"):
+        resp = call(service, 18, "export_notes", {"out": bad})
+        check(f"拒绝带目录的 out：{bad}",
+              resp["isError"] is True and "文件名" in resp["content"][0]["text"],
+              resp["content"][0]["text"][:80])
 
     # 7) 删除需要确认
     refused = call(service, 19, "delete_note", {"id": note_id})

@@ -48,7 +48,11 @@ def post(port: int, path: str, payload: dict, key: str = ""):
 def main() -> None:
     url = find_redis()
     if not url:
-        print("SKIP: 未找到 Redis")
+        if os.environ.get("CI"):
+            # 同 test_redis_guards：CI 里 Redis 没起来时跳过 = 假通过。
+            print("FAIL: CI 环境必须能连上 Redis，但没找到可用实例")
+            raise SystemExit(1)
+        print("SKIP: 未找到 Redis（本地允许跳过；设置了 CI 就会判失败）")
         return
     prefix = f"ragtest:{uuid.uuid4().hex[:8]}"
     env = {

@@ -116,6 +116,15 @@ def sse_active() -> int:
         return _SSE_ACTIVE
 
 
+def sse_limit() -> int:
+    """同时允许的 SSE 流上限。
+
+    单独给一个函数而不是让调用方读 `_SSE_LIMIT`：上限要出现在 429 的提示文案里，
+    「满了」和「满了几个」是两件事，后者用户才知道该等多久。
+    """
+    return _SSE_LIMIT
+
+
 def make_base(deps):
     # 原来这些名字是 create_server() 的闭包；拆开后由组合根显式传入。
     project_root = deps.project_root

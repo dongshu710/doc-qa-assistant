@@ -227,11 +227,31 @@ class NoteStore:
         """文件内容指纹，用于乐观锁：人改过、智能体改过都会让它变。"""
         return hashlib.sha256(self._resolve(note_id).read_bytes()).hexdigest()[:16]
 
+    def _within_home(self, relative: str) -> Path | None:
+        """把索引里的相对路径解析成 home 内的绝对路径；越界返回 None。
+
+        索引文件本身是可写的（`/api/files/raw` 就能改它），所以 `entry["path"]`
+        必须当不可信输入：一条 `../../.ssh/id_rsa` 就能把「读笔记」升级成
+        「读任意文件」，删除接口还能顺着它把文件移进回收站。
+        """
+        if not relative or not relative.strip():
+            return None
+        try:
+            path = (self.home / relative).resolve()
+            root = self.home.resolve()
+            path.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return path
+
     def _resolve(self, note_id: str) -> Path:
+        # note_id 会拼进 rglob 的模式里，带分隔符或 .. 就等于让它去搜别处
+        if not note_id or "/" in note_id or "\\" in note_id or ".." in note_id:
+            raise NoteNotFound(note_id)
         entry = self._entries().get(note_id)
         if entry:
-            path = self.home / entry["path"]
-            if path.exists():
+            path = self._within_home(str(entry.get("path") or ""))
+            if path is not None and path.exists():
                 return path
         # 索引删了、或文件是外部放进来的，扫盘兜底
         for candidate in sorted(self.notes_dir.rglob(f"{note_id}.md")):

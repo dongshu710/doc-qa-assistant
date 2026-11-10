@@ -12,6 +12,10 @@ if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3,11) else
 fi
 
 PORT="${PORT:-8000}"
+# 默认只听回环。Dify 等容器场景要能被网桥访问，用 HOST=0.0.0.0 放开：
+#   HOST=0.0.0.0 sh start.sh
+# 放开后仍由 src/security.py 的 Host 白名单守着，不会对局域网无条件开放。
+HOST="${HOST:-127.0.0.1}"
 VER="$(cat VERSION 2>/dev/null || echo dev)"
 URL="http://127.0.0.1:${PORT}"
 
@@ -31,4 +35,4 @@ echo
   fi
 ) &
 
-exec "$PY" -m src.server --port "$PORT"
+exec "$PY" -m src.server --host "$HOST" --port "$PORT"

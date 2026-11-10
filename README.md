@@ -166,13 +166,13 @@ doc-qa-assistant/
 │  │   ├─ write.py             #   问答（含 SSE）/ 知识库 / 设置写入 / 评测用例
 │  │   └─ common.py            #   上限常量与纯函数（文件名净化、项目根、jsonl 尾读）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
-│  ├─ openapi.py               # OpenAPI 3.0 契约（64 个路径 / 78 个方法，含笔记与内部端点）
+│  ├─ openapi.py               # OpenAPI 3.0 契约（路径/方法数由 build_spec() 生成，含笔记与内部端点）
 │  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点
 │  ├─ web_pages.py             # 两页装配（占位符替换 + shell()）
 │  ├─ webassets.py             # src/web/ 的读取与缓存
 │  ├─ threadstore.py           # 会话落盘：<存储区>/threads/<id>.json，一条一个文件
 │  ├─ fileops.py               # 存储区内的原文读写（路径越界、2 MB 上限、乐观锁）
-│  ├─ web/                     # 前端资源：6 份 css + 9 份 js + 6 份 html 片段
+│  ├─ web/                     # 前端资源：css / js / html 片段（以目录实际内容为准）
 │  │                            # 改样式改脚本在这里改，跑 tools/check_frontend.py 验语法
 │  ├─ notes/                   # 智能体笔记：存储 / 摘要 / CLI / HTTP / MCP / 导出（零依赖）
 │  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出（CLI 用）
@@ -394,7 +394,7 @@ python -m src.cli --base-url https://your-gateway/v1 "稳盈系列..."
 | `KEYWORD_TOP_N` | `3` | 单次直出最多几条条目 |
 | `KEYWORD_INDEX` | `data/index/keywords.json` | 关键词与整理结果缓存路径 |
 | `KEYWORD_LLM_MAX_CHARS` | `2400` | 单份文档送去整理的字符上限 |
-| `KEYWORD_GUARD` | `on` | 极性/否定、解释型意图、单文档收敛四道闸门；`off` 回到 1.4.0 行为，用于 A/B |
+| `KEYWORD_GUARD` | `on` | 否定作用域、极性冲突、解释型意图、单文档收敛四道闸门；`off` 回到 1.4.0 行为，用于 A/B |
 | `KEYWORD_MULTI_DOC` | `off` | `on` 允许一次直出跨多份文档（默认收敛到一份） |
 | `LLM_TIMEOUT_S` | `30` | 显式超时；推理型模型可调 60 |
 | `LLM_MAX_RETRIES` | `3` | 仅对可重试异常生效（429/5xx/超时） |
@@ -1527,11 +1527,15 @@ SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
 # 然后重建代理容器
 docker compose up -d ssrf_proxy
 # 验证：应看到生成的白名单里出现 host.docker.internal
-docker exec docker-ssrf_proxy-1 cat /etc/squid/dify_allow_private.conf
+# Git Bash 必须带 MSYS_NO_PATHCONV=1，否则 /etc/... 会被改写成 Windows 路径
+MSYS_NO_PATHCONV=1 docker exec docker-ssrf_proxy-1 cat /etc/squid/dify_allow_private.conf
 ```
 
 只放行这一个域名，**不要**去设 `SSRF_PROXY_ALLOW_PRIVATE_IPS`——那是按网段放行，
 等于把整个私有网段对 Dify 的插件与工具敞开。
+
+在 Dify 里搭智能体的完整配置（应用类型怎么选、提示词全文、模型参数、7 条验收用例、
+以及这套方案比本项目原生弱在哪），见 [docs/DIFY-AGENT.md](docs/DIFY-AGENT.md)。
 
 ## 5. 评测
 

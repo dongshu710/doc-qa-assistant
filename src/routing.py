@@ -46,6 +46,9 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/api/cases", API),
     ("/api/examples", API),
     ("/api/keywords", API),
+    # 重建关键词会重写索引、还可能调模型补词，handler 里本来就要求 admin。
+    # 表里不标就会让 describe() 与测试以为它是 api 级——权限文档直接写错。
+    ("/api/keywords/rebuild", ADMIN),
     ("/api/metrics", API),
     ("/api/l3", API),
     ("/api/ask", API),

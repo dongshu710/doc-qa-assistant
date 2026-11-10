@@ -15,6 +15,8 @@ import re
 import zipfile
 from xml.etree import ElementTree as ET
 
+from . import zipguard
+
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
@@ -106,6 +108,13 @@ def extract_docx(data: bytes, title: str | None = None) -> tuple[str, dict]:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
         raise DocxError(f"DOCX 解压失败：{exc}") from exc
+
+    # 先过体积闸门：压缩后 6 MB 的 docx 可以解出几百 MB 的 XML，
+    # 而 read() 是一把全读进内存的。
+    try:
+        zipguard.guard(zf)
+    except zipguard.ZipLimitError as exc:
+        raise DocxError(str(exc)) from exc
 
     names = set(zf.namelist())
     if "word/document.xml" not in names:

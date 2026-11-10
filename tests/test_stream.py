@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -98,6 +99,31 @@ def main() -> None:
         assert events[0][1]["answer"] == "无法找到答案。", events[0][1]["answer"]
         httpd2.shutdown()
         httpd2.server_close()
+
+        # 5) 长连接名额满：立刻 429，而不是把请求排到超时
+        #    这条守的是「64 个慢流打满线程池」那个故障：以前问答流根本不计名额。
+        from src.handlers import base as base_mod
+        old_limit, old_active = base_mod._SSE_LIMIT, base_mod._SSE_ACTIVE
+        base_mod._SSE_LIMIT, base_mod._SSE_ACTIVE = 1, 1
+        try:
+            req = urllib.request.Request(
+                base + "/api/ask/stream",
+                data=json.dumps({"query": "我几点起床"}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                urllib.request.urlopen(req, timeout=10)
+                raise AssertionError("名额已满时不该成功")
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 429, exc.code
+                assert exc.headers.get("Retry-After"), dict(exc.headers)
+                body = json.loads(exc.read().decode("utf-8"))
+                assert body.get("error") == "too_many_streams", body
+        finally:
+            base_mod._SSE_LIMIT, base_mod._SSE_ACTIVE = old_limit, old_active
+
+        # 名额退回之后必须恢复可用：否则这修复会变成「满过一次就永久 429」
+        events = stream({"query": "我几点起床"})
+        assert [n for n, _ in events] == ["final"], events
 
         print("SSE events:", names)
         print("stream final:", final["answer"][:60])

@@ -59,7 +59,12 @@ def measure(path: Path) -> list[tuple[int, str]]:
 
 
 def main() -> int:
-    print(f"函数长度门禁（硬 {HARD_LIMIT} / 软 {SOFT_LIMIT}）")
+    top = max(ALLOW.values(), default=HARD_LIMIT)
+    # 把白名单的实际上限写进输出：原来只印「硬 200」，看输出的人会以为
+    # 两个 280 行的函数已经违规了，实际它们被白名单放着——这种错觉会让人
+    # 对门禁的严格程度判断错。
+    print(f"函数长度门禁（普通函数硬 {HARD_LIMIT} / 软 {SOFT_LIMIT}；"
+          f"白名单 {len(ALLOW)} 项，最高放到 {top}）")
     over_hard = []
     soft = []
     for path in sorted((ROOT / "src").rglob("*.py")):
@@ -80,9 +85,24 @@ def main() -> int:
             print(f"        {size:4d}  {rel}::{name}")
     check("白名单都有理由", all(name in WHY for _, name in ALLOW), str(list(ALLOW)))
 
-    # 门禁本身要能被验证：故意给一个「虚构的长函数」检查判定逻辑
+    # 门禁本身要能被验证，而且不能只做算术：`201 > 200` 只是解释器在算数，
+    # 完全没经过 measure()。真出问题的是「量长度的那条路」，所以让它真跑一遍。
     check("判定逻辑对 201 行判失败", 201 > HARD_LIMIT)
     check("判定逻辑对 200 行判通过", not 200 > HARD_LIMIT)
+
+    import tempfile
+    body = "".join(f"    v{i} = {i}\n" for i in range(199))
+    fake = f"def fake_long():\n{body}    return 1\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
+                                     encoding="utf-8") as fh:
+        fh.write(fake)
+        fake_path = Path(fh.name)
+    try:
+        measured = measure(fake_path)
+    finally:
+        fake_path.unlink(missing_ok=True)
+    check("自检：measure 真的量出 201 行",
+          bool(measured) and measured[0] == (201, "fake_long"), str(measured))
 
     print()
     if FAILED:

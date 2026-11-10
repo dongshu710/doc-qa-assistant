@@ -97,14 +97,27 @@ jobs:
       - name: 生成层流式解析与截断降级
         run: python tests/test_generator_stream.py
 
+      # 资料进 prompt 前必须包 <document trust="untrusted">；这里守的是「包得住」。
+      - name: 资料边界（不可信标签闭合）
+        run: python tests/test_injection_wrap.py
+
       - name: 表格入库（xlsx / csv / tsv）
         run: python tests/test_table_ingest.py
+
+      # 上传口只卡压缩后大小，卡不住解压膨胀；这条守的是「解压前先看体积」。
+      - name: 压缩包体积闸门（炸弹防护）
+        run: python tests/test_zip_guard.py
 
       - name: 日志轮转与尾读
         run: python tests/test_jsonl_log.py
 
       - name: HTTP 传输（保活 / gzip / 304 / HEAD）
         run: python tests/test_http_transport.py
+
+      # 过载时的表现要能从客户端区分出来：是「忙」还是「挂」。
+      # 这条在 Windows 上会踩到「不读请求就 close 会发 RST」的坑，所以必须进 CI。
+      - name: 过载拒绝（503 + Retry-After）
+        run: python tests/test_server_overload.py
 
       - name: 后台重建与增量解析
         run: python tests/test_async_reload.py
@@ -196,6 +209,7 @@ jobs:
         run: |
           python tests/test_settings.py
           python tests/test_settings_ops.py
+          python tests/test_settings_reload.py
           python tests/test_storage.py
           python tests/test_skill.py
           python tests/test_update.py

@@ -25,6 +25,9 @@ from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYT
                      UPLOAD_MAX_BYTES,
                      _read_jsonl,
                      _safe_name)
+# 流式回答同样是长连接，必须和 /mcp 共用同一套名额。
+# 之前这里没接，`_SSE_LIMIT` 只护住了 MCP，问答流是完全不受限的。
+from .base import sse_acquire, sse_limit, sse_release
 
 
 def make_write(deps):
@@ -711,76 +714,24 @@ def make_write(deps):
                     body, code, headers = err
                     self._json(body, code, extra_headers=headers)
                     return
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("X-Accel-Buffering", "no")
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.close_connection = True
 
-                def send(event: str, data: dict) -> None:
-                    chunk = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-                    self.wfile.write(chunk.encode("utf-8"))
-                    self.wfile.flush()
-
-                def send_comment(text: str) -> None:
-                    # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着
-                    self.wfile.write(f": {text}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-
-                if pre["cached"] is not None:
-                    metrics.inc("rag_idempotent_replay_total")
-                    guards.audit.write("ask.idempotent_replay", client=pre["client"],
-                                       key=pre["idem_key"],
-                                       trace_id=pre["cached"].get("trace_id"),
-                                       request_id=pre["request_id"])
-                    send("final", pre["cached"])
+                # 长连接名额与 /mcp 共用一套。之前这里没接，64 个线程全被慢流占满时
+                # 全站不响应，而调用方拿到的只是「超时」——看起来像服务挂了。
+                if not sse_acquire():
+                    self._json({"ok": False, "error": "too_many_streams",
+                                "message": f"同时进行的流式回答已达上限（{sse_limit()} 条），"
+                                           "请改用非流式接口或稍后重试"},
+                               429, extra_headers={"Retry-After": "2"})
                     return
 
-                started = time.monotonic()
-                events: queue.Queue = queue.Queue()
-                # 生成放到独立线程：主线程要能在「模型还没吐第一个字」时发心跳，
-                # 否则浏览器/代理会以为连接死了，而实际只是检索慢或模型排队。
-                def produce() -> None:
-                    try:
-                        for item in pipe.ask_stream(
-                                pre["query"], model=pre["model"],
-                                force_extractive=pre["budget_blocked"],
-                                session_id=pre["session_id"]):
-                            events.put(item)
-                    except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
-                        events.put(("__error__", str(exc)[:300]))
-                    finally:
-                        events.put(("__done__", None))
-
-                threading.Thread(target=produce, name="ask-stream", daemon=True).start()
+                cancel = threading.Event()
                 try:
-                    send_comment("connected")
-                    while True:
-                        if time.monotonic() - started > SSE_MAX_SECONDS:
-                            send("error", {"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"})
-                            break
-                        try:
-                            event, data = events.get(timeout=SSE_HEARTBEAT_S)
-                        except queue.Empty:
-                            send_comment("ping")
-                            continue
-                        if event == "__done__":
-                            break
-                        if event == "__error__":
-                            send("error", {"error": data})
-                            break
-                        if event == "delta":
-                            send("delta", {"text": data})
-                        elif event == "replace":
-                            send("replace", {"text": data})
-                        elif event == "final":
-                            self._annotate_result(data, pre)
-                            self._record_ask(data, pre, started, "/api/ask/stream")
-                            send("final", data)
-                except (BrokenPipeError, ConnectionResetError):
-                    return
+                    self._stream_answer(pre, cancel)
+                finally:
+                    # 正常结束、超时、客户端断开，三条路都要把名额还回去。
+                    # 漏还的后果是「出过一次异常之后永久 429」，比不限流更难查。
+                    cancel.set()
+                    sse_release()
                 return
 
             pre, err = self._ask_preflight(payload)
@@ -814,6 +765,101 @@ def make_write(deps):
             # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
             # 不能让请求挂在一个没有 response 的方法里。
             self._not_found(self.command, path)
+
+        def _stream_answer(self, pre: dict, cancel: threading.Event) -> None:
+            """把一次问答渲染成 SSE。
+
+            `cancel` 由调用方在收尾时置位，也覆盖「客户端中途断开」。
+            生成线程每出一块检查一次，取消就关掉生成器——不关的话，模型那一轮
+            token 会照常跑完，只是没人收，成本却照记。
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+            def send(event: str, data: dict) -> None:
+                chunk = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                self.wfile.write(chunk.encode("utf-8"))
+                self.wfile.flush()
+
+            def send_comment(text: str) -> None:
+                # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着
+                self.wfile.write(f": {text}\n\n".encode("utf-8"))
+                self.wfile.flush()
+
+            if pre["cached"] is not None:
+                metrics.inc("rag_idempotent_replay_total")
+                guards.audit.write("ask.idempotent_replay", client=pre["client"],
+                                   key=pre["idem_key"],
+                                   trace_id=pre["cached"].get("trace_id"),
+                                   request_id=pre["request_id"])
+                send("final", pre["cached"])
+                return
+
+            started = time.monotonic()
+            events: queue.Queue = queue.Queue()
+
+            # 生成放到独立线程：主线程要能在「模型还没吐第一个字」时发心跳，
+            # 否则浏览器/代理会以为连接死了，而实际只是检索慢或模型排队。
+            def produce() -> None:
+                stream = None
+                try:
+                    stream = pipe.ask_stream(
+                        pre["query"], model=pre["model"],
+                        force_extractive=pre["budget_blocked"],
+                        session_id=pre["session_id"])
+                    for item in stream:
+                        if cancel.is_set():
+                            break
+                        events.put(item)
+                except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
+                    events.put(("__error__", str(exc)[:300]))
+                finally:
+                    # 取消时关掉生成器：close() 触发 GeneratorExit，上游的模型请求
+                    # 立刻断开，而不是把整轮 token 跑完再丢掉。
+                    if stream is not None:
+                        closer = getattr(stream, "close", None)
+                        if closer is not None:
+                            try:
+                                closer()
+                            except Exception:  # noqa: BLE001
+                                pass
+                    events.put(("__done__", None))
+
+            threading.Thread(target=produce, name="ask-stream", daemon=True).start()
+            try:
+                send_comment("connected")
+                while True:
+                    if time.monotonic() - started > SSE_MAX_SECONDS:
+                        send("error", {"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"})
+                        cancel.set()
+                        break
+                    try:
+                        event, data = events.get(timeout=SSE_HEARTBEAT_S)
+                    except queue.Empty:
+                        send_comment("ping")
+                        continue
+                    if event == "__done__":
+                        break
+                    if event == "__error__":
+                        send("error", {"error": data})
+                        break
+                    if event == "delta":
+                        send("delta", {"text": data})
+                    elif event == "replace":
+                        send("replace", {"text": data})
+                    elif event == "final":
+                        self._annotate_result(data, pre)
+                        self._record_ask(data, pre, started, "/api/ask/stream")
+                        send("final", data)
+            except (BrokenPipeError, ConnectionResetError):
+                # 客户端走了：立刻取消生成。用户拿不到答案，也就不该再为它烧 token
+                # （产品口径：断开即取消，不按已生成部分计费）。
+                cancel.set()
 
         # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
         # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。
