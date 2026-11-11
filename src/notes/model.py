@@ -86,6 +86,35 @@ class Note:
     def touch(self, stamp: str) -> None:
         self.updated = stamp
 
+    # ---- 时效语义 ----
+    # 条款会改版：旧结论留在库里不是错，但「新旧并存且不加区分」才是错——
+    # 检索会把过期那条当答案。两个字段故意走 `extra`（front matter 原样保存）：
+    # 手写笔记里加一行 `valid_until: 2026-12-31` 就能生效，不需要走 API。
+    @property
+    def valid_until(self) -> str:
+        return str(self.extra.get("valid_until") or "").strip()
+
+    @valid_until.setter
+    def valid_until(self, value: str) -> None:
+        value = (value or "").strip()
+        if value:
+            self.extra["valid_until"] = value
+        else:
+            self.extra.pop("valid_until", None)
+
+    @property
+    def supersedes(self) -> str:
+        """本笔记取代了哪一篇。用于回答「为什么有两份说法」。"""
+        return str(self.extra.get("supersedes") or "").strip()
+
+    @supersedes.setter
+    def supersedes(self, value: str) -> None:
+        value = (value or "").strip()
+        if value:
+            self.extra["supersedes"] = value
+        else:
+            self.extra.pop("supersedes", None)
+
     # ---- 序列化 ----
 
     def to_markdown(self) -> str:

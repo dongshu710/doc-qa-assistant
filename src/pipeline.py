@@ -190,6 +190,54 @@ class RAGPipeline:
         return self.retriever.search(query, want,
                                      focus_query=focus or query), {}
 
+    def debug_search(self, query: str, top_k: int | None = None) -> dict:
+        """检索调试：把候选、分数、被阈值挡掉的、以及当前配置一次摊开。
+
+        为什么需要它：答错时最大的时间浪费是分不清「没检索到」还是「切坏了」。
+        只给最终 top-k 看不出这件事——真正有用的是「多召回几倍，然后标出哪条
+        被阈值挡了」。这也是唯一能验证「调 MIN_SCORE 有没有用」的入口，
+        否则只能改环境变量重启再问一遍。
+
+        多召回 `top_k * 3` 是刻意的：默认只取 4 条时，阈值附近的候选根本不在
+        视野里，看到的是「全都没被挡」，得不出结论。
+        上限 40 条：再多就变成刷屏，调试界面没人会翻。
+        """
+        started = time.monotonic()
+        want = max(1, min(20, int(top_k or self.settings.top_k)))
+        threshold = float(getattr(self.settings, "min_score", 0) or 0)
+        hits, meta = self._retrieve(query, top_k=min(40, want * 3))
+        candidates: list[dict] = []
+        for ref, (chunk, score) in enumerate(hits, 1):
+            candidates.append({
+                "ref": ref,
+                "doc_id": chunk.doc_id,
+                "title": chunk.title,
+                "section": chunk.section,
+                "page": getattr(chunk, "page", None),
+                "chunk_index": chunk.chunk_index,
+                "score": round(float(score), 4),
+                # kept=false 表示「检索到了，但被阈值挡掉」——这正是最容易误判成
+                # 「没检索到」的一类。前端按这个标红，用户才知道该调阈值还是该改切分。
+                "kept": float(score) >= threshold,
+                "chars": len(chunk.text),
+                "text": chunk.text,
+            })
+        meta = meta or {}
+        return {
+            "query": query,
+            "retrieval": self.settings.retrieval,
+            "detail": self.retrieval_detail,
+            "min_score": threshold,
+            "top_k": want,
+            "recalled": len(candidates),
+            "kept": sum(1 for item in candidates if item["kept"]),
+            "chunks_total": len(self.chunks),
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "degraded": bool(meta.get("error")),
+            "degrade_reason": str(meta.get("error") or "")[:300],
+            "candidates": candidates,
+        }
+
     def _search(self, query: str, result: dict):
         """检索一次；异常降级为空结果并显式标注，不把异常抛给调用方。"""
         try:
@@ -675,6 +723,10 @@ class RAGPipeline:
             "ref": ref, "title": chunk.title, "section": chunk.section,
             "doc_id": chunk.doc_id,
             "chunk_index": chunk.chunk_index,
+            # 只有 PDF 入库的块有页码；其余文档给 None，前端据此不显示「第 N 页」。
+            # 用 getattr 而不是 chunk.page：拆包前生成的旧缓存对象没有这个字段，
+            # 直接取属性会在索引热替换的瞬间抛 AttributeError。
+            "page": getattr(chunk, "page", None),
             "snippet": snippet,
         }
 
@@ -696,6 +748,7 @@ class RAGPipeline:
             "doc_id": chunk.doc_id, "title": chunk.title, "section": chunk.section,
             "chunk_index": chunk_index, "text": chunk.text,
             "doc_chunks": len(doc_chunks),
+            "page": getattr(chunk, "page", None),
         }
 
     def _finish(self, result: dict, t0: float) -> dict:

@@ -108,7 +108,10 @@ def nav(active: str = "", links: bool = True) -> str:
         return (f'<a class="sb-item{on}" href="{href}" data-nav="{key}">'
                 f'{icon(glyph, 17)}<span class="sb-label">{label}</span></a>')
 
-    nav_html = nav_item("kb", "/kb", "知识库", "doc") if links else ""
+    # 调试台只在「有导航」时出现（导出的离线页不放）：
+    # 它依赖 /api/search/debug，离线副本里没有服务可用。
+    nav_html = (nav_item("kb", "/kb", "知识库", "doc")
+                + nav_item("debug", "/debug", "调试", "search")) if links else ""
     return (
         '<aside class="side" id="sideBar" aria-label="会话与导航">'
         '<div class="side-head">'

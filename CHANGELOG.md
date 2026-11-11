@@ -2,6 +2,67 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.36.0] - 2026-11-11
+
+把同类项目差距清单（`docs/GAP-2026-11-11.md`）里剩下的 13 条做完。零依赖没破，
+新增能力全部由标准库实现。
+
+### 新增
+
+- **OpenAI 兼容端点**：`GET /v1/models`、`POST /v1/chat/completions`（含 SSE 流式）。
+  `base_url` 指过来即可被 OpenAI SDK / LiteLLM / LangChain 使用；引用放在非标准字段
+  `citations`，正文保留 `[n]` 编号；`tools`/`functions`/`n>1` 明确回 400。
+  错误体强制 OpenAI 形状——SDK 只读 `error.message`。
+- **页码级引用**：PDF 入库按页写 `<!--page:N-->`，切分换算成 `Chunk.page` 并剥离标记；
+  引用与 `/api/source` 都带页码，前端显示「第 N 页」。
+- **检索调试台**：`POST /api/search/debug` + `/debug` 页面。多召回 3 倍，逐条标注
+  `kept`（是否被 `MIN_SCORE` 挡掉），用于区分「没检索到」与「切分坏了」。
+- **入库格式扩展**：PPTX（`pptx_text`）、HTML（`html_text`）、EML（`eml_text`），
+  全部零依赖；PPT 空页保留页码占位，HTML 丢掉 script/nav/footer，邮件附件只计数。
+- **API Key 作用域**：`API_KEYS=名字:密钥:ro`（或 `rw`/`admin`）。只读 Key 的写操作回
+  403 `read_only_key` 并给出换 Key 指引；`admin` 作用域等同管理员。
+- **知识库目录监听**：`KB_WATCH_SECONDS`（默认 5 秒，0 关闭）轮询活动版本目录，
+  外部改文件后自动重建；`/api/health.kb_watch` 报 `reloads`/`last_error`。
+- **OpenTelemetry 导出**：`src/otel.py` 实现 OTLP/HTTP + JSON，旁路线程批量发送，
+  队列满即丢并计数，绝不影响问答；`/api/health.otel` 报 `sent/failed/dropped`。
+- **基准与文档站**：`tools/bench.py`（每个用例独立子进程 + 关 GC + 中位数）生成
+  `docs/BENCHMARK.md`；`src/mdrender.py` + `tools/build_docs_site.py` 生成
+  `docs/site/`（17 页离线文档站），CI 用 `--check` 防过期。
+- **记忆时效语义**：笔记 front matter 支持 `valid_until` / `supersedes`；过期笔记在检索中
+  标 `expired` 并降权 0.5（不隐藏，历史依据仍可查）；日期格式错误回 400 而不是静默失效。
+
+### 修复
+
+- `pdf_text.extract_text` 会丢掉空页，导致后续页码整体前移（引用指到错误页）。新增
+  `extract_pages()` 保留空页，`extract_text()` 行为保持不变。
+- 向量缓存无上限：每改一次条款留一份永不命中的旧向量，长期把磁盘吃掉。现在按
+  `EMBEDDING_CACHE_MAX`（默认 20000）封顶，命中即移队尾，按 LRU 淘汰。
+- 向量重建只报 `embedded`，用户看到 0 会误判「没生效」。现在同时报 `reused` 与缓存规模。
+- `ApiKeyStore` 解析含冒号的旧密钥时会失效（升级后全部 401）。已恢复「只按第一个冒号切分」。
+- `html_text` 解析表格时 `tr` 被当作块级标签提前处理，整行拼不起来。已调整判定顺序。
+- `knowledge watcher` 原计划把基线放在第一次轮询，导致启动后一个间隔内的修改被当成
+  初始状态永久吞掉。改为 `start()` 里同步取基线。
+- 上传触发的重建与监听触发的重建会撞车（偶发连接中断）。现在区分「同一目录内的外部修改」
+  （一律重建，不去抖）与「活动版本目录被自己换掉」（刚重建过就跳过）。
+- `.env.example` 生成器原来把 `文件:行号` 写进清单，任何无关编辑都会让它过期、CI 变红。
+  改为只写文件名。
+
+### 变更
+
+- `/api/search` 登记为 API 级；`/v1` 登记为 API 级（不登记会落到默认 open，
+  等于把「检索 + 生成」对全网敞开）。
+- 超过 2 万块时 `/api/health` 主动告警：纯 Python 检索在这个量级首字会到数百毫秒，
+  建议 `numpy` 后端或 `bm25`/`hybrid`。
+- 新增 10 个测试脚本进 CI：OpenAI 兼容、页码引用、检索调试、文档格式、embedding 增量、
+  目录监听、Key 作用域、OTel、Markdown 渲染与文档站过期检查。
+
+### 明确不做
+
+- **OCR**：零依赖下没有可用引擎（Tesseract 要二进制、PaddleOCR 要 torch）。
+  继续走「识别 + 明确报错 + 给补救步骤」，不用规则版伪 OCR 掩盖。
+- **托管文档站**：需要域名与构建服务，与单机定位不符；改为生成静态站进仓库。
+- **记忆的实体链接/自动冲突消解**：成本 10+ 人日，收益不确定；本版只做时效字段与降权。
+
 ## [1.35.0] - 2026-11-11
 
 `docs/GAP-2026-11-11.md` 里 A1 的落地。这一条不是「补个功能」，是修一类**静默错误**：

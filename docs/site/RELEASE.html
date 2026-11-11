@@ -1,0 +1,117 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RELEASE · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html" class="on">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="打包与发布">打包与发布</h1>
+<h2 id="1-版本号">1. 版本号</h2>
+<p>唯一来源是仓库根目录的 <code>VERSION</code>。<code>src/version.py</code>、<code>/api/health</code>、页面角标、打包脚本都读它。</p>
+<p>发版时：</p>
+<ol>
+<li>修改 <code>VERSION</code>（例如 <code>1.4.0</code>）；</li>
+<li>在 <code>CHANGELOG.md</code> 增加对应条目；</li>
+<li>重新打包。</li>
+</ol>
+<h2 id="2-构建安装包">2. 构建安装包</h2>
+<pre><code class="lang-bash">python tools/build_release.py</code></pre>
+<p>产物：</p>
+<pre><code>dist/jiyi-app-&lt;version&gt;.zip      应用包（问答 + 笔记）
+dist/jiyi-plugin-&lt;version&gt;.zip   插件包（只有笔记）
+dist/jiyi-skill-&lt;version&gt;.zip    技能包（jiyi-files）
+dist/SHA256SUMS.txt              三个包的 sha256</code></pre>
+<p>包含：<code>src/</code>、<code>data/</code>（演示知识库与原始 PDF）、<code>docs/</code>、<code>tests/</code>、<code>tools/</code>、README、LICENSE、CHANGELOG、启动脚本、<code>.env.example</code>。 不包含：<code>.venv</code>、<code>logs/</code>、<code>dist/</code>、<code>__pycache__</code>、运行时生成的文档用例。</p>
+<h2 id="3-验证安装包">3. 验证安装包</h2>
+<p>不要只在源码目录里验证，必须解压后从零启动：</p>
+<pre><code class="lang-bash">mkdir -p /tmp/docqa-test &amp;&amp; cd /tmp/docqa-test
+unzip &lt;path&gt;/jiyi-app-&lt;version&gt;.zip
+cd jiyi-app-&lt;version&gt;
+python -m src.server --port 8021 &amp;
+curl http://127.0.0.1:8021/api/health
+curl -X POST http://127.0.0.1:8021/api/ask \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;query&quot;:&quot;稳盈系列的起购金额是多少&quot;}&#x27;</code></pre>
+<p>期望：健康检查返回 <code>status=ok</code>、31 个知识块；问答返回 <code>behavior=answer</code> 且带引用。 再打开 <code>/</code>、<code>/kb</code> 确认页面可渲染；<code>/insights</code>、<code>/dashboard</code>、<code>/report</code> 应 302 到 <code>/ask</code>。</p>
+<p>笔记三通道也要各冒烟一条（都不需要模型）：</p>
+<pre><code class="lang-bash"># 1) CLI
+python -m src.notes --home /tmp/notes save --from conv.json --draft
+
+# 2) HTTP
+curl -s -X POST http://127.0.0.1:8021/api/notes -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;messages&quot;:[{&quot;role&quot;:&quot;assistant&quot;,&quot;text&quot;:&quot;结论：按 13% 执行。&quot;}],&quot;hint&quot;:{&quot;title&quot;:&quot;冒烟&quot;}}&#x27;
+
+# 3) MCP（逐行 JSON-RPC，用管道喂两条消息即可）
+printf &#x27;%s\n%s\n&#x27; &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;initialize&quot;,&quot;params&quot;:{&quot;protocolVersion&quot;:&quot;2025-06-18&quot;}}&#x27; \
+  &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:2,&quot;method&quot;:&quot;tools/list&quot;}&#x27; | NOTE_HOME=/tmp/notes python -m src.notes.mcp_server</code></pre>
+<p>期望：<code>/api/notes</code> 返回 <code>201</code> 与 <code>path</code>；MCP 第二条返回 7 个工具名；<code>/files</code> 能看到这篇。</p>
+<h2 id="4-发布到-github">4. 发布到 GitHub</h2>
+<h3 id="仓库首次创建">仓库首次创建</h3>
+<pre><code class="lang-bash">git init -b main
+git add .
+git commit -m &quot;release: v1.4.0&quot;
+git remote add origin https://github.com/&lt;owner&gt;/doc-qa-assistant.git
+git push -u origin main</code></pre>
+<p>仓库描述建议：</p>
+<blockquote>零依赖的文档问答（RAG）原型：强制引用、答不出明确说明、L1/L3 双层评测与可分享汇报页。</blockquote>
+<p>Topics：<code>rag</code> <code>llm</code> <code>document-qa</code> <code>python</code> <code>bm25</code> <code>evaluation</code> <code>llm-as-judge</code> <code>deepseek</code> <code>zero-dependencies</code>。</p>
+<h3 id="创建-release">创建 Release</h3>
+<p>一条命令（推荐）：</p>
+<pre><code class="lang-bash">python tools/build_release.py                    # 先出包
+python tools/publish_release.py --tag v1.12.0    # 建 Release + 传 zip，正文自动摘 CHANGELOG</code></pre>
+<p>常用变体：</p>
+<pre><code class="lang-bash">python tools/publish_release.py --all            # 补发所有已出包但还没建 Release 的版本
+python tools/publish_release.py --tag v1.12.0 --dry-run   # 只看要做什么，不改远端
+python tools/publish_release.py --tag v1.12.0 --no-asset  # 只同步正文</code></pre>
+<p>脚本行为：Release 正文取自 <code>CHANGELOG.md</code> 对应版本段落，附件是该版本三个包 + <code>SHA256SUMS.txt</code> （README 承诺了「同页附 SHA256SUMS.txt」，不传就等于没兑现），正文末尾附 sha256 与下载直链；重复执行只同步正文、跳过已存在的附件，幂等；发布后自动把版本号最高的 Release 标为 latest（GitHub 默认把 latest 给最后创建的那个，批量补历史版本时会把新版挤下去， 导致 <code>/releases/latest/download/</code> 404）。</p>
+<p>凭据：优先读 <code>GITHUB_TOKEN</code> / <code>GH_TOKEN</code>，没有就复用 git 凭据管理器里推代码的那份，不必另配。 只有两个接口：<code>POST /repos/{owner}/{repo}/releases</code> 建 release， <code>POST https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=&lt;file&gt;</code> 传资产。</p>
+<h3 id="git-push-被代理掐断时"><code>git push</code> 被代理掐断时</h3>
+<p>这台机器上 <code>github.com:443</code> 时常不通（<code>schannel: server closed abruptly</code>）， 但 <code>api.github.com</code> 一直可用。于是把「推代码」拆成 REST 调用：</p>
+<pre><code class="lang-bash">python tools/push_via_api.py --dry-run     # 先看会传哪些文件
+python tools/push_via_api.py               # 提交信息默认取本地 HEAD
+python tools/push_via_api.py -m &quot;...&quot;      # 或指定</code></pre>
+<p>它做的事：对比本地 <code>git ls-tree -r HEAD</code> 与远端树的 blob sha → 上传变化的 blob → 建 tree（<code>base_tree</code> 为远端树）→ 建 commit → 移动 <code>refs/heads/main</code>。</p>
+<p>代价写在脚本头部：<strong>远端 SHA 与本地不同</strong>（GitHub 把 <code>+08:00</code> 规范成 <code>Z</code>）， 所以推完要 <code>git fetch origin &amp;&amp; git reset --hard origin/main</code> 才能继续正常 push。 网络上取不到对象时也可以直接接着用这个脚本——它每次都跟远端树比，不依赖本地 remote ref。</p>
+<h2 id="5-发布后检查">5. 发布后检查</h2>
+<ul>
+<li>Release 页面的 zip 能下载，大小与 SHA256 对得上；</li>
+<li>README 的下载链接指向 <code>releases/latest</code>；</li>
+<li>CI 在 main 上为绿色；</li>
+<li>仓库内没有 <code>.env</code>、<code>logs/</code>、<code>dist/</code>、本地绝对路径。</li>
+</ul><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

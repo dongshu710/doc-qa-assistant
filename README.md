@@ -1539,6 +1539,127 @@ MSYS_NO_PATHCONV=1 docker exec docker-ssrf_proxy-1 cat /etc/squid/dify_allow_pri
 在 Dify 里搭智能体的完整配置（应用类型怎么选、提示词全文、模型参数、7 条验收用例、
 以及这套方案比本项目原生弱在哪），见 [docs/DIFY-AGENT.md](docs/DIFY-AGENT.md)。
 
+## 4.17 生态接入、页码引用与可观测（v1.36.0）
+
+这一版补齐的是「接得上、查得到、看得见」三件事，全部保持零第三方依赖。
+
+### OpenAI 兼容端点
+
+任何 OpenAI SDK / LiteLLM / LangChain 只要把 `base_url` 指过来就能用：
+
+```bash
+# 模型清单（SDK 启动时会先探这个）
+curl -s http://127.0.0.1:8000/v1/models
+
+# 非流式
+curl -s http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"jiyi","messages":[{"role":"user","content":"稳盈系列起购金额是多少"}]}'
+
+# 流式（SSE，以 data: [DONE] 结束）
+curl -N http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"jiyi","stream":true,"messages":[{"role":"user","content":"稳盈系列起购金额是多少"}]}'
+```
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="任意或你的 API_KEYS")
+print(client.chat.completions.create(
+    model="jiyi", messages=[{"role": "user", "content": "稳盈系列起购金额是多少"}]
+).choices[0].message.content)
+```
+
+三个刻意的取舍：
+
+- **只取 `messages` 里最后一条 user 当检索问题**。把整段历史拼进去会让向量偏离当前问题
+  （追问场景实测 top-1 会掉到上一轮主题）；多轮上下文由 `session_id` 负责。
+- **引用放在非标准字段 `citations`**，不拼进正文。正文里的 `[n]` 编号保留，方便直接展示；
+  拼上一段「参考：…」会让客户端拿到的答案变成两截。
+- **不支持 `tools` / `function_call` / `n>1`**，直接回 400 并说明原因。接了工具调用就变成 Agent，
+  与「只依据资料作答、逐条标注出处」的定位冲突。
+
+错误体是 OpenAI 形状（`{error:{message,type,code}}`）。这一点必须照做：SDK 只读
+`error.message`，回本项目的 `{ok:false,...}` 时它只会显示「unexpected response」。
+
+### 页码级引用
+
+PDF 入库时按页写入 `<!--page:N-->` 标记，切分时换算成 `Chunk.page` 并与 `chunk.text` 分开存
+（标记不进正文，否则会被当成人话检索）。于是引用能显示「第 12 页」，`/api/source` 也会返回页码。
+
+```bash
+curl -s "http://127.0.0.1:8000/api/source?doc=演示制度_销售适当性管理实施细则&chunk=3" | head -c 300
+# {"doc_id":...,"section":"...","page":7,...}
+```
+
+为什么把标记写进 Markdown 而不是另存一份页码映射：切分发生在「以后某次重建」，
+那时手里只有文件。一个注释行是自描述的，映射表还要防它和文件不同步。
+
+### 检索调试台 `/debug`
+
+答错时最费时间的判断是「没检索到」还是「检索到了被阈值挡住」。这一页把候选、分数、
+是否被 `MIN_SCORE` 挡掉（`kept: false`）一次摊开，等同于别家的 Retrieval Testing：
+
+```
+POST /api/search/debug  {"query":"稳盈系列起付金额","top_k":4}
+→ {min_score, recalled(=top_k×3), kept, candidates:[{score, kept, section, page, text}]}
+```
+
+页面在左侧栏「调试」，或直接访问 `/debug`。
+
+### 更多入库格式：PPTX / HTML / EML
+
+零依赖自己解（zip+XML / html.parser / email）：
+
+- **PPTX**：按页生成 `## 第 N 页` 章节；空页保留占位（否则后面页码整体前移，引用指错页）。
+- **HTML**：保留标题/列表/表格，丢掉 `script`/`style`/`nav`/`footer`——侧栏页脚每页重复，
+  收进知识库只会变成高频噪声。
+- **EML**：主题/发件人/日期 + 正文（优先 text/plain，没有则转 HTML）；附件只计数不解析。
+
+`.doc` / `.xls` / `.msg` 老格式仍需先另存；图片与扫描件要 OCR（仍未内置）。
+
+### API Key 作用域
+
+`API_KEYS` 支持第三段作用域：
+
+```bash
+API_KEYS=web:sk_live_xxx,mcp:sk_read_zzz:ro,adm:sk_admin_1:admin
+```
+
+- `ro`：只能 GET 与「读语义 POST」（提问、检索调试、会话清理、反馈）；
+  上传/删除/审批/重建一律 403，错误码是 `read_only_key` 并说明怎么换 Key。
+- `rw`：默认，等同旧行为。
+- `admin`：额外能调审批与运维接口（设了 `ADMIN_TOKEN` 时仍以令牌为准，Key 不能绕过）。
+
+### 知识库目录监听
+
+`KB_WATCH_SECONDS`（默认 5，0 关闭）轮询活动版本目录，外部改文件后自动重建。
+基线在**启动时同步取**，所以「启动后立刻改文件」也能被发现——这一点曾经是 bug：
+基线放在第一次轮询里取，前 5 秒的修改会被当成初始状态永久吞掉。
+
+### OpenTelemetry 导出（OTLP/HTTP + JSON）
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # collector 的 HTTP 端口
+OTEL_SERVICE_NAME=jiyi
+```
+
+只导 traces，不导 metrics/logs（指标已有 `/metrics`，再导一份会让两处口径打架）。
+导出在旁路线程里按批发送，**队列满就丢并计数，绝不影响问答**；`/api/health` 的 `otel`
+字段能看到 `sent/failed/dropped`。
+
+### 基准数据与文档站
+
+```bash
+python tools/bench.py --write        # 重新生成 docs/BENCHMARK.md
+python tools/build_docs_site.py      # 生成 docs/site/（离线可看）
+python tools/build_docs_site.py --check   # CI：生成物是否过期
+```
+
+`docs/BENCHMARK.md` 的数字是**本机实测**：每个用例独立子进程、计时期间关 GC、
+取 5 次中位数。为什么这么讲究——同一份 5000×1024 数据，在同进程连续测时会从
+105 ms 漂到 605 ms，用那个数字做选型会得出完全错误的结论。
+
 ## 5. 评测
 
 ```bash
@@ -1700,9 +1821,21 @@ python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需
 - **知识库审批锁是本机文件锁**：`state.lock` 保证同机多进程串行；多实例部署时审批应由单实例处理，或把锁换成 Redis 分布式锁。上传本身不写活动目录，不会出现半写。
 - **索引构建是「分块增量、索引整体替换」**：未变更文档复用分块、未变更块复用向量缓存（不重复计费），但检索器对象仍按全量块重建（O(N) 内存与一次扫描），10⁵ 块以上建议换可增量写的索引；重建期间旧索引继续服务，新文档有短暂搜不到窗口。
 - **查询扩展有延迟成本**：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。
-- **上传支持 `.md` / `.txt` / `.pdf` / `.docx` / `.xlsx` / `.csv` / `.tsv`**：全部由服务端解析为 Markdown，上传即入库。`.doc` / `.xls` 老格式需先另存为新格式；扫描 PDF 无文本层，需先 OCR。
+- **上传支持 `.md` / `.txt` / `.pdf` / `.docx` / `.pptx` / `.xlsx` / `.csv` / `.tsv` / `.html` / `.eml`**：全部由服务端解析为 Markdown，上传即入库。`.doc` / `.xls` / `.msg` 老格式需先另存为新格式；扫描 PDF 与图片需先 OCR。
 - **DOCX 解析边界**：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。
 - **自动出题的能力边界**：`heuristic` 只能覆盖「有唯一数值」的事实，法规类无数字条款出不了题；`llm` 模式需要 Key，且模型可能出宽泛问题——关键词已强制校验必须原文出现，但仍建议出题后人工扫一眼。
+- **OCR 仍未内置（v1.36.0 明确不做）**：零依赖前提下没有可用的 OCR 引擎——Tesseract 要装二进制，
+  PaddleOCR 要装模型与 torch，两者都违背「解压即用」。现在的做法是**识别 + 明确报错 + 给出补救步骤**
+  （`need_ocr: true`），而不是假装能读。这也是与 RAGFlow / QAnything 最实质的差距，短期不打算补。
+- **两万块以上检索超线性**：1024 维下每千块从 21 ms 涨到 39 ms（缓存失效 + 内存带宽），
+  `docs/BENCHMARK.md` 有实测表。到这个规模请装 `numpy`（自动走 `NumpyFlatStore`）或改 `bm25`/`hybrid`；
+  `/api/health` 的 warnings 会主动提示。纯 Python 路径没有偷偷优化，只是把拐点说了出来。
+- **目录监听只看文件名/mtime/大小**：编辑器若保留时间戳地改内容（少见），不会被发现。
+  真按内容判断要读全文哈希，那是另一个量级的成本；需要立刻生效就 `POST /api/reload`。
+- **OTel 只导 traces，且是 OTLP/HTTP+JSON**：不支持 gRPC、gzip、采样率。要上量请让 collector 做批处理；
+  导出失败只计数、不影响问答（这是刻意的——观测是旁路）。
+- **页码只对 PDF / PPTX 有（两者都写 `<!--page:N-->` 标记）**：Markdown/DOCX/XLSX 没有可靠页概念，`page` 为 `null`，前端不显示「第 N 页」。
+  PPTX 的页码来自 `slideN.xml` 的 N，与左侧序号通常一致；手工改名后可能不同。
 - **内置 PDF 解析器的覆盖面有限**：覆盖经典 xref / xref 流 / 对象流 / Flate / ASCIIHex / ASCII85 / Type0+ToUnicode / 简单字体；遇到无 ToUnicode 的 CID 字体会退化为「赌 CID=Unicode」，此时靠 `unmapped_ratio` 提示乱码风险，不保证正确。极端文件建议改用 `pypdf`（`.venv`）。
 
 ## 9. 待核实清单

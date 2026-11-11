@@ -258,6 +258,39 @@ jobs:
           python tests/test_report_render.py
           python tests/test_packaging.py
 
+      # OpenAI 兼容层：SDK 那条路一旦形状不对，客户端只会显示「unexpected response」
+      - name: OpenAI 兼容端点（含流式与错误体）
+        run: python tests/test_openai_compat.py
+
+      # 页码引用：PDF 分页 → 标记 → chunk.page → 引用，任何一环丢了都只剩「章节级」
+      - name: 页码级引用
+        run: python tests/test_citation_pages.py
+
+      - name: 检索调试台（接口 + 页面）
+        run: python tests/test_search_debug.py
+
+      # PPTX / HTML / EML 三种新格式，都是零依赖自己解
+      - name: 文档格式扩展（pptx / html / eml）
+        run: python tests/test_doc_formats.py
+
+      - name: embedding 增量重建与缓存上限
+        run: python tests/test_embedding_incremental.py
+
+      - name: 知识库目录监听
+        run: python tests/test_watcher.py
+
+      - name: API Key 作用域（只读 / 读写 / 管理员）
+        run: python tests/test_key_scope.py
+
+      # 观测是旁路：这条同时守「协议形状」与「导出失败不影响问答」
+      - name: OpenTelemetry 导出（OTLP/HTTP）
+        run: python tests/test_otel.py
+
+      - name: Markdown 渲染与文档站
+        run: |
+          python tests/test_mdrender.py
+          python tools/build_docs_site.py --check
+
       - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'
         run: python tools/build_release.py

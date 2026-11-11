@@ -1,0 +1,1141 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>README · 总览 · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html" class="on">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="记忆文档-可接入智能体的文档记忆应用">记忆文档 · 可接入智能体的文档记忆应用</h1>
+<p>一句话定位：<strong>它是一份由你掌控、能被不同智能体读写的文档记忆</strong>。</p>
+<p>把制度、手册、产品说明或任意文档变成<strong>可追溯</strong>的问答：只依据资料作答，逐条标注出处； 资料不足时明确说不知道，并给出相似问题。值得留下的回答存成<strong>结构化笔记</strong>， 会话记录也一并落盘——都在你自己选的存储区里，全是普通文件。</p>
+<ul>
+<li><strong>数据不在浏览器里</strong>：笔记是 Markdown，会话是 JSON，<code>~/记忆文档/</code> 整个目录拷走就是完整备份；</li>
+<li><strong>接入方式以智能体为主</strong>：任意 MCP 客户端或 HTTP 调用 <code>POST /api/notes</code> 就能整理并写入；</li>
+<li><strong>文件可自由修改</strong>：页面里能改原文（带版本冲突保护），也能交给系统里顺手的编辑器。</li>
+</ul>
+<p>不接模型 Key 也能跑：自动进入离线抽取模式，检索、引用、评测全链路仍然可复现。</p>
+<p><a href="https://github.com/dongshu710/doc-qa-assistant/actions/workflows/ci.yml/badge.svg">![CI</a>](https://github.com/dongshu710/doc-qa-assistant/actions/workflows/ci.yml) !<a href="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&amp;logoColor=white">Python</a> !<a href="https://img.shields.io/badge/license-MIT-green">License</a> !<a href="https://img.shields.io/badge/runtime%20dependencies-0-brightgreen">Dependencies</a></p>
+<h2 id="下载">下载</h2>
+<p>三种包，按需要选一个。都在同一页：<strong><a href="https://github.com/dongshu710/doc-qa-assistant/releases/latest">Releases</a></strong>（同页附 <code>SHA256SUMS.txt</code>）</p>
+<table><thead><tr><th>包</th><th>里面有什么</th><th>适合谁</th><th>文件</th></tr></thead><tbody><tr><td><strong>应用包</strong></td><td>问答 + 知识库 + 笔记 + 四页界面 + HTTP API</td><td>想直接问文档，也顺手存笔记</td><td><code>jiyi-app-&lt;版本&gt;.zip</code></td></tr><tr><td><strong>插件包</strong></td><td>只有笔记：MCP stdio，7 个工具 + 2 个资源</td><td>只让智能体记笔记，不想跑整站</td><td><code>jiyi-plugin-&lt;版本&gt;.zip</code></td></tr><tr><td><strong>技能包</strong></td><td><code>jiyi-files</code> 技能：列/搜/读/存/导出/开页面</td><td>在 WorkBuddy 里直接用嘴使唤笔记</td><td><code>jiyi-skill-&lt;版本&gt;.zip</code></td></tr></tbody></table>
+<p>解压即用，运行时零第三方依赖（Python 3.11+）。应用包双击 <code>start.bat</code> / <code>sh start.sh</code>； 插件包按包内 <code>README.md</code> 的三段 JSON 挂进客户端； 技能包解压到 <code>~/.workbuddy/skills/</code>，或用 <code>python tools/install_skill.py</code> 一条命令装（见 <a href="docs/SKILL.md">docs/SKILL.md</a>）。</p>
+<p><strong>关于「实体按钮」</strong>：WorkBuddy、Claude Desktop 这类客户端的工具栏不开放自定义按钮， 插件也放不进去。所以入口分两边——</p>
+<ul>
+<li><strong>人看的</strong>：左侧常驻栏的「文件」（或直接打开 <code>http://127.0.0.1:8000/files</code>，可收藏）；</li>
+<li><strong>智能体用的</strong>：连接器（MCP，配置见 <a href="docs/PLUGIN_PACKAGE.md">docs/PLUGIN_PACKAGE.md</a>），</li>
+<p>或上面那个技能包（让智能体直接调 <code>jy.py</code>，不必接 MCP）。</p>
+</ul>
+<table><thead><tr><th>问答（左栏 + 对话 + 输入框）</th><th>知识库（文档上传）</th></tr></thead><tbody><tr><td>![](docs/screenshots/ask.png)</td><td>![](docs/screenshots/kb.png)</td></tr><tr><td><strong>文件（<code>/files</code>，可收藏的固定地址）</strong></td><td><strong>设置 → 存储（占用与清理）</strong></td></tr><tr><td>![](docs/screenshots/files.png)</td><td>![](docs/screenshots/settings.png)</td></tr></tbody></table>
+<p>首次启动会让你<strong>建一个专用存储区</strong>（目录不存在会自动创建 <code>notes/ threads/ index/</code>）， 之后不论换浏览器、换端口、重装应用，记忆都还在那个目录里。</p>
+<p>界面与交互见 <a href="docs/LAYOUT.md">docs/LAYOUT.md</a>；为什么长这样、跟同类开源项目学了什么， 见 <a href="docs/COMPARISON.md">docs/COMPARISON.md</a>（AnythingLLM / RAGFlow / Reor / Khoj / Mem0 / Logseq 逐个拆）。</p>
+<blockquote>页面四页：问答 <code>/ask</code>、知识库 <code>/kb</code>、文件 <code>/files</code>（可收藏的固定地址）、汇报 <code>/report</code>。 <code>/report</code> 同时是展示页和管理台：在线时右侧滑出管理面板（文档、审批、灰度、诊断）， 离线副本只读并说明怎么连上服务；<code>?download=1</code> 导出的是同一套渲染结果。 对话的整理与保存走 <code>src/notes</code>（CLI / HTTP / MCP），不占页面。 截图使用演示知识库与离线抽取模式，示例笔记见 <a href="docs/examples/note-example.md">docs/examples/note-example.md</a>。</blockquote>
+<h2 id="0-定位-这是-文档问答-笔记-不是只服务金融">0. 定位：这是「文档问答 + 笔记」，不是只服务金融</h2>
+<p>同一个引擎可以挂任意文档，金融只是当前这套知识库的<strong>第一个实例</strong>：</p>
+<ul>
+<li><strong>换知识库</strong>：把文档放进 <code>data/knowledge/</code>，或直接在<strong>知识库页上传</strong>（支持 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code> / <code>.xlsx</code> / <code>.csv</code> / <code>.tsv</code>，可一次多选，上传后立即重建索引）；</li>
+<li><strong>换领域</strong>：设 <code>APP_PROFILE=generic</code> 即可去掉金融专属护栏（荐股拒绝），只保留注入、越权、隐私这些通用安全规则；</li>
+<li><strong>换检索策略</strong>：<code>RETRIEVAL=vector|bm25|hybrid</code>（默认向量召回 + 重排），<code>QUERY_EXPANSION=off|auto|llm</code>。</li>
+</ul>
+<p>为什么默认还是金融 profile：当前语料就是制度与产品说明，金融合规红线（不荐股、不替产品做收益承诺）在这套语料上是必要约束；换成你自己的文档时切 <code>generic</code> 即可。</p>
+<p>补充说明「收益承诺」到底拦什么：问「这个产品保本吗」「年化多少」时<strong>不拒答</strong>，而是引用制度里「不得承诺保本保收益」「业绩比较基准不代表实际收益」的条款——这才是制度库该给的答案。真正被拒的是让助手替产品背书（必涨/稳赚/包赚/翻倍）和荐股。</p>
+<h2 id="0-1-先说清楚-这是工作流-不是-agent">0.1 先说清楚：这是工作流，不是 Agent</h2>
+<p>一句话区分：<strong>RAG 解决「知道」，Agent 解决「去做」</strong>。</p>
+<p>本作品的本质是「检索 → 生成 → 引用」的固定链路（Prompt Chaining），分支可穷举，<strong>不需要上自主 Agent</strong>。判定标准很简单：能写出 if/else 穷举分支，就别用 Agent——上 Agent 只会引入不确定性、成本和运维负担。</p>
+<p><strong>什么时候才升级为 Agent</strong>：当需要模型动态决定调用哪些外部工具（查实时利率 API、算 IRR、提交工单、转人工），且走向依赖中间结果、分支无法穷举时。届时按「Chaining + 有界工具调用循环」升级，并强制 <code>max_steps / 预算 / 停止条件 / 人工接管点</code> 四件套。</p>
+<h2 id="1-架构">1. 架构</h2>
+<pre><code class="lang-mermaid">flowchart TD
+  Q[用户问题] --&gt; V{输入校验&lt;br/&gt;空/超长/注入/越权}
+  V --&gt;|不合法| R1[ask_clarify / refuse]
+  V --&gt;|合法| KW{关键词命中&lt;br/&gt;清单 / 标签条目}
+  KW --&gt;|命中| OUT[本地直出&lt;br/&gt;不调用任何 API]
+  KW --&gt;|未命中| QE{查询扩展&lt;br/&gt;QUERY_EXPANSION}
+  QE --&gt;|auto/llm| EXP[用章节词表改写检索词]
+  QE --&gt;|off| RET
+  EXP --&gt; RET[召回：embedding / n-gram / BM25&lt;br/&gt;+ 多信号重排 top_k]
+  IDX[(索引 manifest&lt;br/&gt;model · dim · fingerprint)] -.-&gt; RET
+  RET --&gt;|无命中| R2[no_answer + 相似问题]
+  RET --&gt;|命中| GEN{生成层}
+  GEN --&gt;|有 API Key| LLM[LLM 生成 OpenAI 兼容]
+  GEN --&gt;|无 Key / 调用失败 / 超预算| EXT[抽取式降级]
+  LLM --&gt; CITE[引用校验 [n] 对齐命中块]
+  EXT --&gt; CITE
+  CITE --&gt; LOG[(trace.jsonl 观测)]
+  CITE --&gt; OUT</code></pre>
+<p>组件职责：</p>
+<table><thead><tr><th>组件</th><th>职责</th><th>失败处理</th></tr></thead><tbody><tr><td><code>chunking</code></td><td>标题/条款感知切分，保证语义完整、可回溯</td><td>目录缺失即报错；空库拒绝启动</td></tr><tr><td><code>retriever</code></td><td>embedding 召回 + 多信号重排；n-gram / BM25 为兜底与对照</td><td>embedding 失败 → 当次回退词法检索并标 <code>degraded</code></td></tr><tr><td><code>embeddings</code></td><td>OpenAI 兼容 <code>/embeddings</code>（bge 同协议），批请求、超时、重试、维度探测</td><td>失败抛 <code>EmbeddingError</code>，不阻塞启动</td></tr><tr><td><code>vector_store</code></td><td>纯 Python / NumPy / FAISS 三种向量后端 + manifest 持久化</td><td>后端不可用逐级降级；维度不一致直接报错</td></tr><tr><td><code>kbstore</code></td><td>版本目录、审批流、按文档回滚</td><td>版本只增不改；激活原子替换</td></tr><tr><td><code>keywords</code></td><td>从清单 / 表格 / 标签抽条目，命中原样返回；接 API 时补摘要与同义词</td><td>构建失败只记录，不影响检索；命中失败退回正常链路</td></tr><tr><td><code>suggest</code></td><td>按知识库章节生成示例问题、未命中时的相似问题</td><td>无候选 → 回退文档级问题</td></tr><tr><td><code>guards</code></td><td>限流、幂等、成本上限、审计、灰度、回滚；可切 Redis 共享状态</td><td>Redis 失败回退进程内状态，健康检查暴露</td></tr><tr><td><code>metrics_exporter</code></td><td>Prometheus 文本指标（请求/延迟/降级/token）</td><td>采集失败不影响业务响应</td></tr><tr><td><code>query</code></td><td>语料自适应查询扩展：把章节标题当词表，让改写贴合文档术语</td><td>超时/异常静默回退原问题</td></tr><tr><td><code>profiles</code></td><td>finance / generic 两套提示词与合规护栏</td><td>未知 profile 回退默认</td></tr><tr><td><code>generator</code></td><td>LLM 生成 / 无 Key 抽取式</td><td>超时·重试·退避·抖动；最终降级抽取并标 <code>degraded</code></td></tr><tr><td><code>pipeline</code></td><td>输入校验、关键词直出、多轮改写、编排、引用校验、trace</td><td>注入/越权直接拒；关键词不命中走检索；无命中返回「无法找到答案」</td></tr><tr><td><code>cli</code></td><td>单次问答 / 交互模式</td><td>—</td></tr></tbody></table>
+<h2 id="2-目录">2. 目录</h2>
+<pre><code>doc-qa-assistant/
+├─ data/
+│  ├─ raw/                     # 原始 PDF（演示制度 + 监管摘录），离线解析用
+│  ├─ knowledge/               # 种子知识库（3 份手写 md + 3 份 PDF 解析出的 md）
+│  ├─ kb/                      # 版本库：versions / pending / changes（运行时生成）
+│  ├─ index/                   # embedding 索引 + keywords.json（运行时生成）
+│  └─ demo/                    # 演示文档：小a的生活习惯.md（关键词直出示例）
+├─ src/
+│  ├─ config.py                # 通道/超时/重试/阈值配置（界面配置优先，其次环境变量）
+│  ├─ appconfig.py             # 设置面板的读写层：data/app.json、掩码、路径校验
+│  ├─ chunking.py              # 标题/条款感知切分
+│  ├─ retriever.py             # embedding / n-gram / BM25 召回 + 重排
+│  ├─ embeddings.py            # OpenAI 兼容 embedding（批请求 / 重试 / 维度探测 / 缓存）
+│  ├─ vector_store.py          # 纯 Python / NumPy / FAISS 索引 + manifest
+│  ├─ kbstore.py               # 知识库版本目录 / 审批 / 文档级回滚
+│  ├─ redis_client.py          # 零依赖 RESP 客户端（限流 / 幂等 / 成本）
+│  ├─ metrics_exporter.py      # Prometheus 文本指标
+│  ├─ sessions.py              # 多轮会话：最近 3 轮、TTL、LRU
+│  ├─ suggest.py               # 示例问题与相似问题（按文档章节生成）
+│  ├─ keywords.py              # 关键词条目：本地抽取 + 可选 API 整理 + 命中直出
+│  ├─ guards.py                # 限流 / 幂等 / 成本 / 审计 / 灰度 / 回滚（本地 / Redis）
+│  ├─ query.py                 # 语料自适应查询扩展
+│  ├─ generator.py             # LLM + 抽取式降级
+│  ├─ pipeline.py              # 编排 + 校验 + 引用 + trace
+│  ├─ metrics.py               # trace 指标汇总
+│  ├─ profiles.py              # finance / generic 领域口径与护栏
+│  ├─ pdf_ingest.py            # PDF→Markdown（pypdf 优先，内置解析兜底）
+│  ├─ pdf_text.py              # 纯标准库 PDF 取文本（对象流 / Flate / ToUnicode）
+│  ├─ docx_text.py             # 纯标准库 DOCX 取文本（标题 / 段落 / 表格）
+│  ├─ ingest.py                # 按扩展名分派：PDF / DOCX / XLSX / CSV → Markdown
+│  ├─ table_text.py            # xlsx/csv/tsv 解析（标准库 zip+XML+csv）
+│  ├─ jsonl.py                 # JSONL 轮转与尾读
+│  ├─ casegen.py               # 给文档自动出评测题（LLM / 数值锚点兜底）
+│  ├─ evaluator.py             # 评测内核：加载用例、L1 断言、汇总（CLI 与服务端共用）
+│  ├─ server.py                # 命令行入口 + 兼容的 create_server（真正的实现在 handlers/）
+│  ├─ http_server.py           # 限并发的 HTTP 服务器（64 槽位）
+│  ├─ routing.py               # 路由鉴权表：open / api / admin，未登记的 /api/* 默认要 Key
+│  ├─ handlers/                # 路由层（按职责拆开，组合根在 app.py）
+│  │   ├─ app.py               #   装配依赖，把四个路由类拼成 Handler
+│  │   ├─ base.py              #   响应/压缩/ETag、来源闸门、鉴权、PUT/PATCH/DELETE/OPTIONS
+│  │   ├─ resources.py         #   笔记 / 会话 / 文件 / 存储 / 设置
+│  │   ├─ read.py              #   页面与只读 API
+│  │   ├─ write.py             #   问答（含 SSE）/ 知识库 / 设置写入 / 评测用例
+│  │   └─ common.py            #   上限常量与纯函数（文件名净化、项目根、jsonl 尾读）
+│  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
+│  ├─ openapi.py               # OpenAPI 3.0 契约（路径/方法数由 build_spec() 生成，含笔记与内部端点）
+│  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点
+│  ├─ web_pages.py             # 两页装配（占位符替换 + shell()）
+│  ├─ webassets.py             # src/web/ 的读取与缓存
+│  ├─ threadstore.py           # 会话落盘：&lt;存储区&gt;/threads/&lt;id&gt;.json，一条一个文件
+│  ├─ fileops.py               # 存储区内的原文读写（路径越界、2 MB 上限、乐观锁）
+│  ├─ web/                     # 前端资源：css / js / html 片段（以目录实际内容为准）
+│  │                            # 改样式改脚本在这里改，跑 tools/check_frontend.py 验语法
+│  ├─ notes/                   # 智能体笔记：存储 / 摘要 / CLI / HTTP / MCP / 导出（零依赖）
+│  ├─ report.py                # 汇报页渲染 + 独立 HTML 导出（CLI 用）
+│  ├─ version.py               # 版本号（读根目录 VERSION）
+│  └─ cli.py                   # 命令行入口
+├─ AGENTS.md                  # 给智能体读的接入说明（MCP / HTTP / CLI / 文件四条路）
+├─ docs/
+│  ├─ ARCHITECTURE.md          # 链路、组件职责、失败矩阵
+│  ├─ EVALUATION.md            # 数据集、口径、结果与局限
+│  ├─ SECURITY.md              # 威胁模型与已知缺口
+│  ├─ RELEASE.md               # 打包、验证、发布流程
+│  └─ screenshots/             # README 用的页面截图
+├─ tools/
+│  ├─ check_frontend.py        # 前端自检：node --check / CSS 括号 / 内联脚本
+│  ├─ build_release.py         # 构建可下载的 zip + SHA256
+│  ├─ publish_release.py       # 把 zip 发到 GitHub Release（复用已存凭据）
+│  ├─ keyword_demo.py          # 小a场景演示：上传→关键词→命中→本地输出
+│  └─ make_policy_pdfs.py      # 生成演示制度 PDF（fpdf2）
+├─ tests/
+│  ├─ build_cases.py           # 生成 25 条基础用例
+│  ├─ build_cases_hard.py      # 生成 13 条难题（多跳/数值/跨文件/资料空白）
+│  ├─ eval_cases.jsonl         # 基础用例
+│  ├─ eval_cases_hard.jsonl    # 难题集（诊断用，不进发布门禁）
+│  ├─ eval_cases_feedback.jsonl# 看板“一键转用例”生成的回归用例
+│  ├─ eval_cases_docs.jsonl    # 上传文档自动生成的用例（运行时生成，git 忽略）
+│  ├─ eval_run.py              # L1 断言 CLI（合并基础/反馈/文档三类用例）
+│  ├─ eval_l3.py               # L3 语义评分（LLM-as-Judge + 裁判校准）
+│  ├─ eval_retrieval.py        # 召回评测（Recall@1/@4、MRR）
+│  ├─ test_server.py           # 页面/接口冒烟
+│  ├─ test_pdf_upload.py       # PDF 上传端到端（零依赖引擎）
+│  ├─ test_docx_upload.py      # DOCX 上传 + 自动出题 + 一起跑
+│  ├─ test_pdf_text.py         # 内置 PDF 解析器单测（对象流/拒绝路径）
+│  ├─ test_kb_api.py           # 知识库上传/删除接口冒烟
+│  ├─ test_kb_versions.py      # 版本 / 审批 / 文档级回滚
+│  ├─ test_embeddings.py       # embedding 批请求 / 重试 / 索引 / 降级
+│  ├─ test_redis_guards.py     # Redis 跨实例限流 / 幂等 / 成本
+│  ├─ test_server_redis.py     # 两个服务实例共享 Redis 的端到端验证
+│  ├─ test_pipeline_embedding.py # embedding 检索链路与故障降级
+│  ├─ test_keywords.py         # 关键词抽取/命中/API 增强/零调用验证
+│  ├─ test_keyword_api.py      # 关键词 HTTP 接口与命中路径
+│  ├─ test_keyword_precision.py # 否定/极性/意图/单文档/索引一致性
+│  ├─ test_session.py           # 多轮上下文改写 / TTL / 轮数
+│  ├─ test_stream.py            # SSE 事件顺序 / 多轮 / 未命中
+│  ├─ test_generator_stream.py  # 上游 SSE 解析 / 用量 / 截断降级
+│  ├─ test_async_reload.py      # 上传立即返回 / 重建中可问答 / 增量复用
+│  ├─ test_report_cache.py      # 汇报缓存命中 / 失效 / TTL
+│  ├─ test_kb_hardlink.py       # 版本硬链接 / 保留 N 版 / 回退复制
+│  ├─ test_auth_openapi.py      # API Key 401 / 两种携带方式 / OpenAPI 契约
+│  ├─ e2e_pages.mjs             # Playwright 四页 E2E + 侧栏收起（开发期依赖）
+│  ├─ test_settings.py          # 设置面板：配置读写、掩码、校验、优先级、挂载位置
+│  ├─ e2e_settings.mjs          # Playwright：抽屉开合 / 五分区 / 开关生效 / MCP 生成
+│  ├─ eval_keyword.py          # 标注集评测：应直出命中率、不应直出误伤率
+│  ├─ bench_keyword.py         # 倒排索引与线性扫描的性能对照
+│  ├─ test_guards.py           # 限流/幂等/成本/灰度回滚/示例问题
+│  ├─ fixtures/                # 上传测试用 PDF / DOCX（可复现生成）
+│  └─ baseline.json            # 离线基线（26/26）
+├─ .github/workflows/ci.yml    # 离线冒烟 + 打包（Python 3.11 / 3.13）
+├─ start.bat / start.sh        # 一键启动（Windows / macOS / Linux）
+├─ VERSION                     # 版本号唯一来源
+├─ CHANGELOG.md
+├─ LICENSE
+├─ requirements.txt            # 运行时零第三方依赖
+└─ README.md</code></pre>
+<p><code>dist/</code> 是打包与导出产物（git 忽略），运行 <code>python tools/build_release.py</code> 生成。</p>
+<h2 id="3-快速开始-零依赖-python-3-11">3. 快速开始（零依赖，Python 3.11+）</h2>
+<h3 id="方式-a-下载应用包">方式 A：下载应用包</h3>
+<ol>
+<li>打开 <a href="https://github.com/dongshu710/doc-qa-assistant/releases/latest">Releases</a>，下载 <code>jiyi-app-&lt;版本&gt;.zip</code>（同页附 <code>SHA256SUMS.txt</code>）；</li>
+<li>解压到任意目录（路径尽量不含空格）；</li>
+<li>Windows 双击 <code>start.bat</code>；macOS / Linux 执行 <code>sh start.sh</code>；</li>
+<li>浏览器自动打开 <code>http://127.0.0.1:8000</code>（未自动打开就手动访问）。</li>
+</ol>
+<p>应用包已内置演示知识库与启动脚本，<strong>不需要 <code>pip install</code></strong>。未配置 Key 时自动进入离线抽取模式。 只需要笔记能力的话，下载 <code>jiyi-plugin-&lt;版本&gt;.zip</code>，按包内 <code>README.md</code> 挂进 MCP 客户端。</p>
+<h3 id="方式-b-pip-安装-可选-把源码装成命令">方式 B：pip 安装（可选，把源码装成命令）</h3>
+<p>不想每次带 <code>PYTHONPATH</code>，或者要在别的项目里调用接口层时用这种方式：</p>
+<pre><code class="lang-bash">pip install .            # 或 pipx install .
+agent-notes-mcp --help   # MCP 服务
+jiyi-server --help       # Web 服务
+jiyi-client --help       # 终端客户端</code></pre>
+<p><code>dependencies</code> 是空的——装完仍然只有标准库。构建需要 <code>setuptools</code>（<code>pip</code> 会自动取， 离线环境加 <code>--no-build-isolation</code> 并用系统已有的）。版本号在构建时从 <code>VERSION</code> 读取， 与仓库里的文件不会两份各改一遍。</p>
+<blockquote><strong>完全没有网络、系统里也没有 <code>setuptools</code> 时</strong>：<code>pip install .</code> 走 PEP 517 构建隔离， 必须能取到构建后端——这一步绕不开，任何打包方案都要有一个构建工具。 这种机器上别装包：走下面的「方式 C」（<code>PYTHONPATH</code>）或直接用发布 zip 解压运行， 两者都只依赖标准库。<code>tests/test_packaging.py</code> 会锁住「运行时零依赖」这条线， 哪天有人往 <code>dependencies</code> 里加了东西，CI 直接红。</blockquote>
+<p>装成包以后 <code>src/version.py</code> 会改从包元数据取版本；开发态仍读仓库根的 <code>VERSION</code>。</p>
+<h3 id="方式-c-源码运行">方式 C：源码运行</h3>
+<p>在项目根目录执行：</p>
+<pre><code class="lang-bash"># 生成评测集（可选，仓库已含）
+python tests/build_cases.py
+
+# 单次问答
+python -m src.cli &quot;稳盈系列的起购金额是多少&quot;
+
+# 交互模式
+python -m src.cli</code></pre>
+<blockquote>若不在项目根目录运行，需把项目根加入 <code>PYTHONPATH</code>： <code>set PYTHONPATH=&lt;项目根目录&gt;</code>（Windows CMD） 或 <code>export PYTHONPATH="$PWD"</code>（Git Bash / macOS / Linux）。</blockquote>
+<h3 id="方式-d-桌面客户端-不装浏览器也能用">方式 D：桌面客户端（不装浏览器也能用）</h3>
+<p>Web 页面负责「看长文档 + 知识库审批」，日常的「问一句、存成笔记」用桌面窗口更省事。 桌面端用的是同一套本地接口，数据仍在存储区，关掉窗口不丢东西。</p>
+<pre><code class="lang-bash"># 先起服务（若已在运行可跳过）
+python -m src.server --port 8000
+
+# 另开一个终端
+python -m src.desktop                    # 默认连 http://127.0.0.1:8000
+python -m src.desktop --base http://127.0.0.1:8011 --key &lt;API Key&gt;</code></pre>
+<p>Windows 双击 <code>start-desktop.bat</code>，macOS / Linux 执行 <code>sh start-desktop.sh</code>： 脚本会先探一下本机服务，没起就临时起一个，再打开窗口。</p>
+<p>四个页签：</p>
+<table><thead><tr><th>页签</th><th>能做什么</th></tr></thead><tbody><tr><td>问答</td><td>提问（Ctrl+Enter）、<strong>流式逐字显示</strong>、看引用与降级原因、「存为笔记」</td></tr><tr><td>记忆</td><td>笔记列表、直接编辑原 Markdown、保存带 <code>base_rev</code> 冲突保护、交给系统编辑器</td></tr><tr><td>会话</td><td>历史问答只读浏览（与 Web 侧同一份 <code>threads/</code>）</td></tr><tr><td>存储</td><td>存储区路径与占用、打开目录、立即备份、选一个备份恢复</td></tr></tbody></table>
+<p>只依赖标准库 Tkinter：Debian/Ubuntu 需要 <code>sudo apt install python3-tk</code>，Windows / macOS 官方 Python 自带。 知识库上传与版本审批<strong>故意留在 Web 页</strong>——那是有审核流程、需要看 diff 的操作，不适合塞进小窗口。</p>
+<p><strong>没有图形环境也能用</strong>（服务器、容器、精简版 Python 常常不带 Tkinter）：同一套接口有终端客户端。</p>
+<pre><code class="lang-bash">python -m src.client status
+python -m src.client ask &quot;稳盈系列的起购金额是多少&quot; --save      # 一次性返回
+python -m src.client ask &quot;稳盈系列的起购金额是多少&quot; --stream     # 逐字输出（SSE）
+python -m src.client notes --limit 20
+python -m src.client show &lt;note_id&gt;
+python -m src.client cat notes/2026/10/xxx.md
+python -m src.client write notes/2026/10/xxx.md --content &quot;# 改过&quot;
+python -m src.client threads
+python -m src.client backup --note &quot;手动备份&quot;
+python -m src.client backups
+python -m src.client restore backup-20261027-221500.zip --force</code></pre>
+<p>流式在客户端侧只有一条实现（<code>Client.ask_stream()</code>），桌面窗口与终端共用： 解析 <code>event:</code>/<code>data:</code> 帧、忽略 <code>: ping</code> 心跳、把 <code>error</code> 事件转成异常。 桌面端若一个字都没收到（服务端不支持或中间层截断），会自动退回一次性请求，功能不会因流式失败而丢。</p>
+<h2 id="4-模型接入-任意-openai-兼容端点">4. 模型接入（任意 OpenAI 兼容端点）</h2>
+<p><strong>两种改法，优先级从高到低：界面 &gt; 环境变量 &gt; 代码默认。</strong></p>
+<p>页面右上角齿轮 → 「接口」里填地址、模型、密钥，点保存即生效，不用重启； 旁边的「测试连接」会真打一次请求，401 / 404 / 429 / 超时分别给出对应原因。 配置落在 <code>data/app.json</code>（已加入 <code>.gitignore</code>，接口只回掩码）。这个文件允许手改； 如果改坏了（例如少一个逗号），设置抽屉会提示「配置文件无法解析」，并且在你下次保存前 自动备份成 <code>app.json.bak-&lt;时间&gt;</code>，不会把原来的密钥直接覆盖掉。</p>
+<p>同一个抽屉里还有三件事：<strong>存储</strong>（笔记放自选目录，可用系统选择框挑；切换时若旧位置还有笔记会提示复制过来）、 <strong>对话</strong>（是否储存对话内容，默认关）、<strong>安装</strong>（下载包与 MCP 配置，可复制或一键写入 Claude Desktop / Cursor / Cline / Windsurf）。</p>
+<p>不配 Key 时走「离线抽取模式」，链路照样跑通、可评测；配了 Key 自动切换为大模型生成。<strong>源码不含任何密钥</strong>，只从环境变量或本地配置读取。</p>
+<p>默认指向 DeepSeek 官方，但代码里没有写死任何一家：改 <code>LLM_BASE_URL</code> + <code>LLM_MODEL</code> 就能换成你手上的任意兼容端点（自建 vLLM、公司网关、其他云厂商都行）。</p>
+<pre><code class="lang-bash">export LLM_BASE_URL=https://api.deepseek.com/v1   # 默认值，可换
+export LLM_MODEL=deepseek-chat                    # 默认值，可换
+export LLM_API_KEY=sk-xxxx                        # 不配 = 离线抽取</code></pre>
+<p>也可以只对一次运行生效：</p>
+<pre><code class="lang-bash">python -m src.cli --model deepseek-chat &quot;稳盈系列的起购金额是多少&quot;
+python -m src.cli --base-url https://your-gateway/v1 &quot;稳盈系列...&quot;</code></pre>
+<p>可调环境变量（下面是常用项；<strong>完整清单看仓库根的 <a href=".env.example"><code>.env.example</code></a></strong>， 它由 <code>tools/gen_env_example.py</code> 从代码生成，CI 会校验它与代码一致，所以不会出现 「文档里有的代码不认」）：</p>
+<table><thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead><tbody><tr><td><code>LLM_BASE_URL</code></td><td><code>https://api.deepseek.com/v1</code></td><td>端点地址（OpenAI 兼容）</td></tr><tr><td><code>LLM_MODEL</code></td><td><code>deepseek-chat</code></td><td>模型名</td></tr><tr><td><code>LLM_API_KEY</code></td><td>空</td><td>密钥；为空则离线抽取（兼容 <code>DEEPSEEK_API_KEY</code>）</td></tr><tr><td><code>RETRIEVAL</code></td><td><code>vector</code></td><td><code>embedding</code>（真向量）/ <code>vector</code>（n-gram 兜底）/ <code>bm25</code> / <code>hybrid</code></td></tr><tr><td><code>TOP_K</code></td><td><code>4</code></td><td>召回条数</td></tr><tr><td><code>MIN_SCORE</code></td><td><code>0.30</code></td><td>检索置信度阈值（<code>embedding</code> 默认 <code>0.38</code>，<code>bm25</code> 为 <code>0.5</code>），低于此值按未命中处理</td></tr><tr><td><code>HEDGE_SCORE</code></td><td><code>0.80</code></td><td>低于此分仍作答，但答案带「最相近的段落…请核对原文」前缀，并在返回值里标 <code>confidence: "low"</code>（页面出黄标）。<code>vector</code>/<code>embedding</code>/<code>hybrid</code> 默认 <code>0.80</code>；<code>bm25</code> 的分数量纲随语料规模变化，默认 <code>0</code> 即关闭，需要自己标定</td></tr><tr><td><code>CITATION_STRICT</code></td><td><code>off</code></td><td><code>on</code> 时「编号合法但内容对不上」的答案降级为抽取式，见 <code>citation_support_rate</code></td></tr><tr><td><code>CHUNK_MAX_CHARS</code></td><td><code>320</code></td><td>单块上限。按「第X条」切，超长条款再按句号兜底</td></tr><tr><td><code>CHUNK_OVERLAP</code></td><td><code>auto</code></td><td>兜底切分时带上前一块末尾的字符数。<strong>默认 auto</strong>：本节存在超过 <code>CHUNK_MAX_CHARS</code> 的超长条款（会被句号切开）时自动取 <code>max_chars/5</code>，否则为 0——不再依赖「现有语料恰好都很短」这个偶然事实。填数字即显式指定（<code>0</code> 关闭）；改动后会重建索引，缓存签名里已含该值</td></tr><tr><td><code>DEBUG</code></td><td><code>off</code></td><td><code>on</code> 时接口异常回传完整消息（含路径）；默认只回异常类型</td></tr><tr><td><code>MAX_INPUT_CHARS</code></td><td><code>500</code></td><td>超长输入直接 <code>ask_clarify</code></td></tr><tr><td><code>KEYWORD_MODE</code></td><td><code>on</code></td><td><code>on</code> 命中结构化条目即本地直出；<code>off</code> 全部走检索</td></tr><tr><td><code>KEYWORD_LLM</code></td><td><code>auto</code></td><td><code>auto</code> 有 Key 才做摘要/同义词整理；<code>off</code> 纯本地；<code>on</code> 强制尝试</td></tr><tr><td><code>KEYWORD_TOP_N</code></td><td><code>3</code></td><td>单次直出最多几条条目</td></tr><tr><td><code>KEYWORD_INDEX</code></td><td><code>data/index/keywords.json</code></td><td>关键词与整理结果缓存路径</td></tr><tr><td><code>KEYWORD_LLM_MAX_CHARS</code></td><td><code>2400</code></td><td>单份文档送去整理的字符上限</td></tr><tr><td><code>KEYWORD_GUARD</code></td><td><code>on</code></td><td>否定作用域、极性冲突、解释型意图、单文档收敛四道闸门；<code>off</code> 回到 1.4.0 行为，用于 A/B</td></tr><tr><td><code>KEYWORD_MULTI_DOC</code></td><td><code>off</code></td><td><code>on</code> 允许一次直出跨多份文档（默认收敛到一份）</td></tr><tr><td><code>LLM_TIMEOUT_S</code></td><td><code>30</code></td><td>显式超时；推理型模型可调 60</td></tr><tr><td><code>LLM_MAX_RETRIES</code></td><td><code>3</code></td><td>仅对可重试异常生效（429/5xx/超时）</td></tr><tr><td><code>WALL_CLOCK_BUDGET_S</code></td><td><code>60</code></td><td>重试总墙钟上限</td></tr><tr><td><code>RATE_LIMIT_RPS</code></td><td><code>5</code></td><td>每 IP 每秒补充的令牌数</td></tr><tr><td><code>RATE_LIMIT_BURST</code></td><td><code>10</code></td><td>每 IP 的令牌桶容量</td></tr><tr><td><code>IDEMPOTENCY_TTL_S</code></td><td><code>300</code></td><td><code>Idempotency-Key</code> 结果复用窗口</td></tr><tr><td><code>DAILY_TOKEN_BUDGET</code></td><td><code>200000</code></td><td>每日 token 上限，超限跳过模型调用</td></tr><tr><td><code>CANARY_PERCENT</code></td><td><code>0</code></td><td>灰度比例（0-100）</td></tr><tr><td><code>CANARY_MODEL</code></td><td>空</td><td>灰度模型名</td></tr><tr><td><code>ADMIN_TOKEN</code></td><td>空</td><td>设置后 <code>/api/admin/*</code>、`/api/kb/approve</td><td>reject</td><td>rollback_doc<code> 需带 </code>X-Admin-Token`；为空仅本机可调用</td></tr><tr><td><code>ALLOWED_HOSTS</code></td><td>空</td><td>额外允许的 <code>Host</code>（逗号分隔）。默认只认回环地址，局域网访问（如 <code>192.168.1.9:8011</code>）必须显式加进来，否则 403</td></tr><tr><td><code>REDIS_URL</code></td><td>空</td><td>多实例共享限流/幂等/成本状态；为空用进程内状态</td></tr><tr><td><code>KB_STORE</code></td><td><code>on</code></td><td>启用版本库（<code>off</code> 退回单目录模式，仅测试/批处理用）</td></tr><tr><td><code>KB_APPROVAL</code></td><td><code>auto</code></td><td><code>auto</code> 本机管理员直通 / <code>on</code> 全部审批 / <code>off</code> 全部直通</td></tr><tr><td><code>LOG_SINK</code></td><td><code>file</code></td><td><code>file</code> / <code>stdout</code> / <code>both</code>；stdout 供 Fluent Bit 采集</td></tr><tr><td><code>LOG_MAX_BYTES</code></td><td><code>16777216</code></td><td>单个 JSONL 超过即轮转；<code>0</code> 关闭轮转</td></tr><tr><td><code>LOG_KEEP</code></td><td><code>3</code></td><td>保留的历史文件份数（1-9）</td></tr><tr><td><code>TOKEN_PRICE_PER_1K</code></td><td><code>0</code></td><td>每千 token 单价；为 0 时只统计 token，不算金额</td></tr><tr><td><code>PROBE_ALLOW_PRIVATE</code></td><td><code>1</code></td><td>设置页「测试连接」是否允许探测本机/内网地址。默认开（本地 ollama 就是 <code>127.0.0.1</code>）；<strong>对外部署时设为 <code>0</code></strong>，否则它是个可用的内网探测器。该接口只接受 <code>http/https</code>、不跟随重定向，与此开关无关</td></tr><tr><td><code>KB_LOCK_STALE_S</code></td><td><code>120</code></td><td>知识库写锁多久算残留。一次万级文件的大版本写入叠加杀软扫描可能超过 30 秒，原来那档会被误判成死锁导致两个进程同时写；真卡死时最坏多等这么久</td></tr><tr><td><code>LLM_STREAM_MAX_S</code></td><td><code>180</code></td><td>流式回答的总时长上限。<code>LLM_TIMEOUT_S</code> 只管「socket 空闲多久算超时」，模型每几秒吐一个 token 时能拖十几分钟、占着线程与 SSE 名额；超了降级为抽取式</td></tr></tbody></table>
+<p>embedding 与索引相关变量见 <a href="#46-真-embedding-与向量索引可选接口已隔离">4.6</a>，多实例变量见 <a href="#47-多实例redis-共享状态--集中日志与指标">4.7</a>，版本库变量见 <a href="#48-知识库版本审批与文档级回滚">4.8</a>。</p>
+<h2 id="4-1-原型-两页-http-api">4.1 原型（两页 + HTTP API）</h2>
+<pre><code class="lang-bash">python -m src.server --port 8000
+# 浏览器打开 http://127.0.0.1:8000 → 自动跳到 /ask</code></pre>
+<p>只保留两个页面：</p>
+<table><thead><tr><th>路由</th><th>页面</th><th>覆盖的使用环节</th></tr></thead><tbody><tr><td><code>/ask</code></td><td>问答：按文档生成的示例问题 → 答案 + 引用 → 未命中提示 + 相似问题 → 反馈</td><td>②③④⑤⑥</td></tr><tr><td><code>/kb</code></td><td>知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引</td><td>⑦</td></tr></tbody></table>
+<p><code>/</code>、<code>/index.html</code>、<code>/insights</code>、<code>/dashboard</code> 一律 302 到 <code>/ask</code>——旧链接不会 404。 页面有四个：<code>/ask</code> 问答、<code>/kb</code> 知识库、<code>/files</code> 文件、<code>/report</code> 汇报； <code>/report</code> 同时是管理台入口（在线时右侧滑出面板，离线副本只读）。对话内容的整理、保存与跨智能体流通走 <code>src/notes</code>，见 <a href="#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道">4.13</a>。</p>
+<p>页面统一走 <code>src/theme.py</code> 的外壳与 <code>src/web/</code> 里的资源（样式 / 脚本 / 片段都是真文件， 运行时内联进 HTML），零 CDN、断网可开； 窄屏（≤860px 栅格折叠、≤640px 单列）做了适配，可直接在手机上演示。</p>
+<p>API：</p>
+<ul>
+<li><code>GET /api/health</code> → 端点 / 模型 / 检索详情（索引状态、维度、降级原因）/ 知识库版本 / 限流与预算状态</li>
+<li><code>GET /api/examples?n=4</code> → 按当前知识库生成的示例问题</li>
+<li><code>POST /api/ask</code> <code>{"query", "session_id"}</code> → 结构化结果（answer / citations / behavior / mode / path / api_called / turn / context_query / kb_version / similar_questions）；</li>
+<li><code>POST /api/ask/stream</code> 同上，SSE 返回 <code>delta</code> / <code>replace</code> / <code>final</code>；</li>
+<li><code>POST /api/session/clear</code> <code>{"session_id"}</code> → 清空该会话上下文；</li>
+<p><code>path=keyword</code> 表示命中关键词本地直出，响应头带 <code>X-Answer-Path: keyword</code></p>
+<li>可选请求头 <code>Idempotency-Key: &lt;key&gt;</code>：TTL 内重复请求返回首次结果，并带 <code>X-Idempotent-Replay: true</code></li>
+<li><code>GET /api/metrics</code> → 业务聚合指标（P50/P95、降级率、引用覆盖率、token 用量）</li>
+<li><code>GET /metrics</code> → Prometheus 文本指标（请求 / 延迟直方图 / 限流 / 幂等重放 / 降级 / token / 版本）</li>
+<li><code>GET /api/l3</code> → L3 语义评分摘要（忠实度 / 相关性 / 完整性、门禁结论）</li>
+<li><code>GET /report?download=1</code> → 下载独立 HTML 汇报文件（内联全部数据，无服务也能打开；1.30.0 起用这个地址，旧的 <code>/api/report/export</code> 从未实现）</li>
+<li><code>GET /api/knowledge</code> → 知识库文件与块数、当前版本、待审批数、每份文档的关键词</li>
+<li><code>GET /api/keywords</code> → 关键词总览（每份文档的 top 词与条目数）</li>
+<li><code>GET /api/keywords?name=...</code> → 单份文档的摘要、条目、原文片段</li>
+<li><code>POST /api/keywords/rebuild</code> <code>{}</code> → 重建关键词；接入 API 时对变更文档做一次整理（需 admin）</li>
+<li><code>POST /api/knowledge/upload</code> <code>{"name","content"}</code> → 上传 <code>.md</code>/<code>.txt</code>（上限 512KB）；直接生效则重建索引，需审批则返回 <code>pending:true</code> + <code>change_id</code></li>
+<li><code>POST /api/knowledge/upload_file</code> <code>{"name","data_b64"}</code> → 上传 PDF/DOCX（服务端解析入库；<code>upload_pdf</code> 保留为别名）</li>
+<li><code>POST /api/knowledge/delete</code> <code>{"name"}</code> → 删除文件（至少保留一份）；同样受审批开关控制</li>
+<li><code>GET /api/feedback/list?limit=20</code> → 反馈 / badcase</li>
+<li><code>GET /api/trace?limit=20</code> → 最近对话</li>
+<li><code>POST /api/feedback</code> <code>{"trace_id","useful","comment"}</code> → 写入 <code>logs/feedback.jsonl</code></li>
+<li><code>POST /api/reload</code> → 重新加载知识库</li>
+<li><code>POST /api/cases/from_doc</code> <code>{"name","n","use_llm"}</code> → 为某份文档自动生成用例</li>
+<li><code>POST /api/cases/run</code> <code>{"scope":"docs"|"all","sleep"}</code> → 跑用例，回传通过率 / 失败原因 / 耗时</li>
+<li><code>GET /api/cases</code> → 评测用例数（基础 + 反馈 + 文档）</li>
+<li><code>POST /api/cases/from_feedback</code> <code>{"trace_id","keywords","behavior","note"}</code> → 差评一键转回归用例</li>
+<li><code>GET /api/source?doc=&amp;chunk=</code> → 引用的原文块（含版本与章节）；</li>
+<li><code>GET /api/kb/change?id=</code> → 待审批变更的文本 diff；</li>
+<li><code>GET /api/kb/versions</code> → 版本列表与活动版本</li>
+<li><code>GET /api/kb/changes?status=pending|approved|rejected</code> → 变更审批记录</li>
+<li><code>GET /api/kb/doc_history?name=...</code> → 单份文档的版本历史</li>
+<li><code>POST /api/kb/approve</code> <code>{"change_id","note"}</code> → 审批并生成新版本（需 admin）</li>
+<li><code>POST /api/kb/reject</code> <code>{"change_id","reason"}</code> → 拒绝变更（需 admin）</li>
+<li><code>POST /api/kb/rollback_doc</code> <code>{"name","to_version","note"}</code> → 按文档回滚，生成新版本（需 admin）</li>
+<li><code>GET /api/audit?limit=20</code> → 审计日志（需 admin）</li>
+<li><code>GET /api/admin/config</code> → 灰度配置（需 admin）</li>
+<li><code>POST /api/admin/config</code> <code>{"canary_percent","canary_model"}</code> → 调整灰度比例 / 模型（需 admin）</li>
+<li><code>POST /api/admin/rollback</code> <code>{}</code> → 恢复上一版运行配置（需 admin）</li>
+<li><code>GET /api/admin/cost</code> → 当日 token 用量与剩余额度（需 admin）</li>
+</ul>
+<blockquote><strong>admin 鉴权</strong>：设置 <code>ADMIN_TOKEN</code> 后，<code>/api/admin/*</code>、<code>/api/audit</code> 与审批/回滚接口需带 <code>X-Admin-Token</code>；未设置时仅允许本机 <code>127.0.0.1</code> 调用。</blockquote>
+<h3 id="4-1-1-生产防护">4.1.1 生产防护</h3>
+<table><thead><tr><th>能力</th><th>行为</th></tr></thead><tbody><tr><td>幂等</td><td><code>Idempotency-Key</code> 在 <code>IDEMPOTENCY_TTL_S</code>（默认 300s）内复用首次结果，避免重试重复计费</td></tr><tr><td>限流</td><td>按客户端 IP 令牌桶，默认 5 rps / burst 10；超限返回 <code>429</code> + <code>Retry-After</code></td></tr><tr><td>审计</td><td>问答摘要、上传/删除、用例运行、灰度变更写入 <code>logs/audit.jsonl</code></td></tr><tr><td>成本上限</td><td>按天累计 token，超过 <code>DAILY_TOKEN_BUDGET</code> 后跳过模型调用、降级为抽取式（<code>budget_exceeded</code>）</td></tr><tr><td>灰度</td><td>按 <code>IP + query</code> 哈希稳定分流到 <code>CANARY_MODEL</code>，比例可在运行时调整</td></tr><tr><td>回滚</td><td>每次配置变更保留快照，<code>POST /api/admin/rollback</code> 恢复上一版</td></tr><tr><td>来源校验</td><td>所有请求 <code>Host</code> 只认回环/白名单（挡 DNS rebinding）；写请求必须 <code>application/json</code>，<code>Origin</code>/<code>Sec-Fetch-Site</code> 同源，浏览器来源还要带 <code>X-Jiyi-Client: web</code>（挡 CSRF）；否则 <code>403</code>/<code>415</code></td></tr><tr><td>路由鉴权表</td><td><code>src/routing.py</code> 按路径登记 <code>open</code> / <code>api</code> / <code>admin</code> 三级，分发前统一执行；未登记的 <code>/api/*</code> 默认要 Key。读接口（<code>/api/source</code>、<code>/api/trace</code>）不再因为是 GET 就放行</td></tr><tr><td>响应头</td><td>全站 <code>nosniff</code> / <code>X-Frame-Options: DENY</code> / <code>no-referrer</code>；HTML 额外带 CSP（仅本站资源，禁 iframe 与外部表单）</td></tr><tr><td>并发上限</td><td>最多 64 个并发连接，超出在 accept 阶段排队；SSE 每 15s 心跳、单次最长 300s</td></tr><tr><td>写锁</td><td>文件写入与乐观锁比较在同一把锁内；会话落盘串行化并对 Windows 共享冲突重试（并发写不再 500）</td></tr></tbody></table>
+<p>加上已有的 <code>trace.jsonl</code> / <code>/api/metrics</code> 观测与 <code>/api/health</code> 健康检查，共八项生产控制。</p>
+<blockquote>默认只绑定 <code>127.0.0.1</code>。<strong>「绑本机」不等于安全</strong>：浏览器里的任意页面都能向 <code>127.0.0.1</code> 发请求， 且对端 IP 就是本机。所以 v1.19.1 起写操作必须通过来源校验（<code>src/security.py</code>）， 不能只靠 IP 判断「是不是自己人」。要在局域网访问，务必同时设置 <code>ALLOWED_HOSTS</code> 与 <code>API_KEYS</code>。</blockquote>
+<h2 id="4-2-换成你自己的文档">4.2 换成你自己的文档</h2>
+<p>三种方式，按省事程度排序：</p>
+<table><thead><tr><th>方式</th><th>怎么做</th><th>适用</th></tr></thead><tbody><tr><td>页面上传</td><td><code>/kb</code> → 拖拽或选择 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code> / <code>.xlsx</code> / <code>.csv</code> / <code>.tsv</code>（可多选）→ 上传（审批通过后重建索引）</td><td>几份到几十份，含 PDF/Word/Excel</td></tr><tr><td>直接放文件</td><td>首次启动前放 <code>data/knowledge/</code>（作为 v0001 种子）；已启用版本库后放 <code>data/kb/versions/&lt;活动版本&gt;/files/</code>，再点「重建索引」</td><td>批量导入、离线准备</td></tr><tr><td>命令行批量</td><td><code>python -m src.pdf_ingest --raw data/raw</code>（见 4.3）</td><td>一次性导入大量 PDF</td></tr></tbody></table>
+<p>注意：</p>
+<ul>
+<li>文本上传 ≤512KB；PDF/DOCX ≤6MB；文件名做了目录穿越校验（显式拒绝 <code>../x.pdf</code>，不静默改名），文件头也校验（改后缀的假文件直接 400）；</li>
+<li>删除/覆盖走审批（<code>KB_APPROVAL=auto</code> 时本机管理员直通），且<strong>至少保留一份文件</strong>，避免把库删空导致服务起不来；</li>
+<li><code>data/kb/</code> 是版本库（运行时生成），<code>data/knowledge/</code> 只是首次初始化种子；两者别混用；</li>
+<li>每次发布都会生成 <code>versions/vNNNN</code>，可 <code>POST /api/kb/rollback_doc</code> 按文档回退，历史不会被改写；</li>
+<li>切领域时同时设 <code>APP_PROFILE=generic</code>，否则金融护栏（拒绝荐股）仍会生效；</li>
+<li>文档结构建议用 Markdown 标题分节：切分器按标题/条款切块，结构越清楚，召回越准。</li>
+</ul>
+<h2 id="4-3-pdf-docx-接入-上传即用-运行时仍零依赖">4.3 PDF / DOCX 接入（上传即用，运行时仍零依赖）</h2>
+<p><strong>不需要你手动转换</strong>：在知识库页上传后，服务端按扩展名分派解析器，转成 Markdown 再入库。</p>
+<pre><code>浏览器选文件 → base64 → POST /api/knowledge/upload_file
+  → 按扩展名分派：.pdf → pdf_ingest；.docx → docx_text
+  → 质量闸门 → 写入 data/knowledge/{pdf_|docx_}&lt;文件名&gt;.md
+  → 原始文件另存 data/raw/（便于复查与重建）→ 重建索引 → 返回页数/段落数/字数/新增块数</code></pre>
+<p>两套解析引擎，同一个入口（<code>src/pdf_ingest.py</code>）：</p>
+<table><thead><tr><th>解析器</th><th>适用</th><th>说明</th></tr></thead><tbody><tr><td><code>pypdf</code></td><td>PDF，已安装时优先（<code>.venv</code>）</td><td>兼容性最好</td></tr><tr><td><code>builtin</code>（pdf）</td><td>PDF，没装 pypdf 时自动兜底</td><td><code>src/pdf_text.py</code>，纯标准库：解对象流、Flate、ToUnicode CMap、文本算子</td></tr><tr><td><code>builtin-docx</code></td><td>DOCX，始终内置</td><td><code>src/docx_text.py</code>：ZIP + XML，按段落样式还原标题、表格转 Markdown 表</td></tr></tbody></table>
+<blockquote>内置引擎不是「凑合能跑」：在三份制度 PDF 上与 pypdf 的抽取结果<strong>逐字符一致</strong>（空白归一后相似度 1.0000）， 多页顺序、页数也一致。DOCX 走 ZIP+XML，天然零依赖：标题层级靠 <code>w:pStyle</code>（Heading1 / 标题 1）还原， 表格转 Markdown 表——<strong>切分器按标题切块，标题还原得准，召回才准</strong>。</blockquote>
+<p>命令行（离线批量，仍可用 pypdf）：</p>
+<pre><code class="lang-bash">python -m src.pdf_ingest --raw data/raw                    # 批量
+python -m src.pdf_ingest --file 某制度.pdf --out data/knowledge   # 单份
+python -m src.pdf_ingest --raw data/raw --engine builtin   # 强制内置解析
+PDF_ENGINE=builtin python -m src.server                    # 服务端也强制内置</code></pre>
+<p><strong>失败处理（都会被明确告知，不静默吞掉）</strong>：</p>
+<table><thead><tr><th>情况</th><th>结果</th></tr></thead><tbody><tr><td>扫描件/无文本层（PDF/DOCX）</td><td>422 + 「提取到 N 字…需要先做 OCR」，不入库</td></tr><tr><td>加密 PDF</td><td>422 + 「已加密，暂不支持」</td></tr><tr><td>假后缀 / 非 PDF、非 DOCX</td><td>400 + 「文件头不匹配」</td></tr><tr><td>超大文件</td><td>413</td></tr><tr><td>字体缺 Unicode 映射</td><td>仍入库，但返回 <code>note</code> 提示「约 N% 字符未解码，可能夹杂乱码」</td></tr><tr><td>同名文件</td><td>自动加 <code>_2</code> 后缀，<strong>不覆盖</strong>已有文档</td></tr><tr><td><code>.doc</code> 老格式</td><td>400 + 「先另存为 .docx」</td></tr></tbody></table>
+<p>边界：只还原<strong>文本层</strong>——扫描件要 OCR（未含）；加密文件直接拒绝；PDF 的表格结构不还原（DOCX 的表格会转成 Markdown 表）； 复杂排版（多栏/旋转、文本框、页眉页脚）按行级输出或直接不提取。真实制度文件建议先传一份，看一眼解析结果再批量导入。</p>
+<p>说明：<code>data/raw</code> 里的 3 份演示制度为<strong>模拟样本</strong>（已在文件内标注），监管摘录来自公开文件。</p>
+<p>自测（都不需要大模型 Key）：</p>
+<pre><code class="lang-bash">python tests/test_pdf_text.py     # 解析器单测：对象流 / 非 PDF / 加密
+python tests/test_pdf_upload.py   # PDF 端到端：扫描件被拒 → 上传 → 能答 → 删除
+python tests/test_docx_upload.py  # DOCX 端到端：上传 → 自动出题 → 运行 → 删文档后跳过
+python tests/test_table_ingest.py   # XLSX/CSV/TSV → Markdown → 切分 → 关键词
+python tests/test_jsonl_log.py      # 日志轮转 / 尾读正确性与大文件延迟
+python tests/test_http_transport.py # HTTP/1.1 保活、gzip、ETag/304、HEAD、SSE
+python tests/test_retrieval_order.py # 先判域后扩展：域外 0 次扩展</code></pre>
+<h2 id="4-4-文档用例-上传完自动出题-和基础集一起跑">4.4 文档用例：上传完自动出题，和基础集一起跑</h2>
+<p>上传完只验证「能答」不够——资料更新后答错才是真风险。所以每份文档可以<strong>自动出题</strong>， 生成的用例进 <code>tests/eval_cases_docs.jsonl</code>（<code>category=doc</code>），与基础集、反馈集一起跑。</p>
+<pre><code>知识库表格点「出题」→ POST /api/cases/from_doc {&quot;name&quot;: &quot;md 文件名&quot;, &quot;n&quot;: 3}
+  → 挑知识块（优先有数值/规范性措辞、章节分散）
+  → 出题：有 Key 用模型产出「问题 + 断言关键词」；无 Key 用数值锚点兜底
+  → 关键词必须在该块原文出现，否则丢弃（不允许假断言）
+  → 追加写入 eval_cases_docs.jsonl
+点「运行文档用例」/「运行全部」→ POST /api/cases/run {&quot;scope&quot;:&quot;docs&quot;|&quot;all&quot;}
+  → 写 tests/report_doc_cases.json，看板显示 通过数/失败原因/耗时</code></pre>
+<p>出题的两条路径：</p>
+<table><thead><tr><th>模式</th><th>触发</th><th>特点</th></tr></thead><tbody><tr><td><code>llm</code></td><td>通道有 Key（默认）</td><td>问题口语化、覆盖表格与条款；关键词经原文校验</td></tr><tr><td><code>heuristic</code></td><td>无 Key / 模型失败</td><td>只从<strong>含唯一数值</strong>的段落出题（金额/期限/比例/时限），宁可少出，不出假题</td></tr></tbody></table>
+<p>几个刻意加的约束（都是真踩过的坑）：</p>
+<ul>
+<li><strong>同类数值并列就跳过</strong>：表格里「3 个工作日 / 5 个工作日」随便挑一个出题，答对另一个也会被判失败——这种假失败比没有用例更糟。</li>
+<li><strong>删除文档后用例自动跳过</strong>（<code>skipped</code>），不算失败：否则你会看到一堆「资料未找到」的假红灯。</li>
+<li><strong>断言只锁事实</strong>：关键词比较忽略空白（<code>12.6万元</code> 与 <code>12.6 万元</code> 等价），不绑措辞。</li>
+</ul>
+<p>命令行等价（默认合并三类用例）：</p>
+<pre><code class="lang-bash">python tests/eval_run.py                 # 基础 + 反馈 + 文档用例
+python tests/eval_run.py --include-hard  # 再叠加难题集（诊断用）</code></pre>
+<p>实测：给一份 DOCX 制度出 3 条题（<code>12.6 万元</code> / <code>3 个工作日</code> / <code>2 年</code>）， 文档用例 <strong>3/3</strong>；「运行全部」基础 25 + 反馈 1 + 文档 3 = <strong>29/29</strong>，耗时约 282s（含查询扩展，<code>sleep=1</code>）。</p>
+<h2 id="4-5-界面与-文件-入口-v1-15-0">4.5 界面与「文件」入口（v1.15.0）</h2>
+<p>页面四页：<code>/ask</code> 问答、<code>/kb</code> 知识库、<code>/files</code> 文件、<code>/report</code> 汇报。已存内容不在设置抽屉里，入口固定两处：</p>
+<table><thead><tr><th>入口</th><th>位置</th><th>交互</th></tr></thead><tbody><tr><td>导航栏「文件」</td><td>右上角，主题/设置左侧</td><td>点开右侧抽屉：左列文件、右列正文；<code>Esc</code>、点遮罩、× 都能收起</td></tr><tr><td>直达地址 <code>/files</code></td><td><code>http://127.0.0.1:8000/files</code></td><td>独立页，可加书签、可被智能体直接打开</td></tr></tbody></table>
+<ul>
+<li>快捷键 <code>Ctrl/Cmd + Shift + F</code> 开合抽屉（焦点在输入框时不抢按键）。</li>
+<li>入口上的数字是篇数；<strong>红点</strong>表示「该备份了」，<strong>点红点只消提醒，不打开抽屉</strong>，</li>
+<p>导出成功后红点同样消失。</p>
+<li>为什么不做成客户端的按钮：WorkBuddy / Claude Desktop 的工具栏不开放自定义按钮。</li>
+<p>智能体那一侧走连接器（MCP），人这一侧走页面，两条路互不依赖。</p>
+</ul>
+<h2 id="4-6-真-embedding-与向量索引-可选-接口已隔离">4.6 真 embedding 与向量索引（可选，接口已隔离）</h2>
+<p>默认仍是零依赖的字符 n-gram 向量，保证 <code>git clone</code> 后不装任何东西就能跑。 配置 embedding 后，<code>RETRIEVAL=embedding</code> 走真语义召回。</p>
+<h3 id="选型-为什么是-openai-兼容协议-faiss">选型：为什么是「OpenAI 兼容协议 + FAISS」</h3>
+<table><thead><tr><th>决策</th><th>选择</th><th>理由</th></tr></thead><tbody><tr><td>模型协议</td><td>OpenAI 兼容 <code>POST {base}/embeddings</code></td><td>bge 用 TEI / Xinference / vLLM / Ollama 部署后都暴露同一路径；换模型只改环境变量，不改代码</td></tr><tr><td>模型</td><td>bge（中文优先）或 OpenAI embedding</td><td>中文制度/产品说明里「起购 vs 起点」这类同义改写，字符 n-gram 补不上，真 embedding 才能补</td></tr><tr><td>向量库</td><td><strong>FAISS</strong>（默认 <code>IndexFlatIP</code>）</td><td>语料是 10²~10⁵ 量级的内部文档，单进程只读、按版本整体重建；flat 是精确检索，持久化只有两个文件，不引入服务端</td></tr><tr><td>不选 Chroma</td><td>—</td><td>需要 collection/元数据过滤/多租户时才划算；它会带 sqlite/duckdb 等一串传递依赖，与本项目「小依赖、可离线」冲突。接口已隔离，将来加 <code>ChromaStore</code> 不影响检索层</td></tr><tr><td>加速器</td><td>NumPy / FAISS 均为可选</td><td>没装时自动退到纯 Python 精确内积；31 个块 × 1024 维的查询开销可忽略</td></tr></tbody></table>
+<h3 id="维度与索引配置">维度与索引配置</h3>
+<p><strong>维度不写死</strong>：首次构建时探测模型实际维度并写进 <code>manifest.json</code>；配置了 <code>EMBEDDING_DIM</code> 就做一致性校验，不一致直接报错（不截断、不补零）。这样换 bge 版本（512/768/1024）不会静默错配。</p>
+<pre><code class="lang-bash">EMBEDDING_PROVIDER=openai          # none | openai | bge（bge 走同一协议）
+EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=0                    # 0=自动探测；已知维度时填上可提前校验
+EMBEDDING_BATCH=16
+EMBEDDING_TIMEOUT_S=8
+EMBEDDING_MAX_RETRIES=2
+EMBEDDING_BUILD_BUDGET_S=600        # 建库预算，与单次查询的 30s 分开
+EMBEDDING_INDEX_DIR=data/index
+VECTOR_STORE=auto                  # auto | pure | numpy | faiss | faiss-ivf
+VECTOR_IVF_NLIST=64
+VECTOR_IVF_NPROBE=8
+RETRIEVAL=embedding</code></pre>
+<p><strong>规模上限（实测，本机 Python 3.13）</strong>：没有 numpy/faiss 时走纯 Python 点积， 5000 块 × 1024 维约 <strong>186 ms/查询</strong>，20k 块约 750 ms，而且 GIL 下并发会线性变差。 默认的 hash 向量路径（<code>RETRIEVAL=vector</code>）5000 块只要约 18 ms，不受这个限制影响。 所以：<strong>纯后端建议 ≤2k 块</strong>；再大就装 numpy/faiss，或把 <code>EMBEDDING</code> 换成本机模型端点 + <code>VECTOR_STORE=faiss</code>。这不是「慢一点」，是单次问答里多出半秒以上的等待。</p>
+<p>索引文件（<code>data/index/&lt;model&gt;/</code>）：</p>
+<table><thead><tr><th>文件</th><th>内容</th></tr></thead><tbody><tr><td><code>manifest.json</code></td><td>模型、维度、度量（cosine）、语料指纹、后端、块数、构建用量</td></tr><tr><td><code>vectors.jsonl</code></td><td>L2 归一化后的向量；换后端不必重新 embedding</td></tr><tr><td><code>index.faiss</code></td><td>FAISS 索引（可选，加载更快）</td></tr><tr><td><code>embeddings.cache.jsonl</code></td><td>按 `model</td><td>dim</td><td>text` 哈希缓存，知识库小改只重算变化块</td></tr></tbody></table>
+<p>索引策略：</p>
+<ul>
+<li><strong>指纹失效</strong>：manifest 的 fingerprint 覆盖「模型 + 每块 id/正文哈希」，知识库或模型一变就自动重建；</li>
+<li><strong>flat vs IVF</strong>：<code>faiss-ivf</code> 只在 <code>N ≥ nlist × 30</code> 时启用，否则训练样本不足会退化/报错，自动回退 flat 并在 manifest 记明；</li>
+<li><strong>nlist/nprobe</strong>：经验值 <code>nlist ≈ 4√N</code>，<code>nprobe</code> 从 8 起调；本演示 31 块用 flat，不引入训练误差；</li>
+<li><strong>查询缓存</strong>：同一问题 128 条 LRU，评测重跑/多轮追问不重复计费。</li>
+</ul>
+<h3 id="迁移步骤-可回滚">迁移步骤（可回滚）</h3>
+<ol>
+<li>起一个 OpenAI 兼容的 embedding 端点（TEI / Xinference / Ollama 均可），确认 <code>curl {base}/embeddings</code> 返回向量；</li>
+<li>设置上面的环境变量，先 <strong>不要</strong> 改 <code>RETRIEVAL</code>；</li>
+<li><code>python tools/build_index.py --rebuild --check "大额存单可以转让吗"</code>，确认 <code>dim</code>、<code>backend</code>、抽查命中；</li>
+<li>跑 <code>python tests/eval_retrieval.py</code> 对比 R@1 / MRR，<strong>有增益再切</strong>；</li>
+<li>改 <code>RETRIEVAL=embedding</code> 并重启；观察 <code>/api/health</code> 的 <code>retrieval_detail.index_status</code>；</li>
+<li>回滚：把 <code>RETRIEVAL</code> 改回 <code>vector</code> 或 <code>bm25</code>，无需删索引；索引坏了下一次启动会自动重建。</li>
+</ol>
+<p>未配置模型、服务不可达、超时、维度不一致时：<strong>查询当次回退词法检索</strong>，答案标 <code>degraded</code>，<code>/api/health</code> 暴露 <code>fallback_error</code>；不会让服务起不来，也不会静默返回空结果。</p>
+<h2 id="4-7-多实例-redis-共享状态-集中日志与指标">4.7 多实例：Redis 共享状态 + 集中日志与指标</h2>
+<p>单实例时状态在进程内，重启即丢；多实例时会出现「每个实例各限各的、幂等只在单机生效、预算各算一份」。配置 <code>REDIS_URL</code> 后，三类<strong>共享状态</strong>切到 Redis：</p>
+<table><thead><tr><th>能力</th><th>Redis 结构</th><th>原子性</th><th>TTL</th></tr></thead><tbody><tr><td>限流</td><td><code>rag:rl:&lt;ip&gt;</code> Hash（tokens/ts）</td><td>Lua 脚本原子执行；时间取 Redis <code>TIME</code>，不依赖各实例时钟</td><td><code>burst/rps + 60s</code></td></tr><tr><td>幂等</td><td><code>rag:idem:&lt;key&gt;</code> String</td><td><code>SET NX PX</code>，先写入者生效</td><td><code>IDEMPOTENCY_TTL_S</code></td></tr><tr><td>成本</td><td><code>rag:cost:&lt;date&gt;</code> Integer</td><td><code>INCRBY</code> 原子累加</td><td>2 天</td></tr></tbody></table>
+<pre><code class="lang-bash">REDIS_URL=redis://:password@127.0.0.1:6379/0
+REDIS_TIMEOUT_S=1.5
+REDIS_PREFIX=rag</code></pre>
+<p><strong>故障策略</strong>：Redis 不可用时回退进程内实现（仍有限流，不是放行），30 秒冷却后再试；<code>/api/health.guards</code> 返回 <code>backend</code>、<code>redis_ok</code>、<code>redis_error</code>、各能力的 <code>fallbacks</code> 计数与 <code>last_errors</code>。健康检查里能看见降级，才算真的可运维。</p>
+<p><strong>审计日志</strong>：<code>LOG_SINK=file|stdout|both</code>。<code>stdout</code> 每行一个 JSON，字段含 <code>event=audit</code>、<code>service</code>、<code>instance</code>、<code>request_id</code>、<code>action</code>、<code>trace_id</code>，可直接被 Fluent Bit / Vector 采集：</p>
+<pre><code class="lang-json">{&quot;ts&quot;:&quot;2026-10-20T09:00:00+00:00&quot;,&quot;event&quot;:&quot;audit&quot;,&quot;service&quot;:&quot;doc-qa&quot;,&quot;instance&quot;:&quot;host:1234&quot;,&quot;action&quot;:&quot;ask&quot;,&quot;request_id&quot;:&quot;...&quot;,&quot;trace_id&quot;:&quot;...&quot;,&quot;behavior&quot;:&quot;answer&quot;,&quot;tokens&quot;:812}</code></pre>
+<p><strong>指标</strong>：<code>GET /metrics</code> 输出 Prometheus 文本格式（<code>rag_ask_total</code>、<code>rag_ask_duration_seconds</code>、<code>rag_rate_limited_total</code>、<code>rag_idempotent_replay_total</code>、<code>rag_tokens_total</code>、<code>rag_retrieval_degraded_total</code>、<code>rag_kb_version</code>、<code>rag_index_chunks</code>）。金额只在配置 <code>TOKEN_PRICE_PER_1K</code> 后计算——不内置任何供应商价格。</p>
+<p>采集配置示例见 <code>deploy/prometheus.yml</code> 与 <code>deploy/fluent-bit.conf</code>；多实例由 Prometheus 按 <code>instance</code> 聚合，不在应用内做跨实例汇总。</p>
+<h2 id="4-8-知识库版本-审批与文档级回滚">4.8 知识库版本、审批与文档级回滚</h2>
+<p><code>data/kb/</code> 是运行时版本库（已加入 <code>.gitignore</code>），<code>data/knowledge/</code> 只作为首次初始化的种子：</p>
+<pre><code>data/kb/
+├─ state.json                 # {&quot;active&quot;:&quot;v0003&quot;,&quot;next_version&quot;:4,...}
+├─ versions/v0001/
+│  ├─ manifest.json           # 作者、来源、每份文档 sha256
+│  └─ files/*.md
+├─ versions/v0002/...
+├─ pending/chg_0001/          # 待审批：request.json + 暂存文件
+│  └─ request.json
+└─ changes/chg_0001.json      # 已审批/已拒绝的历史（只增不改）</code></pre>
+<p>三条不变量：</p>
+<ol>
+<li><strong>版本只增不改</strong>：回滚不是把指针拨回去，而是用旧内容生成新版本，历史可追溯（谁、何时、从哪个版本恢复）；</li>
+<li><strong>激活原子</strong>：版本目录写完后才 <code>os.replace</code> 更新 <code>state.json</code>，读侧不会看到半成品；</li>
+<li><strong>按文档回滚</strong>：只替换目标文件，其余文档保持当前版本，避免「为回滚一份文档把别人刚发布的也退回去」。</li>
+</ol>
+<pre><code class="lang-bash">KB_STORE=on
+KB_DIR=data/kb
+KB_SEED_DIR=data/knowledge
+KB_APPROVAL=auto        # auto=本机管理员直通，其他来源走审批 | on=全部审批 | off=全部直通</code></pre>
+<p>审批流（<code>KB_APPROVAL=on</code> 时）：</p>
+<pre><code class="lang-bash"># 1) 上传 -&gt; 生成待审批变更，不进检索
+curl -s -X POST localhost:8000/api/knowledge/upload \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;name&quot;:&quot;04_采购制度.md&quot;,&quot;content&quot;:&quot;# 采购制度\n\n## 一、审批\n\n采购合同由财务负责人签字。\n&quot;}&#x27;
+# -&gt; {&quot;ok&quot;:true,&quot;pending&quot;:true,&quot;change_id&quot;:&quot;chg_0001&quot;,&quot;version&quot;:&quot;v0001&quot;}
+
+# 2) 管理员审批 -&gt; 生成 v0002 并重建索引
+curl -s -X POST localhost:8000/api/kb/approve \
+  -H &quot;X-Admin-Token: $ADMIN_TOKEN&quot; -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;change_id&quot;:&quot;chg_0001&quot;}&#x27;
+
+# 3) 按文档回滚到 v0001（只回滚这一份）
+curl -s -X POST localhost:8000/api/kb/rollback_doc \
+  -H &quot;X-Admin-Token: $ADMIN_TOKEN&quot; -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;name&quot;:&quot;04_采购制度.md&quot;,&quot;to_version&quot;:&quot;v0001&quot;}&#x27;</code></pre>
+<p>版本/审批接口：<code>GET /api/kb/versions</code>、<code>GET /api/kb/changes?status=pending|approved|rejected</code>、<code>GET /api/kb/doc_history?name=...</code>、<code>POST /api/kb/approve|reject|rollback_doc</code>。审批与回滚都写审计日志；<code>KB_APPROVAL=auto</code> 时本机管理员上传仍会自动生成版本（有历史可回滚），只是不排队。</p>
+<h2 id="4-9-关键词直出-命中条目就本地返回-不调用模型">4.9 关键词直出：命中条目就本地返回，不调用模型</h2>
+<p>这条路径解决的是「问题根本不需要模型」的情况：用户上传的是清单、档案、标签类文档， 答案就是原文里的某一行，走检索 + 生成只会更慢、更贵，还可能被改写。</p>
+<p><strong>场景</strong>：小a 上传 <code>小a的生活习惯.md</code>，里面有爱吃/不吃/忌口/作息/爱好/宠物。 系统抽出 42 个条目；问「我不吃香菜」命中「香菜」，直接返回原文那一行与出处， <strong>0 次 API 调用</strong>；问「今天天气怎么样」不命中，回退到正常检索。</p>
+<pre><code class="lang-text">Q: 我不吃香菜
+路径=本地关键词 · 模式=keyword_local · 调用API=否 · 0.1 ms
+· 不吃的食物：香菜、动物内脏、苦瓜
+出处: [1] 小a的生活习惯·一、饮食偏好</code></pre>
+<h3 id="抽什么-什么时候直出">抽什么、什么时候直出</h3>
+<table><thead><tr><th>来源</th><th>例子</th><th>直出</th></tr></thead><tbody><tr><td>清单项</td><td><code>- 爱吃的食物：火锅、寿司、拿铁</code></td><td>✓ 每项 + 标签都可命中</td></tr><tr><td>表格行</td><td>表头「起购金额」、单元格「1 元」</td><td>✓ 标签作为条目</td></tr><tr><td>标签值</td><td><code>起床时间：早上 7:30</code></td><td>✓</td></tr><tr><td><code>## 关键词</code> 段</td><td>逗号/顿号分隔的词</td><td>✓ 权重最高</td></tr><tr><td>章节标题</td><td><code>## 三、个人爱好</code></td><td>✗ 只用于展示与召回提示</td></tr><tr><td>普通句子</td><td>「风险等级越高，波动越大」</td><td>✗ 只走检索</td></tr></tbody></table>
+<p>只认<strong>精确包含</strong>（词或同义词），不做模糊近似：关键词直出的错误代价比「多走一次 RAG」高得多。 因此制度类文档的常规问题不会被截胡——<code>test_keywords.py</code> 里有专门的回归用例守着这条线。 个人偏好类条目的核心词（「喜欢的音乐」→「音乐」）只在第一人称提问时生效， 「明天天气」不会因为文档里有「讨厌的天气」被截胡。</p>
+<h3 id="命中之后的四道闸门">命中之后的四道闸门</h3>
+<p>命中不等于直出。下面四道闸门（<code>KEYWORD_GUARD=on</code>，可关掉做 A/B）在 v1.5.0 加入， 对应的是实测翻车现场，不是纸面规则：</p>
+<table><thead><tr><th>闸门</th><th>触发例子</th><th>处理</th><th>记录</th></tr></thead><tbody><tr><td>否定作用域</td><td>「我<strong>不</strong>爱吃香菜」里的「爱吃」</td><td>该次出现不算命中</td><td><code>negated</code></td></tr><tr><td>极性冲突</td><td>「爱吃的食物」与「不吃的食物」同时命中</td><td>按问句极性只留一侧</td><td><code>polarity_conflict</code></td></tr><tr><td>解释型意图</td><td>「我<strong>为什么</strong>不能吃香菜」</td><td>整条交检索生成</td><td><code>keyword_gate=explain_intent</code></td></tr><tr><td>单文档收敛</td><td>命中跨两份文档</td><td>只取得分最高的那份</td><td><code>other_doc</code></td></tr></tbody></table>
+<p>被挡下的词写入响应的 <code>keyword_rejected</code>，并计入 <code>rag_keyword_rejected_total{reason}</code> 与 <code>rag_keyword_gate_total{gate}</code>—— 规则是在救火还是误伤，看指标，不靠感觉。</p>
+<p><code>tests/eval_keyword.py</code> 是这套规则的标尺：13 条应直出用例全部命中，9 条不应直出用例 0 误伤， 其中 2 条被解释型闸门主动挡下（而不是碰巧不命中）。</p>
+<h3 id="接了-api-之后-只增强-不替换">接了 API 之后：只增强，不替换</h3>
+<p>每份文档在上传/重建时做<strong>一次</strong>模型整理：</p>
+<ul>
+<li>生成 ≤60 字摘要，展示在知识库关键词面板；</li>
+<li>生成 6~16 个关键词与同义说法（「咖啡」→「拿铁」、「芫荽」→「香菜」），补词面差异；</li>
+<li><strong>term 必须在原文出现</strong>，snippet 一律从原文截取，模型不提供答案句子；</li>
+<li>解析失败 / 超时 / 429：保留本地条目，失败原因写 <code>/api/health.keywords.error</code>，不影响上传；</li>
+<li>按文档内容 hash 缓存，语料没变不重复调用；<code>KEYWORD_LLM=off</code> 可完全关掉。</li>
+</ul>
+<h3 id="不通过-api-返回-是怎么保证的">「不通过 API 返回」是怎么保证的</h3>
+<p>命中后直接 <code>return</code>，不经过查询扩展、embedding 召回、生成与补引用四步：</p>
+<table><thead><tr><th>字段 / 观测</th><th>命中时</th></tr></thead><tbody><tr><td><code>path</code></td><td><code>keyword</code></td></tr><tr><td><code>mode</code></td><td><code>keyword_local</code></td></tr><tr><td><code>api_called</code></td><td><code>false</code></td></tr><tr><td><code>usage</code></td><td>空</td></tr><tr><td>响应头</td><td><code>X-Answer-Path: keyword</code></td></tr><tr><td>指标</td><td><code>rag_keyword_hit_total</code>、<code>rag_answer_path_total{path="keyword"}</code>、<code>rag_local_answer_total</code></td></tr></tbody></table>
+<p>验证不是靠肉眼：<code>tests/test_keywords.py</code> 起了一个假模型端点，统计请求数， 断言「命中前后请求数不变」；同时断言回退路径确实调用了模型。</p>
+<h3 id="跑一遍">跑一遍</h3>
+<pre><code class="lang-bash">python tools/keyword_demo.py                  # 小a 场景：抽取 → 命中 → 本地输出
+python tools/keyword_demo.py --show-entries   # 打印每条关键词及原文片段
+python tests/eval_keyword.py                  # 标注集：应直出 / 不应直出
+python tests/bench_keyword.py                 # 倒排索引 vs 线性扫描</code></pre>
+<p>页面上的入口：知识库页「关键词」列（点击展开词表）；问答页命中时显示「本地直出 · 未调用模型」。</p>
+<h3 id="边界">边界</h3>
+<ul>
+<li>同义词只解决<strong>词面差异</strong>，不解决跨段推理；需要比较、计算、归纳的问题仍走 RAG。</li>
+<li>清单里的单字项（如「辣」）只在白名单内接受，避免「的/了」这类字误触发。</li>
+<li>否定只处理命中位置前 3 个字的简单否定；双重否定、反问、跨句否定仍可能判错，</li>
+<p>这类问法建议用 <code>KEYWORD_GUARD=off</code> 对照一轮再决定是否放行。</p>
+<li>极性规则依赖「喜欢/不喜欢/忌口」这类词面前缀；文档若用「谢绝」「不宜」等未收录说法，</li>
+<p>条目会退化为中性，不会被误挡，但也享受不到极性消解。</p>
+<li>关键词索引按文档 hash 全量重算条目（本地抽取很便宜）；模型整理只对新增/变更文档调用一次。</li>
+<li>没有 API Key 时只有本地条目，没有摘要和同义词；这是可用性差异，不是静默降级。</li>
+</ul>
+<h2 id="4-10-流式-多轮与引用原文-v1-6-0">4.10 流式、多轮与引用原文（v1.6.0）</h2>
+<h3 id="流式输出">流式输出</h3>
+<p>问答页默认请求 <code>POST /api/ask/stream</code>，服务端以 SSE 推送：</p>
+<table><thead><tr><th>事件</th><th>含义</th><th>前端动作</th></tr></thead><tbody><tr><td><code>delta</code></td><td>生成中的文本增量</td><td>追加到答案区</td></tr><tr><td><code>replace</code></td><td>上游中断，整段降级为抽取式</td><td>替换已渲染的文本</td></tr><tr><td><code>final</code></td><td>完整结果（含引用、校验后的答案）</td><td>用正式答案卡替换，绑定反馈与引用</td></tr></tbody></table>
+<p>生成中发送按钮变为「停止」，<code>AbortController</code> 中断请求；服务端写失败即停止。 流式不重试半截答案：上游在 <code>[DONE]</code> 前断开会被识别为截断，整体降级并让前端替换。</p>
+<h3 id="多轮会话">多轮会话</h3>
+<p><code>session_id</code> 由前端生成并存 <code>sessionStorage</code>，服务端只保留最近 3 轮（30 分钟过期、最多 1000 个会话）。 只有指代/省略式追问（「那 R2 呢」「还有呢」）才把上一轮问题拼进检索问题，独立问题不拼， 避免「R2 需要双录吗」被上一轮带偏。<code>context_query</code> 会写进响应与 trace，可复核。</p>
+<p>边界：会话存在单实例内存里；多实例部署需要把它换到 Redis，否则负载均衡后追问可能落到另一台。</p>
+<h3 id="引用原文">引用原文</h3>
+<p>每条 citation 带 <code>doc_id</code>、<code>chunk_index</code>、<code>version</code>、<code>snippet</code>。问答页的 <code>[n]</code> 是可点击按钮， 调用 <code>/api/source</code> 打开右侧原文抽屉，展示完整知识块并高亮命中行；不做文件路径拼接， 只接受当前索引里真实存在的块，越界返回 404。</p>
+<h3 id="审批界面">审批界面</h3>
+<p>知识库页顶部展示待审批变更（作者、文件动作、风险提示），「查看 diff」调用 <code>/api/kb/change</code> 展示统一 diff；「通过 / 驳回」直接调用审批接口。每份文档新增「历史」， 可查看版本列表并回滚。配置 <code>ADMIN_TOKEN</code> 时，审批面板会出现令牌输入框（存 sessionStorage）。</p>
+<h3 id="未命中">未命中</h3>
+<p>不再提交工单：统一返回「无法找到答案。」，同时保留相似问题。<code>/api/handoff</code> 与工单表单已删除。</p>
+<h2 id="4-11-传输-日志与表格入库-v1-7-0">4.11 传输、日志与表格入库（v1.7.0）</h2>
+<h3 id="http-传输层">HTTP 传输层</h3>
+<table><thead><tr><th>项</th><th>之前</th><th>现在</th></tr></thead><tbody><tr><td>协议</td><td>HTTP/1.0，每请求新建连接</td><td>HTTP/1.1 + 定长响应，连接可复用</td></tr><tr><td>压缩</td><td>无，<code>/ask</code> 整页 51 KB</td><td>gzip，51 KB → 15.5 KB（省 70%）</td></tr><tr><td>缓存</td><td>无校验，每次都重新下发</td><td>弱 ETag + <code>304</code>，内容没变回 0 字节正文</td></tr><tr><td>JSON</td><td>无缓存头</td><td><code>Cache-Control: no-store</code></td></tr><tr><td>HEAD</td><td>501</td><td>200（复用 GET 路由，不返回正文）</td></tr></tbody></table>
+<p>实现在 <code>Handler._send</code> 一个出口里完成：任何路由都不会漏压缩、漏 <code>Content-Length</code>。 gzip 只压 <code>text/*</code> 与 <code>application/json</code>，小于 512 字节不压（省下的还不够压缩头）。 ETag 取内容 sha256 前 20 位并标 <code>W/</code>，这样同一内容在压缩/未压缩两种表示下命中同一个校验值。</p>
+<p><strong>没做</strong>：把内联 CSS/JS 抽成带 hash 的独立静态资源。当前方案已拿到主要收益（首屏 -70%、重复访问 0 字节）， 拆资源要改页面骨架与构建流程，收益递减，留到后面按需再做。</p>
+<h3 id="日志轮转与尾读">日志轮转与尾读</h3>
+<p><code>logs/*.jsonl</code> 改成「写时轮转 + 读时尾读」：</p>
+<ul>
+<li>单文件超过 <code>LOG_MAX_BYTES</code>（默认 16 MB）转成 <code>.1</code>，最老的 <code>.3</code> 删除，<code>LOG_KEEP</code> 控制份数；</li>
+<li><code>/api/metrics</code>、<code>/api/audit</code>、<code>/api/trace</code> 从文件尾部按 64 KB 反向读取，凑够行数即停。</li>
+</ul>
+<p>实测 37 MB trace：<code>summarize(1000)</code> <strong>11 ms</strong>，全量读取 86 ms；文件越大差距越大，且内存占用不再随运行时长增长。</p>
+<h3 id="判域前置-扩展后置">判域前置、扩展后置</h3>
+<p>查询扩展要付一次 LLM + 一次 embedding。旧顺序是「先扩展、再判域」，域外问题也要付这笔钱。 现在先用原问题检索并过闸门，通过之后才扩展；扩展结果只在分数更高时替换原结果。 域外问题因此少 1 次 LLM + 1 次 embedding。扩展调用本身失败会降级为原问题检索 （<code>expansion_error</code> 写入 trace），不再让整个问答 500。</p>
+<h3 id="答案元信息与未命中反馈">答案元信息与未命中反馈</h3>
+<p>答案脚注显示：知识库版本、引用条数、引用覆盖率、检索分，以及原有的通道/模型、模式、耗时、降级原因。 未命中显示「最高分 / 阈值」，让人知道差多远，而不是只给一句「无法找到答案」。</p>
+<p>未命中的反馈从「有用 / 没用」改成「应该怎么答 + 哪份文档有答案」，字段写入 <code>logs/feedback.jsonl</code> （<code>expected</code> / <code>document</code> / <code>behavior</code> / <code>query</code> / <code>kb_version</code>），可直接转评测用例或补文档。</p>
+<h3 id="会话历史与导出">会话历史与导出</h3>
+<p>对话存 <code>localStorage</code>（最近 40 轮，单条答案截断 6000 字），刷新后恢复最近 12 轮； 「导出 Markdown」把问题、答案、引用与元信息写成可归档的 <code>.md</code>。清空对话会同时清掉本地记录。 这是「回看 / 导出」的历史，与服务端 3 轮上下文（用于追问改写）是两件事，互不替代。</p>
+<h3 id="表格入库-xlsx-csv-tsv">表格入库（xlsx / csv / tsv）</h3>
+<ul>
+<li>xlsx 用标准库解 zip + XML（<code>sharedStrings</code> + <code>worksheet</code>），不引第三方库；</li>
+<li>每个工作表转成一个 Markdown 表格，按<strong>整行</strong>入库：直出答案是 <code>产品名称：稳盈 Plus 30 天 · 起购金额：1000 元 · 风险等级：R2</code>，不会把管道符原样吐出来；表头也能命中（问「起购金额」给第一行数据）；</li>
+<li>csv/tsv 先试 UTF-8，再退 GB18030（Excel 导出的中文 CSV 多是 GBK）；</li>
+<li>单元格里的 <code>|</code> 会转义，不会撑坏表结构；只有表头没有数据行的工作表跳过并提示。</li>
+</ul>
+<p><strong>边界</strong>：不解析样式，日期显示为序列号、合并单元格只在左上角有值。需要保留格式就另存为 CSV。 扫描件 PDF 的提示改为可操作步骤（先 OCR、另存为 docx/txt 再上传），响应带 <code>need_ocr</code>。</p>
+<h2 id="4-12-后台重建-深色模式与开放接口-v1-8-0">4.12 后台重建、深色模式与开放接口（v1.8.0）</h2>
+<h3 id="后台-增量重建索引">后台 + 增量重建索引</h3>
+<p>上传 / 删除 / 审批通过后，接口只等版本落盘就返回，索引在后台线程里构建：</p>
+<pre><code class="lang-text">POST /api/knowledge/upload  → 约 100ms 返回 {rebuilding:true, chunks:null}
+                              后台：解析变更文件 → 重建检索器/关键词 → 原子替换
+GET  /api/health            → index.rebuilding=false, last_ms, parsed_docs, reused_docs</code></pre>
+<ul>
+<li><strong>重建期间继续服务</strong>：旧索引不会被清空，问答照常；代价是新文档有短暂的「已入库但还搜不到」窗口（本机 31 块约 15 ms，600 文档按 embedding 耗时而定）。</li>
+<li><strong>只重读变更文件</strong>：<code>load_corpus</code> 用文件 <code>mtime+size</code> 做签名，未变的文档复用上次分块；实测改一份文档时「解析 1 / 复用 3」。</li>
+<li><strong>连续触发合并</strong>：重建中再次上传只置 <code>pending</code>，同一个线程跑完当前轮再跑一轮，不并发重建、不为每次上传起线程。</li>
+<li><strong>失败可见</strong>：构建异常写入 <code>index.last_error</code>，旧索引继续服务；知识库页轮询到失败会提示，不静默。</li>
+<li><strong>开关</strong>：<code>KB_ASYNC_RELOAD=off</code> 回到同步语义（测试与批量导入用）。</li>
+</ul>
+<h3 id="汇报页缓存与版本硬链接">汇报页缓存与版本硬链接</h3>
+<p><code>collect()</code> 原来每次重算评测汇总、知识库统计与 trace 指标。现在用签名缓存：</p>
+<table><thead><tr><th>输入</th><th>是否参与签名</th><th>说明</th></tr></thead><tbody><tr><td>知识库文件 <code>mtime/size</code></td><td>是</td><td>上传、审批、回滚都会改文件</td></tr><tr><td><code>tests/*.json</code>、<code>eval_cases*.jsonl</code></td><td>是</td><td>跑完评测立即刷新</td></tr><tr><td>检索配置（<code>top_k</code> / 阈值等）</td><td>是</td><td>配置变了数字含义也变</td></tr><tr><td><code>logs/trace.jsonl</code></td><td>否，用 TTL</td><td>每问一次都变，参与签名就永不命中；<code>REPORT_CACHE_TTL</code> 默认 60s</td></tr></tbody></table>
+<p>实测 <code>collect</code> 32.9 ms → <strong>0.87 ms</strong>，<code>/report</code> 整页 53 ms → <strong>16 ms</strong>（剩余是 HTML 渲染与 gzip）。</p>
+<p>版本目录改为<strong>硬链接 + 保留策略</strong>：未变更文件直接 <code>os.link</code> 到上一版，新版本磁盘增量只等于改动量； 不支持硬链接的文件系统（跨盘、FAT/exFAT）自动回退为复制。硬链接还保留了原 <code>mtime</code>，增量重建才能认出「这份没变」。 <code>KB_KEEP_VERSIONS</code>（默认 30，0=不清理）保留最近 N 版，活动版本与待审批变更的基线版本永不删除。</p>
+<h3 id="深色模式-减动效与图标">深色模式、减动效与图标</h3>
+<ul>
+<li>导航右侧一键切换，选择存 <code>localStorage</code>；<code>&lt;head&gt;</code> 里的前置脚本在 CSS 之前设好 <code>data-theme</code>，不闪白。</li>
+<li>深色令牌覆盖背景、卡片、表格、表单、语义色与汇报页；不是简单反色，正文对比度仍满足 AA。</li>
+<li><code>prefers-reduced-motion: reduce</code> 时把动画/过渡压到 0.01 ms、关闭平滑滚动，照顾前庭敏感用户。</li>
+<li>反馈按钮的 emoji 换成与全站一致的 1.7 描边 SVG，不再出现「一半图标一半表情」。</li>
+<li>汇报页导出同样带主题切换，离线打开也能用。</li>
+</ul>
+<h3 id="api-key-与-openapi">API Key 与 OpenAPI</h3>
+<pre><code class="lang-bash">API_KEYS=web:sk_live_xxx,ci:sk_test_yyy   # 名字:密钥；也可只写密钥</code></pre>
+<ul>
+<li>配置后 <code>/api/ask</code> 与 <code>/api/ask/stream</code> 必须带 <code>Authorization: Bearer &lt;key&gt;</code> 或 <code>X-API-Key: &lt;key&gt;</code>；</li>
+<p>未配置时保持开放（按 IP 限流），不破坏本地演示。</p>
+<li>校验用 <code>hmac.compare_digest</code>；401 带 <code>WWW-Authenticate: Bearer</code>；审计只记 Key 名字与末 4 位，不记密钥本身。</li>
+<li>限流、灰度、成本统计的身份从 IP 换成 <code>key:&lt;name&gt;</code>，多调用方互不挤占；Prometheus 增加</li>
+<p><code>rag_api_tokens_total{key}</code> 与 <code>rag_api_cost_usd_total{key}</code>。</p>
+<li>问答页检测到 <code>auth.mode=key</code> 时显示 Key 输入条（存 <code>sessionStorage</code>，关标签页即清），401 会自动展开。</li>
+<li><code>GET /openapi.json</code> 输出 OpenAPI 3.0.3：64 个路径 / 78 个方法（其中 46 个标 <code>x-internal</code>：页面专用，登记只为方法表有单一来源）、请求/响应 schema、两种鉴权方案，以及当前实例的</li>
+<p><code>x-retrieval</code> / <code>x-model</code>，可直接导入 Postman / Apifox / Swagger UI。</p>
+</ul>
+<h3 id="两页-playwright-e2e">两页 Playwright E2E</h3>
+<p><code>tests/e2e_pages.mjs</code> 会自己起服务（随机端口、离线模式），逐页检查：</p>
+<ul>
+<li>HTTP 200、标题、关键选择器、2 项导航、数据加载完成；</li>
+<li>1280px 与 390px 都没有横向溢出；</li>
+<li>控制台无报错（过滤 favicon 等噪声）；</li>
+<li>深色模式切换生效、刷新后保持，卡片不再是白底；</li>
+<li><code>prefers-reduced-motion</code> 下过渡被压到近零、平滑滚动关闭。</li>
+</ul>
+<pre><code class="lang-bash">npm i playwright-core          # 开发期依赖，不进运行时
+node tests/e2e_pages.mjs       # 没装浏览器会明确 SKIP</code></pre>
+<p><strong>取舍</strong>：E2E 依赖本机 Edge/Chrome 或 CI 安装的 Chromium；没有浏览器时跳过而不是失败， 避免「零依赖」项目因为测试工具装不上而红。CI 单独一个 job 安装 Chromium 后强制执行。</p>
+<h2 id="4-13-智能体笔记-对话-个人笔记-v1-10-起-v1-12-补齐四条通道">4.13 智能体笔记：对话 → 个人笔记（v1.10 起，v1.12 补齐四条通道）</h2>
+<p>目标：让任意智能体把对话里<strong>值得留下的那几段</strong>整理成一篇结构化笔记，落到你自己的目录， 人能离线看改，下一个智能体直接读同一份文件——内容在智能体之间流动，靠的是文件而不是某个平台。</p>
+<h3 id="存储结构-文件是唯一真相">存储结构（文件是唯一真相）</h3>
+<pre><code>NOTE_HOME（默认 ~/agent-notes，可用环境变量或 --home 覆盖）
+├─ notes/2026/10/20261024-205142-5fc510.md   # 一篇笔记 = 一个文件，路径即时间线
+├─ assets/&lt;id&gt;/                              # 附件（大代码块等）
+├─ index/notes.jsonl                         # 派生索引，删了会自动重建
+├─ exports/                                  # 导出的单文件（HTML / JSON）
+├─ .trash/                                   # 软删除，可找回
+└─ AGENTS.md                                 # 给智能体读的接入说明（首次初始化自动写入）</code></pre>
+<p>一篇笔记长这样（front matter 固定字段 + 六段正文，缺段省略，多出的小节原样保留）：</p>
+<pre><code class="lang-markdown">---
+schema: note/v1
+id: 20261024-205142-5fc510
+title: 出口退税申报口径确认
+created: 2026-10-24T20:51:42+08:00
+updated: 2026-10-24T20:51:42+08:00
+kind: decision
+status: draft
+tags: [税务, 出口退税]
+source:
+  agent: claude-desktop
+  messages: 4
+digest: rule
+hash: sha256:ec4a19c1…
+---
+
+## 摘要
+根据办法第十二条，退税率按出口货物适用税率执行，2026-11-01 起统一按 13% 执行；决定由财务部在每月 5 日前复核。
+
+## 决策
+- 决定由财务部在每月 5 日前复核。
+
+## 待办
+- [ ] 财务部复核申报表；
+
+## 引用
+- https://example.com/policy</code></pre>
+<p>三个设计点：</p>
+<ul>
+<li><strong>索引只是缓存</strong>：<code>index/notes.jsonl</code> 删掉、改坏、被人清空都不丢数据；<code>notes list</code> 会扫盘重建，条数以磁盘 <code>.md</code> 为准。</li>
+<li><strong>手改优先</strong>：你用任意编辑器改标题、加小节、删段落，下次读就是新内容（按 <code>mtime+size</code> 自动刷新索引）；front matter 写坏也不会报错，会降级成 <code>external: true</code> 继续能读。</li>
+<li><strong>重复内容不重复落盘</strong>：<code>hash</code> 是选中内容的指纹，同一段对话再存一次返回 <code>duplicate_of</code>，不生成第二个文件。</li>
+</ul>
+<h3 id="命令行-任何只能执行命令的智能体都能用">命令行（任何只能执行命令的智能体都能用）</h3>
+<pre><code class="lang-bash">export PYTHONPATH=$PWD
+
+# 预览（不写盘）：先看整理成什么样
+python -m src.notes save --from conv.json --draft
+
+# 保存，只存第 2-4 条消息
+python -m src.notes save --from conv.json --select-range 2-4 \
+  --kind decision --tags 税务,出口退税
+
+# 只存含某关键词的消息；保留原文
+python -m src.notes save --from conv.json --select-keyword 备案 --keep-raw
+
+# 查询
+python -m src.notes list --tag 税务 --since 2026-10-01 --limit 20
+python -m src.notes get &lt;id&gt; --json          # 给智能体读
+python -m src.notes stats                    # 数量与标签分布
+python -m src.notes rebuild                  # 索引丢了/外部文件多时重建</code></pre>
+<p><code>conv.json</code> 就是一段对话：</p>
+<pre><code class="lang-json">{
+  &quot;messages&quot;: [
+    {&quot;role&quot;: &quot;user&quot;, &quot;text&quot;: &quot;出口退税的退税率按什么标准执行？&quot;},
+    {&quot;role&quot;: &quot;assistant&quot;, &quot;text&quot;: &quot;根据办法第十二条…决定由财务部在每月 5 日前复核。&quot;}
+  ],
+  &quot;select&quot;: {&quot;mode&quot;: &quot;all&quot;},
+  &quot;hint&quot;: {&quot;title&quot;: &quot;出口退税申报口径确认&quot;, &quot;kind&quot;: &quot;decision&quot;, &quot;tags&quot;: [&quot;税务&quot;]},
+  &quot;source&quot;: {&quot;agent&quot;: &quot;claude-desktop&quot;, &quot;session&quot;: &quot;sess_1&quot;}
+}</code></pre>
+<p><code>select.mode</code> 支持 <code>all</code> / <code>indices</code>（下标数组，从 1 开始）/ <code>range</code>（<code>start</code>、<code>end</code>）/ <code>keyword</code>， 另有 <code>max_chars</code> 限制单次入库长度（默认 20000 字，超出会截断并在响应里标 <code>truncated</code>）。</p>
+<h3 id="摘要-默认不联网-模型只是增强">摘要：默认不联网，模型只是增强</h3>
+<p><code>digest: rule</code> 是默认引擎：分句、按数字/结论词/位置打分、归类到摘要/要点/决策/待办/引用， <strong>不联网、不花钱、永不抛异常</strong>。没有 Key 也能完整跑通保存 → 读取 → 再被其他智能体读取。</p>
+<p>要用模型就加 <code>--digest auto</code>（有 Key 就用，失败回落）或 <code>--digest llm</code>（必须成功）。三条约束：</p>
+<table><thead><tr><th>约束</th><th>实现</th></tr></thead><tbody><tr><td>输出必须合法</td><td>只认固定 JSON，剥 ``<code>json 围栏；</code>摘要` 为空、字段类型不对都算无效</td></tr><tr><td>永不因模型失败而丢内容</td><td><code>auto</code> 模式下超时/限流/坏 JSON 一律回落规则摘要，保存照常成功</td></tr><tr><td>回落必须留痕</td><td>front matter 记 <code>digest: rule</code> + `digest_fallback: timeout \</td><td>invalid_output \</td><td>network \</td><td>no_key`</td></tr></tbody></table>
+<p>模型给的小节名不在标准集里会被丢弃（不把奇怪结构写进文件）；<code>kind</code> 非法回落 <code>qa</code>， 缺标题用 <code>hint</code> 补。<code>--digest llm</code> 失败时抛可读错误并提示改用 <code>--digest rule</code>，不静默降级。</p>
+<h3 id="http-接口-智能体直接调">HTTP 接口（智能体直接调）</h3>
+<p>六个端点，写操作都带并发保护或确认步骤：</p>
+<table><thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead><tbody><tr><td>POST</td><td><code>/api/notes</code></td><td>保存一段对话；<code>commit=false</code> 只预览，<code>duplicate_of</code> 表示内容已存在</td></tr><tr><td>GET</td><td><code>/api/notes</code></td><td>列表：<code>?tag=&amp;kind=&amp;status=&amp;since=&amp;limit=</code></td></tr><tr><td>GET</td><td><code>/api/notes/{id}</code></td><td>全文；<code>?section=摘要</code> 只取一节；返回 <code>rev</code> 供修改时用</td></tr><tr><td>PATCH</td><td><code>/api/notes/{id}</code></td><td>改标题/标签/状态/小节；必须带 <code>base_rev</code>，否则 409</td></tr><tr><td>DELETE</td><td><code>/api/notes/{id}?confirm=1</code></td><td>移入 <code>.trash</code>，可找回</td></tr><tr><td>GET</td><td><code>/api/notes/stats</code></td><td>数量与标签分布</td></tr><tr><td>GET</td><td><code>/api/notes/export</code></td><td>导出：`?format=html\</td><td>json<code>，可带 </code>tag<code> / </code>since<code> / </code>id`，返回内容本身</td></tr><tr><td>POST</td><td><code>/api/notes/{id}/assets</code></td><td>上传附件：<code>{"name":"架构图.png","data":"&lt;base64&gt;"}</code>，返回可粘贴的 markdown</td></tr><tr><td>GET</td><td><code>/api/notes/{id}/assets</code></td><td>列出这篇笔记的附件</td></tr><tr><td>GET</td><td><code>/api/notes/{id}/assets/{name}</code></td><td>附件原文（图片可直接放进 <code>img src</code>）</td></tr><tr><td>DELETE</td><td><code>/api/notes/{id}/assets/{name}?confirm=1</code></td><td>删除附件，<strong>不进回收站</strong></td></tr></tbody></table>
+<pre><code class="lang-bash"># 保存（不带 commit=false 就直接落盘）
+curl -s http://127.0.0.1:8000/api/notes -H &#x27;Content-Type: application/json&#x27; -d &#x27;{
+  &quot;messages&quot;: [{&quot;role&quot;:&quot;assistant&quot;,&quot;text&quot;:&quot;决定按 13% 执行，财务部每月 5 日前复核。&quot;}],
+  &quot;hint&quot;: {&quot;title&quot;: &quot;退税率口径&quot;, &quot;kind&quot;: &quot;decision&quot;, &quot;tags&quot;: [&quot;税务&quot;]}
+}&#x27;
+
+# 改标题：先拿 rev，再带着它改
+curl -s http://127.0.0.1:8000/api/notes/&lt;id&gt; | python -c &quot;import json,sys;print(json.load(sys.stdin)[&#x27;rev&#x27;])&quot;
+curl -s -X PATCH http://127.0.0.1:8000/api/notes/&lt;id&gt; -H &#x27;Content-Type: application/json&#x27;   -d &#x27;{&quot;base_rev&quot;:&quot;&lt;rev&gt;&quot;,&quot;changes&quot;:{&quot;title&quot;:&quot;新标题&quot;}}&#x27;</code></pre>
+<p>配了 <code>API_KEYS</code> 时，笔记接口同样要求 <code>Authorization: Bearer &lt;key&gt;</code> 或 <code>X-API-Key</code>； <code>NOTES_CORS=*</code>（或逗号分隔的来源白名单）才会放行浏览器跨域，默认关闭。</p>
+<p><code>GET /tools.json</code> 直接给出 9 个 OpenAI function calling 工具声明 （<code>save_conversation</code> / <code>search_notes</code> / <code>get_note</code> / <code>update_note</code> / <code>delete_note</code> / <code>note_stats</code> / <code>export_notes</code> / <code>save_attachment</code> / <code>list_attachments</code>）， 任何支持 function calling 的智能体塞进 <code>tools</code> 数组即可用，不需要读文档。</p>
+<h4 id="笔记检索-词面-语义两档-v1-25">笔记检索：词面 + 语义两档（v1.25）</h4>
+<pre><code class="lang-bash">GET /api/notes?q=发版前要准备什么&amp;limit=10        # 按内容找
+GET /api/notes?q=部署&amp;tag=上线&amp;kind=decision       # 先按条件筛，再按相关度排
+GET /api/notes?q=部署&amp;semantic=off                # 只按字面匹配</code></pre>
+<ul>
+<li><strong>字面档（永远可用）</strong>：BM25 打分。文本切成中文 2-gram + 英文词，标题/标签/摘要/各节正文都进索引。</li>
+<p>零依赖、不联网，中文短查询（「部署方案」「上次那个结论」）召回够用。</p>
+<li><strong>语义档（配了 embedding 才有）</strong>：<code>EMBEDDING_PROVIDER</code> 不是 <code>none</code> 时，额外把每篇笔记压成向量，</li>
+<p>与 BM25 分数归一后加权融合（词面 0.55 / 语义 0.45）。「发版」能搜到只写了「部署」的笔记， 这一档才做得到。</p>
+<li><strong>响应自带说明</strong>：<code>search.mode</code> 是 <code>lexical</code> 还是 <code>hybrid</code>，<code>degraded</code> 给出降级原因，</li>
+<p><code>pending</code> 是还没进索引的篇数。<strong>不会假装走了语义</strong>——默认配置下它就是字面检索。</p>
+<li><strong>索引是派生的</strong>：落在 <code>&lt;存储区&gt;/index/search.jsonl</code>，删掉会自动重建。</li>
+<p>查询时只补算变更过的那几篇（每轮有上限与时间预算），所以第一次在大库上搜索只会补一部分， 其余标在 <code>pending</code> 里下次继续。要一次建全就用 <code>POST /api/notes/rebuild</code> 或 <code>python -m src.notes rebuild</code>（按建库预算 600s 跑）。</p>
+<li>索引文件用 float32 + base64 存向量（1024 维约 5.5 KB/篇），不用 numpy。</li>
+</ul>
+<h4 id="笔记附件-v1-26">笔记附件（v1.26）</h4>
+<p>图片与文件挂在单篇笔记下，跟着笔记一起显示、一起导出、一起备份。</p>
+<pre><code class="lang-bash"># 上传：内容是 base64；也可以直接给 data:image/png;base64,xxx
+curl -s -X POST http://127.0.0.1:8000/api/notes/&lt;id&gt;/assets \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &quot;{\&quot;name\&quot;:\&quot;架构图.png\&quot;,\&quot;data\&quot;:\&quot;$(base64 图.png | tr -d &#x27;\n&#x27;)\&quot;}&quot;
+
+# 返回里带着可直接粘进正文的片段：
+# {&quot;display&quot;:&quot;架构图.png&quot;,&quot;ref&quot;:&quot;assets/&lt;id&gt;/3f2a1b4c-架构图.png&quot;,
+#  &quot;markdown&quot;:&quot;![架构图.png](assets/&lt;id&gt;/3f2a1b4c-架构图.png)&quot;}</code></pre>
+<ul>
+<li><strong>落盘</strong>：<code>&lt;存储区&gt;/assets/&lt;笔记 id&gt;/&lt;内容哈希前 8 位&gt;-&lt;文件名&gt;</code>。哈希前缀用来判重——</li>
+<p>同内容只占一份，同名不同内容互不覆盖（改了一版图还能回去）。</p>
+<li><strong>收什么</strong>：图片与常见文档（png/jpg/gif/webp/svg、pdf、txt/md/csv/json/log、</li>
+<p>docx/xlsx/pptx/zip）。<strong>可执行文件、脚本、快捷方式一律拒收</strong>，单个 ≤ 8 MB。</p>
+<li><strong>导出内联</strong>：HTML 导出把附件内联成 data URI，单文件断网可读；附件丢失或超过 2 MB</li>
+<p>时原位标一句说明，<strong>不会静默少一张图</strong>。正文里没提到的附件会单独列一节。</p>
+<li><strong>备份</strong>：附件进备份包，但单独设限（单文件 8 MB / 总量 128 MB）；超限的跳过并在</li>
+<p>响应的 <code>warnings</code> 里说明——附件把备份撑爆，比「附件没进包但笔记都在」糟得多。</p>
+<li><strong>MCP</strong>：<code>save_attachment</code> / <code>list_attachments</code> 两个工具；附件原文按</li>
+<p><code>notes://asset/&lt;笔记 id&gt;/&lt;文件名&gt;</code> 读（文本走 <code>text</code>，其余走 <code>blob</code>）。</p>
+</ul>
+<h3 id="mcp-支持-mcp-的客户端直接接-v1-12">MCP：支持 MCP 的客户端直接接（v1.12）</h3>
+<p>stdio 传输，客户端拉起进程即可，不需要端口与证书：</p>
+<pre><code class="lang-json">{
+  &quot;mcpServers&quot;: {
+    &quot;agent-notes&quot;: {
+      &quot;command&quot;: &quot;python&quot;,
+      &quot;args&quot;: [&quot;-m&quot;, &quot;src.notes.mcp_server&quot;],
+      &quot;cwd&quot;: &quot;/path/to/rag_assistant&quot;,
+      &quot;env&quot;: { &quot;PYTHONPATH&quot;: &quot;/path/to/rag_assistant&quot;, &quot;NOTE_HOME&quot;: &quot;~/agent-notes&quot; }
+    }
+  }
+}</code></pre>
+<ul>
+<li><strong>9 个工具</strong>：<code>save_conversation</code> / <code>search_notes</code> / <code>get_note</code> / <code>update_note</code> /</li>
+<p><code>delete_note</code> / <code>note_stats</code> / <code>export_notes</code> / <code>save_attachment</code> / <code>list_attachments</code>， 参数与 HTTP 完全同源（都从 <code>tools.py</code> 生成）。</p>
+<li><strong>2 个资源</strong>：<code>notes://schema</code>（格式契约，改文件前先读）、<code>notes://index</code>（全部笔记清单）。</li>
+<li><strong>协议细节</strong>：JSON-RPC 2.0 逐行传输；<code>initialize</code> 会回显客户端协议版本（不认识则回落到</li>
+<p><code>2025-06-18 / 2025-03-26 / 2024-11-05</code> 中最新的一个）；未知方法返 <code>-32601</code>、坏 JSON 返 <code>-32700</code> 且<strong>不中断会话</strong>；工具执行失败返 <code>isError: true</code>（模型能读到原因并自行纠正），不掐连接。</p>
+<li><strong>stdout 只跑协议</strong>：诊断日志全部走 stderr，避免客户端因为多一行日志解析失败。</li>
+</ul>
+<p><strong>HTTP 传输（v1.23）</strong>：不想让客户端拉起进程时，直接把 JSON-RPC POST 到主服务：</p>
+<pre><code class="lang-bash">curl -s http://127.0.0.1:8000/mcp -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;jsonrpc&quot;:&quot;2.0&quot;,&quot;id&quot;:1,&quot;method&quot;:&quot;tools/list&quot;}&#x27;</code></pre>
+<p>与 stdio 共用同一份 <code>handle()</code>：同样的错误码、同样的工具、同样的 <code>NoteService</code>。 通知类请求（<code>notifications/initialized</code>）回 <code>202</code> 且无正文，支持 JSON-RPC 批量。 配了 <code>API_KEYS</code> 之后同样要带 Key（<code>/mcp</code> 在路由表里是 <code>api</code> 级）。</p>
+<p><strong>SSE（v1.24）</strong>：请求头带 <code>Accept: text/event-stream</code> 时按 Streamable HTTP 回一条 <code>event: message</code> 帧再关流——严格的客户端只认这一种；不带则仍回普通 JSON。 <code>GET /mcp</code> 同样接受 <code>text/event-stream</code>，开一条只发 <code>: ping</code> 注释帧的下行流： 本服务没有「服务端主动发起的请求」，所以<strong>不推送任何伪造消息</strong>，这条流只用于 规范要求的连接与保活。两条路径都有硬上限（<code>SSE_MAX_SECONDS</code> 到点关闭、 <code>MCP_SSE_MAX_CONN</code> 默认 4 条并发，超了回 <code>429</code>）——长连接占的是请求线程， 不设上限几条挂死的流就能把服务拖到不响应。不带 <code>Accept</code> 的裸 <code>GET /mcp</code> 仍回 <code>405</code>。</p>
+<p><strong>一键写入客户端（v1.23）</strong>：设置面板的「安装」页可以从下拉里选 Claude Desktop / Cursor / Cline / Windsurf，点一下把 <code>mcpServers</code> 合并进去（原文件先备份）。 接口只接受客户端 id，<strong>不接受路径</strong>——否则等于在本地服务上开了个任意写文件的洞。</p>
+<h3 id="四条通道-任何智能体都能接-v1-12">四条通道，任何智能体都能接（v1.12）</h3>
+<table><thead><tr><th>通道</th><th>适用</th><th>需要什么</th></tr></thead><tbody><tr><td>文件直读</td><td>完全离线，或只想看</td><td>一个能读 <code>NOTE_HOME</code> 的智能体；格式见 <code>AGENTS.md</code></td></tr><tr><td>CLI</td><td>只能执行命令</td><td><code>python -m src.notes ...</code></td></tr><tr><td>HTTP</td><td>能发请求、支持 function calling</td><td><code>/api/notes</code> 六个端点 + <code>/tools.json</code></td></tr><tr><td>MCP</td><td>支持 MCP 的客户端</td><td>一段 <code>mcpServers</code> 配置（stdio），或 <code>POST /mcp</code>（HTTP）</td></tr></tbody></table>
+<p>四条路的写操作都经 <code>NoteService</code>，语义一致：保存去重、改前带 <code>rev</code>、删除要确认。 <code>NOTE_HOME</code> 首次初始化会写一份 <code>AGENTS.md</code>（只写一次，你改过就不再覆盖）， 下一个智能体即使没有工具，也能照着文件里的说明直接读写。</p>
+<h3 id="页面-选一段存下来-也能在页面里改-v1-12">页面：选一段存下来，也能在页面里改（v1.12）</h3>
+<ul>
+<li><strong>问答页</strong>：每条回答下方多一个「存为笔记」。点开先调 <code>commit=false</code> 拿到<strong>预览</strong>，</li>
+<p>可以改标题、标签、类型，确认后才落盘——不让人莫名其妙多出一堆文件。重复内容会提示「已经存过了」。</p>
+<li><strong>文件页 <code>/files</code></strong>：笔记的唯一完整入口——搜索、新建、编辑原文、上传/下载附件、</li>
+<p>删除（进 <code>.trash</code>）、导出 HTML / JSON。旧链接 <code>/kb#notes</code> 会自动跳到这里。</p>
+<li><strong>并发保护</strong>：页面保存带 <code>rev</code>，若文件在此期间被智能体或编辑器改过，返回 409 并自动reload最新版本，</li>
+<p>不会把你的手改覆盖掉。</p>
+</ul>
+<h3 id="离线导出-v1-12">离线导出（v1.12）</h3>
+<pre><code class="lang-bash">python -m src.notes export --out ~/Desktop/notes.html          # 单文件，断网可读
+python -m src.notes export --out notes.json --format json      # 结构化，可再导入
+python -m src.notes export --out tax.html --tag 税务           # 只导某一类</code></pre>
+<p>导出物是<strong>一个自包含 HTML</strong>：CSS 内联、脚本内联、不引任何字体或 CDN，双击就能看， 带搜索与类型筛选、深色模式跟随系统、打印时自动隐藏工具栏。正文里的 <code>&lt;script&gt;</code> 会被转义， 不会被当成标签执行；导出用临时文件 + 原子替换，中途失败不会毁掉上一份。</p>
+<h3 id="实测-本机-1000-篇笔记">实测（本机，1000 篇笔记）</h3>
+<table><thead><tr><th>指标</th><th>数值</th></tr></thead><tbody><tr><td>保存 P50 / P95</td><td>12.0 ms / 19.0 ms</td></tr><tr><td>列出 1000 篇</td><td>20.9 ms</td></tr><tr><td>索引全量重建 1000 篇</td><td>2.0 s（4 线程并行读取；单线程 14.7 s）</td></tr><tr><td>单篇体积</td><td>约 600 B</td></tr><tr><td>第三方依赖</td><td>0</td></tr></tbody></table>
+<h3 id="已验证的边界">已验证的边界</h3>
+<ul>
+<li>空输入、201 条消息、下标越界、非法 <code>select.mode</code> 都会返回可读错误（退出码 2），不会抛栈；</li>
+<p>无 Key 时 <code>--digest llm</code> 明确报错并提示改用 <code>--digest rule</code>，不假装成功。</p>
+<li>front matter 半截、缺字段、完全缺失都能读；<code>external: true</code> 标明这是外部文件。</li>
+<li>同一目录并发写有目录锁（默认等 5 秒），超时返回明确错误。</li>
+<li>提示注入、HTML/脚本标签、emoji 与零宽字符一律当纯文本处理，不执行、不解析。</li>
+</ul>
+<h2 id="4-14-连接智能体-前端目录与统计缓存-v1-18-0">4.14 连接智能体、前端目录与统计缓存（v1.18.0）</h2>
+<p><strong>一条边界，两条路。</strong> 会话记录存在浏览器 <code>localStorage</code>（最多 60 条），换浏览器就看不到； 要长期留存就「存为笔记」——落到磁盘上的 Markdown，人和智能体读的是同一批文件。 v1.18.0 把这条分工做成了侧栏里点得到的按钮：</p>
+<table><thead><tr><th>入口</th><th>位置</th><th>给谁</th></tr></thead><tbody><tr><td>新对话 / 知识库</td><td>侧栏</td><td>人，在浏览器里用</td></tr><tr><td>文件（<code>#filesBtn</code>）+ <code>/files</code></td><td>侧栏 / 独立地址</td><td>人，看已存笔记与原文</td></tr><tr><td><strong>智能体（<code>#agentBtn</code>）</strong></td><td>侧栏</td><td>接线口：状态 + 可复制的 <code>mcpServers</code> 配置</td></tr></tbody></table>
+<p>点「智能体」弹出的面板里直接给出：接出工具数（<code>GET /tools.json</code> 的真实条数）、 当前笔记目录、一份填好绝对路径与 <code>PYTHONPATH</code> 的 MCP 配置、复制按钮，以及跳到「设置 → 安装」的入口。 不用去翻文档猜该粘什么——这是「应用形式 + 可连接智能体」在界面上的落点。</p>
+<p><strong>前端从 Python 字符串里搬出来了。</strong> 原先 20 万字符的 CSS/JS 挤在 <code>theme.py</code>（1860 行）和 <code>web_pages.py</code>（1862 行）的三引号里：没有语法高亮、没法查错、改一行要滚两千行。</p>
+<pre><code>src/web/   base.css  settings.css  files.css  agent.css  ask.css  kb.css
+           side.js  settings.js  files.js  files_page.js  agent.js  ask.js  kb.js  theme.js  util.js
+           settings.html  files.html  files_page.html  agent.html  ask.html  kb.html  art.txt</code></pre>
+<ul>
+<li>运行时行为不变：导入时读进内存、内联进 HTML，不新增静态路由、不引入构建步骤；</li>
+<li>两个 Python 文件降到 200 / 30 行，只留外壳、导航与占位符替换；</li>
+<li><code>tools/check_frontend.py</code> 在提交前跑：每个 <code>.js</code> 过 <code>node --check</code>、CSS 查括号与外部引用、</li>
+<p><strong>拼装完成后的整页</strong>再逐段过一遍（单文件对、拼起来错的情况也能抓到）；</p>
+<li><code>tests/test_frontend.py</code> 额外锁死「不许再内联回去」：<code>theme.py</code> ≤ 260 行 / 20 KB，超出即失败。</li>
+</ul>
+<p><strong>存储统计加了缓存。</strong> 打开设置原本每次都要遍历 4~5 个目录树（1000 篇笔记约 20 ms）。 现在扫描走 <code>os.scandir</code>（Windows 上目录项自带 size，省掉每条一次 stat）并把五个根目录并行， 实扫降到约 5 ms；结果按「索引文件 + 各根目录的 mtime/size」验指纹缓存 30 秒， 存一篇笔记立刻失效，重复打开约 0.05 ms。面板上会写清这次是「实扫用时 x ms」还是「沿用 30 秒内的统计」。</p>
+<h2 id="4-15-存储区-智能体接入与文件自由修改-v1-19-0">4.15 存储区、智能体接入与文件自由修改（v1.19.0）</h2>
+<h3 id="一条原则-内容不在浏览器里">一条原则：内容不在浏览器里</h3>
+<table><thead><tr><th>数据</th><th>老位置</th><th>现在</th><th>形态</th></tr></thead><tbody><tr><td>会话记录</td><td><code>localStorage.jy_threads_v1</code></td><td><code>&lt;存储区&gt;/threads/&lt;id&gt;.json</code></td><td>一条一个 JSON，缩进过，能直接读</td></tr><tr><td>笔记 / 文档</td><td>磁盘（本来就是）</td><td><code>&lt;存储区&gt;/notes/YYYY/MM/&lt;id&gt;.md</code></td><td>Markdown + front matter</td></tr><tr><td>索引缓存</td><td><code>&lt;存储区&gt;/index/</code></td><td>不变</td><td>删了自动重建</td></tr><tr><td>只读语料</td><td><code>&lt;存储区&gt;/../data/kb</code></td><td>不变</td><td>知识库版本库</td></tr></tbody></table>
+<p>老数据不会丢：第一次加载时若存储区里没有会话，页面会把 <code>localStorage</code> 里的记录一次性 <code>POST /api/threads/import</code> 搬进来，然后删掉浏览器里那份，并提示「已搬 N 条」。</p>
+<p>浏览器里只剩两个界面状态：<code>jy_current_v1</code>（上次打开哪条）、<code>jy_side_mini</code>（侧栏收没收）。</p>
+<h3 id="首次运行-先建存储区">首次运行：先建存储区</h3>
+<pre><code>GET  /api/settings/setup   -&gt; {needed, default_home, notes, ...}
+POST /api/settings/setup   -&gt; 建目录 + 写 notes.home + setup.done=true</code></pre>
+<p>弹窗里写清三件事：文档是 Markdown、会话是 JSON、智能体读同一个目录。 目录不存在会自动创建 <code>notes/ threads/ index/ exports/ assets/</code>。 老用户升级时如果旧目录里已有笔记，默认值直接给旧目录，不会让他「新建一个空库」。</p>
+<h3 id="接入方式-智能体调-api-是主路径">接入方式：智能体调 API 是主路径</h3>
+<p>知识库页顶部有一条「让智能体来整理文档」的引导（按钮直接打开智能体面板，能看到可复制的 <code>mcpServers</code> 配置与工具数量）。上传框降级为「让本机问答多一份只读语料」—— 因为「整理并写进记忆」这件事，交给智能体比让用户手写 Markdown 更合理。</p>
+<h3 id="文件可以自由修改">文件可以自由修改</h3>
+<pre><code>GET  /api/files/raw?path=notes/2026/10/xxx.md   -&gt; {content, rev, size}
+PUT  /api/files/raw {path, content, base_rev}   -&gt; 428 缺 rev / 409 被别处改过
+PUT  /api/files/raw {path, content, create:true} -&gt; 新建；已存在返回 409
+POST /api/files/open {path}                     -&gt; 交给系统默认编辑器</code></pre>
+<blockquote>覆盖已有文件<strong>必须</strong>带 <code>base_rev</code>（先 GET 拿一次）。v1.19.0 之前留了「不传就覆盖」的口子， 结果是漏传参数就能静默丢改动——现在缺 rev 返回 <code>428</code>，写已删除的文件返回 <code>409</code>。</blockquote>
+<p>路径先 <code>resolve</code> 再比前缀，出不了存储区；只允许文本后缀；单文件 2 MB 上限。 页面上「编辑原文」是行内 textarea + 保存，「用系统编辑器打开」直接调系统程序。</p>
+<h3 id="界面-不再照搬聊天工具">界面：不再照搬聊天工具</h3>
+<p>配色从蓝白换成<strong>墨绿 + 米纸</strong>，标题用衬线；首屏文案从「有什么可以帮你」换成「今天想记住什么」； 存储面板从「面积条 + 五段图例」压成<strong>四个数字</strong>（文档 / 会话 / 缓存 / 磁盘剩余）。 为什么不照搬 DeepSeek、跟同类开源项目各借了什么，见 <a href="docs/COMPARISON.md">docs/COMPARISON.md</a>。</p>
+<h2 id="4-16-接入-dify-把本项目注册成-外部知识库-v1-32-0">4.16 接入 Dify：把本项目注册成「外部知识库」（v1.32.0）</h2>
+<p>Dify 里的 Agent 需要一个知识源。两种接法，这里只做第一种，原因如下。</p>
+<table><thead><tr><th>接法</th><th>做法</th><th>结论</th></tr></thead><tbody><tr><td><strong>外部知识库</strong></td><td>Dify 调本服务的 <code>/dify/retrieval</code> 拿片段，自己生成答案</td><td><strong>推荐</strong>。职责清晰：本项目管检索，Dify 管编排与生成</td></tr><tr><td>自定义工具</td><td>把 <code>/api/ask</code> 包成 OpenAPI 工具让 Agent 调</td><td>不推荐。一次提问烧两次模型；<code>citations</code> 全文塞进 Agent 上下文；本项目的拒答语义与 Agent 的「自己答」互相打架</td></tr></tbody></table>
+<blockquote>C3 的判断：<strong>这里不需要在本项目里加 Agent</strong>。Dify 那边已经是 Agent 了， 本项目再加一层循环只会变成「Agent 套 Agent」，两边都不知道最终由谁负责停。 本项目要做的是把「检索」这件事做成一个稳定的原子能力。</blockquote>
+<h3 id="服务端已经做好什么">服务端已经做好什么</h3>
+<p><code>POST /dify/retrieval</code>，实现 Dify 官方 External Knowledge API：</p>
+<pre><code class="lang-bash">curl -X POST http://127.0.0.1:8000/dify/retrieval \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -H &#x27;Authorization: Bearer &lt;API_KEYS 里的任意一个&gt;&#x27; \
+  -d &#x27;{&quot;knowledge_id&quot;:&quot;finance&quot;,&quot;query&quot;:&quot;稳盈 Plus 的起购金额&quot;,
+       &quot;retrieval_setting&quot;:{&quot;top_k&quot;:3,&quot;score_threshold&quot;:0.5}}&#x27;</code></pre>
+<pre><code class="lang-json">{&quot;records&quot;: [
+  {&quot;content&quot;: &quot;01_理财产品要素说明 · 一、「稳盈」系列产品\n「稳盈」系列…起购金额为 1 元…&quot;,
+   &quot;score&quot;: 0.795, &quot;title&quot;: &quot;01_理财产品要素说明&quot;,
+   &quot;metadata&quot;: {&quot;doc&quot;: &quot;01_理财产品要素说明&quot;, &quot;section&quot;: &quot;一、「稳盈」系列产品&quot;, &quot;chunk&quot;: 0}}
+]}</code></pre>
+<p>几个刻意的取舍：</p>
+<ul>
+<li><strong>只检索，不生成</strong>。外部知识库的语义就是「给 Dify 提供上下文」。这里再调一次模型，</li>
+<p>等于一次提问付两次钱，而且两段答案会互相打架。</p>
+<li><strong><code>content</code> 首行带「文档 · 小节」</strong>。Dify 只把 <code>content</code> 交给模型，不传 <code>title</code>；</li>
+<p>没有这一行，模型写得出答案却说不出来源，本项目「引用可核」的主张直接失效。</p>
+<li><strong><code>score</code> 用本项目自己的归一化分</strong>（0–1），与 Dify 的 <code>score_threshold</code> 同一量纲，</li>
+<p>面板上调 0.5 就是真的 0.5。</p>
+<li><strong>没命中返回 <code>{"records": []}</code>，不返回错误</strong>。Dify 的约定是「检索不到不算错」，</li>
+<p>回 404/500 会让整个应用报错。</p>
+<li><strong><code>metadata</code> 一定是对象，不会是 null</strong>。Dify 明确说 null 会让它的检索流水线报错。</li>
+<li><strong>不区分 <code>knowledge_id</code></strong>：本服务只有一个语料库，填什么都接受。多库需求要改检索器</li>
+<p>支持按文档过滤，不是加个 if 能解决的。</p>
+</ul>
+<h3 id="在-dify-里怎么配-三步">在 Dify 里怎么配（三步）</h3>
+<p>前提：本项目服务在跑，端口 8000。</p>
+<ol>
+<li><strong>注册 API 连接</strong>：知识库 → 右上角「外部知识库 API」→ 添加</li>
+</ol>
+<ul>
+<li>名称：<code>本地金融问答</code></li>
+<li>API 接口地址：<code>http://host.docker.internal:8000/dify</code>（<strong>不要</strong>自己加 <code>/retrieval</code>，Dify 会追加）</li>
+<li>API Key：配了 <code>API_KEYS</code> 就填其中一个；没配就随便填（服务端不校验）</li>
+<li>保存时 Dify 会打一次测试请求，成功才算通</li>
+</ul>
+<ol>
+<li><strong>创建外部知识库</strong>：知识库 → 连接外部知识库</li>
+</ol>
+<ul>
+<li>外部知识库 API：选上一步那个</li>
+<li>外部知识库 ID：<code>finance</code>（任意，仅回显）</li>
+<li>Top K 填 3–5；分数阈值建议开，取 <strong>0.5</strong>（本项目的检索分实测：正常命中 0.6–0.95，</li>
+<p>误答区间 0.64–0.78，所以阈值卡太低等于没卡）</p>
+</ul>
+<ol>
+<li><strong>建 Agent 应用</strong>：创建应用 → Agent → 关联这个知识库 → 选模型 → 写提示词</li>
+</ol>
+<h3 id="排障-连不上先看这三处">排障：连不上先看这三处</h3>
+<table><thead><tr><th>现象</th><th>原因</th><th>处理</th></tr></thead><tbody><tr><td>报「连接失败」，本服务日志<strong>没有任何请求</strong></td><td>Dify 的出站被 Squid 拦了（默认拒绝一切私有网段）</td><td>见下一节</td></tr><tr><td>返回 403 <code>host_not_allowed</code></td><td>请求的 Host 不在白名单</td><td>v1.32.0 起 <code>host.docker.internal</code> 已算本机别名，不用再配 <code>ALLOWED_HOSTS</code></td></tr><tr><td>返回 401</td><td>配了 <code>API_KEYS</code> 但 Dify 里填的 Key 不对</td><td>两边改成同一个值</td></tr></tbody></table>
+<p>Dify 的 SSRF 代理放行（官方扩展点，不改默认配置）：</p>
+<pre><code class="lang-bash"># Dify 的 docker 目录下，新建 envs/infrastructure/ssrf-proxy.env
+SSRF_PROXY_ALLOW_PRIVATE_DOMAINS=host.docker.internal
+# 然后重建代理容器
+docker compose up -d ssrf_proxy
+# 验证：应看到生成的白名单里出现 host.docker.internal
+# Git Bash 必须带 MSYS_NO_PATHCONV=1，否则 /etc/... 会被改写成 Windows 路径
+MSYS_NO_PATHCONV=1 docker exec docker-ssrf_proxy-1 cat /etc/squid/dify_allow_private.conf</code></pre>
+<p>只放行这一个域名，<strong>不要</strong>去设 <code>SSRF_PROXY_ALLOW_PRIVATE_IPS</code>——那是按网段放行， 等于把整个私有网段对 Dify 的插件与工具敞开。</p>
+<p>在 Dify 里搭智能体的完整配置（应用类型怎么选、提示词全文、模型参数、7 条验收用例、 以及这套方案比本项目原生弱在哪），见 <a href="docs/DIFY-AGENT.md">docs/DIFY-AGENT.md</a>。</p>
+<h2 id="4-17-生态接入-页码引用与可观测-v1-36-0">4.17 生态接入、页码引用与可观测（v1.36.0）</h2>
+<p>这一版补齐的是「接得上、查得到、看得见」三件事，全部保持零第三方依赖。</p>
+<h3 id="openai-兼容端点">OpenAI 兼容端点</h3>
+<p>任何 OpenAI SDK / LiteLLM / LangChain 只要把 <code>base_url</code> 指过来就能用：</p>
+<pre><code class="lang-bash"># 模型清单（SDK 启动时会先探这个）
+curl -s http://127.0.0.1:8000/v1/models
+
+# 非流式
+curl -s http://127.0.0.1:8000/v1/chat/completions \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;model&quot;:&quot;jiyi&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;稳盈系列起购金额是多少&quot;}]}&#x27;
+
+# 流式（SSE，以 data: [DONE] 结束）
+curl -N http://127.0.0.1:8000/v1/chat/completions \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;model&quot;:&quot;jiyi&quot;,&quot;stream&quot;:true,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;稳盈系列起购金额是多少&quot;}]}&#x27;</code></pre>
+<pre><code class="lang-python">from openai import OpenAI
+client = OpenAI(base_url=&quot;http://127.0.0.1:8000/v1&quot;, api_key=&quot;任意或你的 API_KEYS&quot;)
+print(client.chat.completions.create(
+    model=&quot;jiyi&quot;, messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;稳盈系列起购金额是多少&quot;}]
+).choices[0].message.content)</code></pre>
+<p>三个刻意的取舍：</p>
+<ul>
+<li><strong>只取 <code>messages</code> 里最后一条 user 当检索问题</strong>。把整段历史拼进去会让向量偏离当前问题</li>
+<p>（追问场景实测 top-1 会掉到上一轮主题）；多轮上下文由 <code>session_id</code> 负责。</p>
+<li><strong>引用放在非标准字段 <code>citations</code></strong>，不拼进正文。正文里的 <code>[n]</code> 编号保留，方便直接展示；</li>
+<p>拼上一段「参考：…」会让客户端拿到的答案变成两截。</p>
+<li><strong>不支持 <code>tools</code> / <code>function_call</code> / <code>n&gt;1</code></strong>，直接回 400 并说明原因。接了工具调用就变成 Agent，</li>
+<p>与「只依据资料作答、逐条标注出处」的定位冲突。</p>
+</ul>
+<p>错误体是 OpenAI 形状（<code>{error:{message,type,code}}</code>）。这一点必须照做：SDK 只读 <code>error.message</code>，回本项目的 <code>{ok:false,...}</code> 时它只会显示「unexpected response」。</p>
+<h3 id="页码级引用">页码级引用</h3>
+<p>PDF 入库时按页写入 <code>&lt;!--page:N--&gt;</code> 标记，切分时换算成 <code>Chunk.page</code> 并与 <code>chunk.text</code> 分开存 （标记不进正文，否则会被当成人话检索）。于是引用能显示「第 12 页」，<code>/api/source</code> 也会返回页码。</p>
+<pre><code class="lang-bash">curl -s &quot;http://127.0.0.1:8000/api/source?doc=演示制度_销售适当性管理实施细则&amp;chunk=3&quot; | head -c 300
+# {&quot;doc_id&quot;:...,&quot;section&quot;:&quot;...&quot;,&quot;page&quot;:7,...}</code></pre>
+<p>为什么把标记写进 Markdown 而不是另存一份页码映射：切分发生在「以后某次重建」， 那时手里只有文件。一个注释行是自描述的，映射表还要防它和文件不同步。</p>
+<h3 id="检索调试台-debug">检索调试台 <code>/debug</code></h3>
+<p>答错时最费时间的判断是「没检索到」还是「检索到了被阈值挡住」。这一页把候选、分数、 是否被 <code>MIN_SCORE</code> 挡掉（<code>kept: false</code>）一次摊开，等同于别家的 Retrieval Testing：</p>
+<pre><code>POST /api/search/debug  {&quot;query&quot;:&quot;稳盈系列起付金额&quot;,&quot;top_k&quot;:4}
+→ {min_score, recalled(=top_k×3), kept, candidates:[{score, kept, section, page, text}]}</code></pre>
+<p>页面在左侧栏「调试」，或直接访问 <code>/debug</code>。</p>
+<h3 id="更多入库格式-pptx-html-eml">更多入库格式：PPTX / HTML / EML</h3>
+<p>零依赖自己解（zip+XML / html.parser / email）：</p>
+<ul>
+<li><strong>PPTX</strong>：按页生成 <code>## 第 N 页</code> 章节；空页保留占位（否则后面页码整体前移，引用指错页）。</li>
+<li><strong>HTML</strong>：保留标题/列表/表格，丢掉 <code>script</code>/<code>style</code>/<code>nav</code>/<code>footer</code>——侧栏页脚每页重复，</li>
+<p>收进知识库只会变成高频噪声。</p>
+<li><strong>EML</strong>：主题/发件人/日期 + 正文（优先 text/plain，没有则转 HTML）；附件只计数不解析。</li>
+</ul>
+<p><code>.doc</code> / <code>.xls</code> / <code>.msg</code> 老格式仍需先另存；图片与扫描件要 OCR（仍未内置）。</p>
+<h3 id="api-key-作用域">API Key 作用域</h3>
+<p><code>API_KEYS</code> 支持第三段作用域：</p>
+<pre><code class="lang-bash">API_KEYS=web:sk_live_xxx,mcp:sk_read_zzz:ro,adm:sk_admin_1:admin</code></pre>
+<ul>
+<li><code>ro</code>：只能 GET 与「读语义 POST」（提问、检索调试、会话清理、反馈）；</li>
+<p>上传/删除/审批/重建一律 403，错误码是 <code>read_only_key</code> 并说明怎么换 Key。</p>
+<li><code>rw</code>：默认，等同旧行为。</li>
+<li><code>admin</code>：额外能调审批与运维接口（设了 <code>ADMIN_TOKEN</code> 时仍以令牌为准，Key 不能绕过）。</li>
+</ul>
+<h3 id="知识库目录监听">知识库目录监听</h3>
+<p><code>KB_WATCH_SECONDS</code>（默认 5，0 关闭）轮询活动版本目录，外部改文件后自动重建。 基线在<strong>启动时同步取</strong>，所以「启动后立刻改文件」也能被发现——这一点曾经是 bug： 基线放在第一次轮询里取，前 5 秒的修改会被当成初始状态永久吞掉。</p>
+<h3 id="opentelemetry-导出-otlp-http-json">OpenTelemetry 导出（OTLP/HTTP + JSON）</h3>
+<pre><code class="lang-bash">OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # collector 的 HTTP 端口
+OTEL_SERVICE_NAME=jiyi</code></pre>
+<p>只导 traces，不导 metrics/logs（指标已有 <code>/metrics</code>，再导一份会让两处口径打架）。 导出在旁路线程里按批发送，<strong>队列满就丢并计数，绝不影响问答</strong>；<code>/api/health</code> 的 <code>otel</code> 字段能看到 <code>sent/failed/dropped</code>。</p>
+<h3 id="基准数据与文档站">基准数据与文档站</h3>
+<pre><code class="lang-bash">python tools/bench.py --write        # 重新生成 docs/BENCHMARK.md
+python tools/build_docs_site.py      # 生成 docs/site/（离线可看）
+python tools/build_docs_site.py --check   # CI：生成物是否过期</code></pre>
+<p><code>docs/BENCHMARK.md</code> 的数字是<strong>本机实测</strong>：每个用例独立子进程、计时期间关 GC、 取 5 次中位数。为什么这么讲究——同一份 5000×1024 数据，在同进程连续测时会从 105 ms 漂到 605 ms，用那个数字做选型会得出完全错误的结论。</p>
+<h2 id="5-评测">5. 评测</h2>
+<pre><code class="lang-bash">python tests/eval_run.py                                  # 离线或已配 Key
+python tests/eval_run.py --out tests/baseline.json        # 更新基线
+python tests/eval_run.py --sleep 2 --out tests/report_llm.json   # 接模型跑一轮</code></pre>
+<ul>
+<li>基础用例 25 条：正常 12 / 边界 7 / 对抗 6；拒答基线 10 条（<code>eval_cases_uncovered.jsonl</code>，期望行为是明确说「不知道」）；反馈用例由看板「生成用例」写入 <code>eval_cases_feedback.jsonl</code>（<code>regression</code>）；上传文档的自动出题写入 <code>eval_cases_docs.jsonl</code>（<code>doc</code>）——<strong>默认一起跑，共 36 条</strong></li>
+<li>门禁：<strong>对抗用例 100% 通过</strong>（一条失败即非零退出，阻断发布）+ 总通过率 ≥ 90%</li>
+<li>仓库存留的报告：<strong>离线 26/26 = 100%</strong>（<code>tests/baseline.json</code>）、<strong>接入模型 26/26 = 100%</strong>（<code>tests/report_llm.json</code>，由评测者自备模型跑出）。这两份生成于拒答基线并入默认集<strong>之前</strong>，所以汇报页会把它们标成「旧」并提示重跑——页面不藏这件事</li>
+<li>L1 断言只锁「行为 / 事实 / 安全」，不绑死措辞（如风险等级接受「R1 / R5 / 五档 / 五级」任一）；语义质量交给 L3。</li>
+</ul>
+<p>改动 prompt、换模型、调切分后，<strong>必须重跑并与 <code>baseline.json</code> 逐条 diff</strong>，只允许变好不允许变差。</p>
+<h3 id="5-1-l3-语义评分-llm-as-judge">5.1 L3 语义评分（LLM-as-Judge）</h3>
+<p>L1 判不了三件事：<strong>编造</strong>（关键词命中但数字是编的）、<strong>答非所问</strong>、<strong>多问只答一半</strong>。所以加一层裁判：</p>
+<pre><code class="lang-bash"># 前提：先用当前版 eval_run 重跑 L1（报告需含 answer/context 字段）
+python tests/eval_run.py --sleep 2 --out tests/report_llm.json
+python tests/eval_l3.py --report tests/report_llm.json --sleep 1.5
+python tests/eval_l3.py --report tests/report_llm.json --limit 8 --json   # 抽样快跑</code></pre>
+<ul>
+<li><strong>答案类</strong>用例按「忠实度 / 相关性 / 完整性」各 1–5 分；<strong>拒答类</strong>用例用合规 rubric（该不该拒、有没有泄露）。</li>
+<li>裁判只看【检索资料】+【回答】，<strong>禁止用自身知识补依据</strong>，避免“裁判比模型还懂”的假高分。</li>
+<li>门禁：忠实度均分 ≥ 4.0、无 faithfulness ≤ 2 的疑似编造、语义通过率 ≥ 85%、拒答类 100% 合规。</li>
+<li>报告 <code>tests/report_l3.json</code> 保留每条分数与理由，便于人工抽检；<code>python -m src.report --out report.html</code></li>
+<p>可导出成独立汇报页（评测看板已下线，结果以报告文件为准）。</p>
+<li><strong>裁判校准（默认开启，很重要）</strong>：植入 3 条错误答案（编造数字 / 答非所问 / 多问只答一半），若裁判不降分，则整轮 L3 判为<strong>不可信</strong>并门禁失败。实测裁判在三条植入错误上分别得 1 / 1 / 2 分，区分力有效；<code>--calibrate-only</code> 可只补跑校准、复用已有评分省 token。</li>
+<li><strong>读数提醒</strong>：基础集 26 条曾全部 5.0，说明的是<strong>测试集偏简单</strong>（问题与知识块近乎一一对应），不代表“质量完美”。所以要另跑难题集（见 5.2）。</li>
+<li><strong>立场</strong>：L3 结果用于趋势对比，不做逐条绝对判定——裁判本身不确定，把它当“探照灯”而不是“判决书”。</li>
+</ul>
+<h3 id="5-2-难题集-13-条-诊断用-不进发布门禁">5.2 难题集（13 条，诊断用，不进发布门禁）</h3>
+<p>基础集测不出「会不会漏、会不会跨文件对齐、会不会编」，所以另做一批题，全部有据可查：</p>
+<pre><code class="lang-bash">python tests/build_cases_hard.py                                    # 生成难题集
+python tests/eval_run.py --cases tests/eval_cases_hard.jsonl --sleep 2 \
+       --out tests/report_hard.json                                 # 单独跑难题
+python tests/eval_run.py --include-hard                             # 或与基础集一起跑（诊断）</code></pre>
+<table><thead><tr><th>类别</th><th>条数</th><th>考什么</th><th>例</th></tr></thead><tbody><tr><td><code>multihop</code> 多跳</td><td>4</td><td>需 2+ 知识块组合，漏一处就不完整</td><td>65 岁以上首次买 R4 要办哪些手续</td></tr><tr><td><code>numeric</code> 数值边界</td><td>4</td><td>易错答</td><td>首次买 R2 需要双录吗（答案：不需要）</td></tr><tr><td><code>conflict</code> 跨文件口径</td><td>3</td><td>同一概念在不同文件口径不同</td><td>双录 6 个月 vs 档案 5 年</td></tr><tr><td><code>gap</code> 资料空白</td><td>2</td><td>该说“未提供”而不是编</td><td>稳盈系列七日年化是多少（资料没写）</td></tr></tbody></table>
+<p><strong>作用</strong>：这批题一跑就把三个真实缺陷暴露出来了（详见 8. 已知风险）——检索召回不足、引用强制误伤短答案、抽取式兜底不会说“不知道”。 实测：修复前 <strong>10/13（76.9%）</strong>，修掉引用强制与断言问题后 <strong>12/13（92.3%）</strong>，剩余 H10 是检索召回不足导致的真实失败。</p>
+<p><strong>召回断言（L1 新增）</strong>：<code>expect.retrieval_contains</code> / <code>retrieval_contains_any</code> 检查「该题所需的条款是否被召回」。</p>
+<pre><code class="lang-json">{&quot;id&quot;: &quot;H10&quot;, &quot;expect&quot;: {&quot;behavior&quot;: &quot;answer&quot;,
+  &quot;output_contains_any&quot;: [&quot;不匹配确认书&quot;, &quot;风险不匹配&quot;],
+  &quot;retrieval_contains_any&quot;: [&quot;风险不匹配&quot;, &quot;风险承受能力等级&quot;, &quot;第二十九条&quot;]}}</code></pre>
+<p><strong>为什么必须有它</strong>：L3 裁判只看*检索到的*资料。条款没召回时，模型回「资料中未找到」，对裁判而言反而是<strong>忠实</strong>的，会给 5 分。也就是说 <strong>L3 无法发现检索缺口</strong>，这块只能靠确定性的召回断言（或人工）来测。</p>
+<h3 id="5-3-异构裁判-换模型判-消自偏好">5.3 异构裁判（换模型判，消自偏好）</h3>
+<p>同源裁判（用被测模型判自己）会系统性给高分。所以裁判模型可以单独指定：</p>
+<pre><code class="lang-bash"># 换一个模型家族做裁判，与被测模型不同即可
+python tests/eval_l3.py --report tests/report_hard.json \
+       --judge-model &lt;另一个模型名&gt; \
+       --out tests/report_l3_hard_cross.json</code></pre>
+<ul>
+<li><code>--judge-model</code> 指定裁判模型；端点复用 <code>LLM_BASE_URL</code>，要换端点就换环境变量。</li>
+<li>建议：裁判尽量选与被测不同的模型家族，否则分数会整体偏高；报告里会记录 <code>judge_channel</code> 与 <code>judge_model</code>。</li>
+<li>每次 L3 都会跑<strong>裁判校准</strong>（植入编造/答偏/答半的错误答案），裁判抓不住就直接判该轮结果不可信。</li>
+</ul>
+<h3 id="5-4-召回评测-recall-k-mrr">5.4 召回评测（Recall@k / MRR）</h3>
+<p>L3 看不见检索缺口（裁判只看检索到的资料），所以召回必须单独测。</p>
+<pre><code class="lang-bash">python tests/eval_retrieval.py                        # 离线：bm25 / vector / hybrid
+python tests/eval_retrieval.py --expand --sleep 1     # 再加查询扩展（需 Key）</code></pre>
+<p><strong>实测（11 条带召回标签的难题，top_k=4）</strong>：</p>
+<table><thead><tr><th>策略</th><th>R@1</th><th>R@4</th><th>MRR</th><th>未命中</th></tr></thead><tbody><tr><td>bm25</td><td>72.7%</td><td>90.9%</td><td>0.883</td><td>H10</td></tr><tr><td>bm25 + 查询扩展</td><td><strong>81.8%</strong></td><td><strong>100%</strong></td><td><strong>0.909</strong></td><td>—</td></tr><tr><td>vector（默认，向量召回 + 重排）</td><td>72.7%</td><td>90.9%</td><td>0.883</td><td>H10</td></tr><tr><td>hybrid</td><td>72.7%</td><td>90.9%</td><td>0.900</td><td>H10</td></tr><tr><td>hybrid + 查询扩展</td><td>72.7%</td><td>100%</td><td>0.864</td><td>—</td></tr></tbody></table>
+<p>结论：</p>
+<ol>
+<li><strong>默认链路是向量召回 + 重排</strong>：<code>VectorRerankRetriever</code> 用字符 n-gram 向量做候选召回，再用原问题词覆盖、长片段命中、BM25 和标题命中重排；配置 embedding 后可切到 <code>EmbeddingRetriever</code>（真语义召回）。</li>
+<li><strong>在本语料上，字符 n-gram 向量与 BM25 的 R@1 / R@4 持平</strong>（72.7% / 90.9%），差异主要在排序细节。真 embedding 的增益尚未在本语料标注集上实测（没有可用的 embedding 凭据），所以不写「一定更好」。</li>
+<li><strong>查询扩展仍是补齐同义改写的有效手段</strong>：H10（「测评 R3 想买 R5」）靠它从漏召回变成第 1 名命中；未配置 Key 时不会启用。</li>
+<li><strong>召回与重排必须分开</strong>：扩展词只用于召回，重排只看用户原问题，否则会把原本最相关的块压下去。</li>
+</ol>
+<blockquote>样本只有 11 条，单个 query 就是 9pp，结论是方向性的，不是统计显著的。</blockquote>
+<h2 id="6-落地清单-已实现-可扩展">6. 落地清单（已实现 / 可扩展）</h2>
+<p>已实现：</p>
+<ol>
+<li><strong>切分与入库</strong>：标题/条款感知切分；PDF / DOCX 由服务端解析为 Markdown；知识库可上传、删除、重建索引；索引后台构建、按文件增量解析。</li>
+<li><strong>检索</strong>：向量召回 + 重排为默认；BM25 / Hybrid 保留为对照；查询扩展可选，<code>build_retriever</code> 工厂隔离实现。</li>
+<li><strong>生成与引用</strong>：OpenAI 兼容端点；超时、重试、退避；引用强制与降级抽取；未命中返回相似问题。</li>
+<li><strong>评测</strong>：L1 确定性断言、L3 语义评分、Recall@k / MRR 召回评测；差评与上传文档可转用例。</li>
+<li><strong>可观测</strong>：<code>logs/trace.jsonl</code>、<code>/api/metrics</code>、<code>/metrics</code>（Prometheus）、<code>/api/health</code>、<code>/api/audit</code>；审计可输出 stdout 供采集。</li>
+<li><strong>生产控制</strong>：幂等、限流、审计、每日 token 上限、按比例灰度、配置回滚；多实例状态可切 Redis。</li>
+<li><strong>真向量检索</strong>：OpenAI 兼容 embedding（bge 同协议）+ FAISS / NumPy / 纯 Python 三档索引，manifest 记录模型/维度/指纹。</li>
+<li><strong>知识库版本化</strong>：版本目录、审批流、按文档粒度回滚，版本只增不改；未变更文件硬链接，保留最近 N 版。</li>
+<li><strong>界面与可达性</strong>：四页统一设计系统、深色模式、减动效、12px 字号下限与 AA 对比度；Playwright 四页 E2E 守住加载、溢出与控制台错误与侧栏收起不占位。</li>
+<li><strong>开放接口</strong>：可选 API Key（按 Key 限流与计成本）+ <code>/openapi.json</code>，可直接生成客户端或导入调试工具。</li>
+</ol>
+<p>可继续扩展：</p>
+<ul>
+<li>用 Chroma 承载元数据过滤与多租户（当前 FAISS 足够，接口已隔离）。</li>
+<li>在多实例上把灰度配置与知识库写锁也搬到 Redis / 配置中心。</li>
+<li>索引对象仍是整体重建（分块已增量、向量按内容缓存），10⁵ 块以上可换成可增量写的索引结构。</li>
+</ul>
+<h2 id="7-回滚">7. 回滚</h2>
+<ul>
+<li><strong>灰度配置</strong>：每次 <code>POST /api/admin/config</code> 都会把上一版快照写入 <code>logs/runtime.json</code>；<code>POST /api/admin/rollback</code> 恢复上一版（灰度比例与模型）。</li>
+<li><strong>代码</strong>：Git tag + <code>git revert</code>；<code>baseline.json</code> 是回滚后的验收基线。</li>
+<li><strong>知识库</strong>：<code>data/kb/versions/</code> 只增不改；整库回退用 <code>state.json</code> 的活动指针，单份文档回退用 <code>POST /api/kb/rollback_doc</code>（会生成新版本，不改历史）。</li>
+<li><strong>模型</strong>：<code>LLM_MODEL</code> 环境变量切换备用模型；失败自动降级抽取（<code>degraded=True</code>）。</li>
+</ul>
+<h2 id="8-已知风险与边界">8. 已知风险与边界</h2>
+<ul>
+<li><strong>不承诺零幻觉</strong>：靠「只依据资料 + 强制引用 + 答不出就明确说明无法找到答案」降低概率、缩小影响面。</li>
+<li><strong>离线抽取是兜底，不是正式答案</strong>：无 Key 时只做抽取式回填，语义质量有限，上线前务必接真实模型。</li>
+<li><strong>知识库 6 份</strong>：3 份手写样本 + 3 份 PDF 解析；换成真实制度 PDF 后需重建评测集（用真实 badcase）。</li>
+<li><strong>PDF 解析边界</strong>：只还原文本层——扫描件需 OCR（未含，上传时会被 422 拦下并提示）；加密 PDF 直接拒绝；表格结构与多栏/旋转排版不保证还原，只做行级输出。</li>
+<li><strong>合规</strong>：金融场景不提供投资建议、不做收益承诺；敏感信息不落日志。</li>
+<li><strong>401 invalid api key</strong>：Key 失效/复制错误，或 Key 属于第三方中转却仍指向官方端点——需把 <code>LLM_BASE_URL</code> 改成对应中转地址。401 属终止类异常，不重试，直接降级并透传 error。</li>
+<li><strong>429 限流</strong>：突发调用会触发 429；代码已尊重 <code>Retry-After</code> 并指数退避，批量评测用 <code>--sleep</code> 限速，必要时调大 <code>LLM_MAX_RETRIES</code>。</li>
+<li><strong>引用强制</strong>：LLM 回答若不含有效 <code>[n]</code>，自动降级为抽取式并标记 <code>degrade_reason=no_citation</code>，杜绝无出处答案。</li>
+<li><strong>零宽注入</strong>：输入先做零宽/控制字符归一化，避免用零宽字符绕过注入检测；并按合规拒绝「必涨/稳赚/荐股」类请求。</li>
+<li><strong>L3 裁判偏差</strong>：裁判与被测模型同源时存在自偏好，分数系统性偏高；基础集 26 条曾全 5.0，更可能反映“测试集太简单”。缓解手段：校准样本（默认跑）+ 异构裁判（<code>--judge-model</code> 换家族）。</li>
+<li><strong>同义改写仍是主要缺口</strong>：H10「测评 R3 想买 R5」时，问题措辞（R3/R5）与制度措辞（「超出其风险承受能力等级」）字面重合度低，字符 n-gram 补不上。配置真 embedding（<code>RETRIEVAL=embedding</code>）是正解，但本仓库没有可用的 embedding 凭据，<strong>未做同语料增益验证</strong>；切换前先跑 <code>tests/eval_retrieval.py</code>。</li>
+<li><strong>L3 的盲区（重要）</strong>：裁判只拿到检索到的 4 块资料。条款没被召回时，「资料中未找到」对裁判来说是<strong>忠实且相关</strong>的，会给 5 分——所以 H10 这种检索失败，L3 完全看不见（实测同源/异构裁判都给了高分）。<strong>结论：L3 评的是「对给定资料的忠实度」，不能替代召回质量评测</strong>；召回缺口必须用 <code>retrieval_contains*</code> 断言或人工抽检来测。</li>
+<li><strong>引用强制曾误伤短答案（已修）</strong>：模型给出正确但未标 <code>[n]</code> 的短答案时，原先直接降级为抽取式，答案反而更差（如「资料未提及收益率」被替换成无关段落）。现改为<strong>先补引用</strong>（<code>repair_citation</code>，只允许加标注/删无据句），补不上再降级；「资料未提供」类回答天然无出处，予以豁免并标记 <code>citation_exempt_reason</code>。</li>
+<li><strong>抽取式兜底不会说“不知道”</strong>：降级后只复述最相关段落，无法表达“资料没有”，L3 会判 relevance 1-2 分。这是兜底策略的固有短板，只能靠豁免与更好的降级文案缓解。</li>
+<li><strong>裁判侧限流</strong>：推理型裁判模型配额更紧，实测 2s 间隔下 9/13 被 429；<code>_judge_call</code> 已尊重 <code>Retry-After</code> 并把退避拉到 5/10/20/30 秒，批量跑建议 <code>--sleep 5</code>。</li>
+<li><strong>校准基准要挑对</strong>：「多问只答一半」的校准必须用<strong>真多问句</strong>（按分句判定），否则单问句截断后仍完整，会得出“裁判无区分力”的错误结论。</li>
+<li><strong>字符 n-gram 向量不等于语义检索</strong>：31 个块、术语密集，它补的是字面重合；默认用 <code>vector</code> 是为了零依赖可跑，不应据此宣称效果提升。真语义检索请配 <code>RETRIEVAL=embedding</code>。</li>
+<li><strong>embedding 增加一次在线查询延迟与费用</strong>：每题一次 <code>/embeddings</code> 调用（已加 128 条查询缓存），超时默认 8s；批量建库按 <code>EMBEDDING_BATCH</code> 计费。索引构建失败/服务不可达时降级词法检索，答案会标 <code>degraded</code>。</li>
+<li><strong>Redis 是新的单点</strong>：限流/幂等/成本依赖它；不可用时回退进程内状态（仍有限流），但多实例之间不再一致。生产建议主从 + 哨兵或托管 Redis，并把 <code>REDIS_TIMEOUT_S</code> 控制在 1~2s。</li>
+<li><strong>知识库审批锁是本机文件锁</strong>：<code>state.lock</code> 保证同机多进程串行；多实例部署时审批应由单实例处理，或把锁换成 Redis 分布式锁。上传本身不写活动目录，不会出现半写。</li>
+<li><strong>索引构建是「分块增量、索引整体替换」</strong>：未变更文档复用分块、未变更块复用向量缓存（不重复计费），但检索器对象仍按全量块重建（O(N) 内存与一次扫描），10⁵ 块以上建议换可增量写的索引；重建期间旧索引继续服务，新文档有短暂搜不到窗口。</li>
+<li><strong>查询扩展有延迟成本</strong>：每题多一次调用（实测 7~25s 波动），且强依赖模型质量；已做「失败静默回退 + 进程内缓存」，但高并发场景需要前置缓存或异步预生成。</li>
+<li><strong>上传支持 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code> / <code>.pptx</code> / <code>.xlsx</code> / <code>.csv</code> / <code>.tsv</code> / <code>.html</code> / <code>.eml</code></strong>：全部由服务端解析为 Markdown，上传即入库。<code>.doc</code> / <code>.xls</code> / <code>.msg</code> 老格式需先另存为新格式；扫描 PDF 与图片需先 OCR。</li>
+<li><strong>DOCX 解析边界</strong>：只读正文——文本框、页眉页脚、批注、脚注不提取；图片需 OCR（未含）；文档全是图片时会 422。合并单元格只做文本拼接，不还原跨行跨列。</li>
+<li><strong>自动出题的能力边界</strong>：<code>heuristic</code> 只能覆盖「有唯一数值」的事实，法规类无数字条款出不了题；<code>llm</code> 模式需要 Key，且模型可能出宽泛问题——关键词已强制校验必须原文出现，但仍建议出题后人工扫一眼。</li>
+<li><strong>OCR 仍未内置（v1.36.0 明确不做）</strong>：零依赖前提下没有可用的 OCR 引擎——Tesseract 要装二进制，</li>
+<p>PaddleOCR 要装模型与 torch，两者都违背「解压即用」。现在的做法是<strong>识别 + 明确报错 + 给出补救步骤</strong> （<code>need_ocr: true</code>），而不是假装能读。这也是与 RAGFlow / QAnything 最实质的差距，短期不打算补。</p>
+<li><strong>两万块以上检索超线性</strong>：1024 维下每千块从 21 ms 涨到 39 ms（缓存失效 + 内存带宽），</li>
+<p><code>docs/BENCHMARK.md</code> 有实测表。到这个规模请装 <code>numpy</code>（自动走 <code>NumpyFlatStore</code>）或改 <code>bm25</code>/<code>hybrid</code>； <code>/api/health</code> 的 warnings 会主动提示。纯 Python 路径没有偷偷优化，只是把拐点说了出来。</p>
+<li><strong>目录监听只看文件名/mtime/大小</strong>：编辑器若保留时间戳地改内容（少见），不会被发现。</li>
+<p>真按内容判断要读全文哈希，那是另一个量级的成本；需要立刻生效就 <code>POST /api/reload</code>。</p>
+<li><strong>OTel 只导 traces，且是 OTLP/HTTP+JSON</strong>：不支持 gRPC、gzip、采样率。要上量请让 collector 做批处理；</li>
+<p>导出失败只计数、不影响问答（这是刻意的——观测是旁路）。</p>
+<li><strong>页码只对 PDF / PPTX 有（两者都写 <code>&lt;!--page:N--&gt;</code> 标记）</strong>：Markdown/DOCX/XLSX 没有可靠页概念，<code>page</code> 为 <code>null</code>，前端不显示「第 N 页」。</li>
+<p>PPTX 的页码来自 <code>slideN.xml</code> 的 N，与左侧序号通常一致；手工改名后可能不同。</p>
+<li><strong>内置 PDF 解析器的覆盖面有限</strong>：覆盖经典 xref / xref 流 / 对象流 / Flate / ASCIIHex / ASCII85 / Type0+ToUnicode / 简单字体；遇到无 ToUnicode 的 CID 字体会退化为「赌 CID=Unicode」，此时靠 <code>unmapped_ratio</code> 提示乱码风险，不保证正确。极端文件建议改用 <code>pypdf</code>（<code>.venv</code>）。</li>
+</ul>
+<h2 id="9-待核实清单">9. 待核实清单</h2>
+<ul>
+<li><code>[待核实: 各厂商上下文长度与单价以官方文档为准]</code></li>
+<li><code>[待核实: bge / OpenAI embedding 的实际维度与计费以模型卡/价格页为准；代码不硬编码维度，构建时探测]</code></li>
+<li><code>[待核实: 监管条款摘录来自公开文件，正式使用前以官方原文为准]</code></li>
+<li><code>[待核实: 生产环境的统一鉴权、网关限流与密钥托管以实际部署平台为准；当前仅有 ADMIN_TOKEN 保护管理接口]</code></li>
+<li><code>[待核实: Redis 高可用方案（主从/哨兵/集群）与 maxmemory 策略以部署环境为准；当前只验证单实例语义]</code></li>
+<li><code>[待核实: IVF 的 nlist/nprobe 需在真实语料上以 Recall@k 调参；本仓库 31 块使用 flat，未做大规模基准]</code></li>
+</ul>
+<h2 id="10-检查更新">10. 检查更新</h2>
+<p>设置 → 安装 → 「检查更新」（点页脚版本号也直接到这里）。<strong>只查不装</strong>：</p>
+<ol>
+<li>点一下 → 服务端读 GitHub 的 <code>releases/latest</code>（4 秒超时，结果缓存 10 分钟，未认证额度只有 60 次/小时）；</li>
+<li><strong>有新版本</strong> → 显示版本号、发布日期，以及「下载应用包 / 下载插件包 / 更新说明」三个链接；</li>
+<li><strong>已是最新</strong> → 显示两边版本号，不弹窗、不打扰；</li>
+<li><strong>连不上</strong> → 说明是离线还是被代理拦，并给发布页链接，不假装成功。</li>
+</ol>
+<p>为什么不自动替换文件：服务正在用的 <code>.py</code> 被覆盖，下一次 import 就是半新半旧， 排查成本远高于手动换一次目录。升级＝下载新包、解压到新目录、<code>NOTE_HOME</code> 仍指原目录。</p>
+<h2 id="11-文档与发布">11. 文档与发布</h2>
+<table><thead><tr><th>文档</th><th>内容</th></tr></thead><tbody><tr><td><a href="docs/ARCHITECTURE.md">docs/ARCHITECTURE.md</a></td><td>为什么不是 Agent、链路时序、组件职责、失败处理矩阵</td></tr><tr><td><a href="docs/EVALUATION.md">docs/EVALUATION.md</a></td><td>数据集构成、L1/L3/召回口径、实测结果与局限</td></tr><tr><td><a href="docs/SECURITY.md">docs/SECURITY.md</a></td><td>密钥处理、输入防护、威胁模型与已知缺口</td></tr><tr><td><a href="docs/PLUGIN.md">docs/PLUGIN.md</a></td><td>设置里的实体控件清单、MCP 插件集成方式、依赖与适用场景</td></tr><tr><td><a href="docs/PLUGIN_PACKAGE.md">docs/PLUGIN_PACKAGE.md</a></td><td>插件包说明：三段 JSON、7 个工具、常见问题</td></tr><tr><td><a href="docs/SKILL.md">docs/SKILL.md</a></td><td>技能包说明：触发方式、参数、安装/卸载、目录结构与验证</td></tr><tr><td><a href="docs/LAYOUT.md">docs/LAYOUT.md</a></td><td>界面排版方案：结构对照、API 接入流程、存储设计、开源项目取舍</td></tr><tr><td><a href="docs/ROADMAP.md">docs/ROADMAP.md</a></td><td>改进优先级（P0–P3）、工作量与不推荐做的事</td></tr><tr><td><a href="docs/AUDIT.md">docs/AUDIT.md</a></td><td>两轮代码审查：问题、证据、修复与实测数据</td></tr><tr><td><a href="docs/RELEASE.md">docs/RELEASE.md</a></td><td>版本号、打包、解压验证、Release 流程</td></tr><tr><td><a href="CONTRIBUTING.md">CONTRIBUTING.md</a></td><td>本地开发、提交前自检、PR 约定</td></tr><tr><td><a href="CHANGELOG.md">CHANGELOG.md</a></td><td>版本变更记录</td></tr></tbody></table>
+<p>应用包与插件包随 <a href="https://github.com/dongshu710/doc-qa-assistant/releases/latest">Releases</a> 发布。</p>
+<h2 id="12-license">12. License</h2>
+<p><a href="LICENSE">MIT</a>。演示知识库为模拟样本与公开条款摘录，不代表任何机构正式制度。</p><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

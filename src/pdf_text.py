@@ -651,8 +651,16 @@ def _page_list(objs: dict[int, _Obj]) -> list[tuple[_Obj, bytes | None]]:
     return pages
 
 
-def extract_text(data: bytes) -> tuple[str, dict]:
-    """从 PDF 字节取文本。返回 (文本, 统计信息)。"""
+def extract_pages(data: bytes) -> tuple[list[tuple[int, str]], dict]:
+    """按页返回文本：`[(页码, 文本), ...]`，页码从 1 开始。
+
+    为什么要有这个函数（而不是继续只返回拼好的全文）：引用要么能给到页，
+    要么就只能在几十页里手工搜。页边界一旦在拼接时丢掉，后面任何一层都补不回来
+    ——chunk 只知道自己在全文的哪个字符位置，不知道那是第几页。
+
+    空页保留（文本为空串）：否则「第 3 页是图、第 4 页有字」会被算成两页连续，
+    页码整体前移，引用指到错误的位置。
+    """
     if not data.startswith(b"%PDF"):
         raise PDFError("不是 PDF 文件（缺少 %PDF 头）")
     # /Encrypt 通常在文件尾部 trailer 里，不能只看开头；用「引用或字典」限定，避免正文误判
@@ -665,22 +673,30 @@ def extract_text(data: bytes) -> tuple[str, dict]:
     _expand_objstm(objs)
 
     pages = _page_list(objs)
-    texts: list[str] = []
+    out: list[tuple[int, str]] = []
     fonts_all: dict[str, _Font] = {}
-    for page, resources in pages:
+    for number, (page, resources) in enumerate(pages, 1):
         fonts = _page_fonts(objs, resources)
         fonts_all.update(fonts)
-        text = _extract_page(_page_content(objs, page), fonts)
-        if text:
-            texts.append(text)
+        out.append((number, _extract_page(_page_content(objs, page), fonts) or ""))
 
-    joined = "\n\n".join(texts)
+    joined = "\n\n".join(text for _number, text in out if text)
     unmapped = sum(f.unmapped for f in fonts_all.values())
     total = sum(f.total for f in fonts_all.values()) or 1
-    return joined, {
+    return out, {
         "engine": "builtin",
         "pages": len(pages),
         "chars": len(joined),
         "fonts": len(fonts_all),
         "unmapped_ratio": round(unmapped / total, 3),
     }
+
+
+def extract_text(data: bytes) -> tuple[str, dict]:
+    """从 PDF 字节取文本。返回 (文本, 统计信息)。
+
+    行为与历史版本逐字节一致（空页不参与拼接）：调用方与评测基线都按这个口径，
+    改这里等于悄悄改了所有既有文档的分块结果。
+    """
+    pages, meta = extract_pages(data)
+    return "\n\n".join(text for _number, text in pages if text), meta

@@ -46,6 +46,7 @@ RULES: tuple[tuple[str, str], ...] = (
     ("/api/cases", API),
     ("/api/examples", API),
     ("/api/keywords", API),
+    ("/api/search", API),   # 检索调试：返回原文片段与分数
     # 重建关键词会重写索引、还可能调模型补词，handler 里本来就要求 admin。
     # 表里不标就会让 describe() 与测试以为它是 api 级——权限文档直接写错。
     ("/api/keywords/rebuild", ADMIN),
@@ -59,6 +60,10 @@ RULES: tuple[tuple[str, str], ...] = (
     # 等于把「按问题检索语料原文」这个能力对全网敞开（单机也一样，任意网页都能请求回环）。
     # 实际凭据用 `Authorization: Bearer <API_KEY>`，与 Dify 面板里填的密钥是同一个。
     ("/dify", API),
+    # OpenAI 兼容面（给 SDK / LiteLLM / LangChain 用）。必须显式登记：
+    # 它不在 /api/ 下，不登记会落到默认 open——等于把「按问题检索语料并生成」
+    # 对全网敞开，比 /dify（只检索不生成）更严重。
+    ("/v1", API),
 )
 
 # 页面清单只登记一次：`_get_page_html` 按这里的键去取 HTML。
@@ -71,6 +76,8 @@ PAGE_ROUTES: dict[str, str] = {
     # 汇报页：既是展示页，也是管理台入口。内容随数据变，所以由 handler 实时渲染
     # （`?download=1` 走同一个路径返回附件，不新增 API 端点）。
     "/report": "report",
+    # 检索调试台：只读，用来解释「为什么没有答案」
+    "/debug": "debug",
 }
 # 旧入口：只做跳转，收藏夹里的老地址不至于 404
 PAGE_ALIASES: tuple[str, ...] = ("/", "/index.html", "/insights", "/dashboard")

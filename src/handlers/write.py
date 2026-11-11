@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore)
+from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore, openai_compat as compat)
 from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYTES,
                      DOC_MAX_BYTES,
                      MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
@@ -28,6 +28,11 @@ from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYT
 # 流式回答同样是长连接，必须和 /mcp 共用同一套名额。
 # 之前这里没接，`_SSE_LIMIT` 只护住了 MCP，问答流是完全不受限的。
 from .base import sse_acquire, sse_limit, sse_release
+
+
+def behavior_of(result: dict) -> str:
+    """把行为收敛成一个低基数标签——span 属性做维度，不能带自由文本。"""
+    return str((result or {}).get("behavior") or "unknown")[:24]
 
 
 def make_write(deps):
@@ -68,6 +73,7 @@ def make_write(deps):
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes
     _copy_notes = deps._copy_notes
+    tracer = deps.tracer
 
     class WriteRoutes:
         # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
@@ -77,6 +83,12 @@ def make_write(deps):
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
             if self._guard("POST", path):
+                return
+            if path == "/v1/chat/completions":
+                # OpenAI 兼容面：给 SDK / LiteLLM / LangChain 用。
+                # 放在最前面是因为它不在 `/api/` 下，下面那张白名单与体积表
+                # 都是按 /api 组织的，混进去会把两套语义搅在一起。
+                self._post_openai()
                 return
             if path == "/mcp":
                 # MCP over HTTP：JSON-RPC 直接 POST，复用同一份 tools 与 NoteService
@@ -132,6 +144,7 @@ def make_write(deps):
                             "/api/cases/from_doc", "/api/cases/run",
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
                             "/api/keywords/rebuild", "/api/session/clear",
+                            "/api/search/debug",
                             "/api/admin/config", "/api/admin/rollback",
                             "/dify/retrieval"):
                 self._not_found(self.command, path)
@@ -173,7 +186,7 @@ def make_write(deps):
             elif path.startswith(("/api/knowledge/", "/api/kb/")):
                 self._post_kb(path, payload)
             elif (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
-                  or path in ("/api/feedback", "/api/reload")):
+                  or path in ("/api/feedback", "/api/reload", "/api/search/debug")):
                 self._post_data(path, payload)
             elif path == "/dify/retrieval":
                 # Dify 会把配置的端点名后面拼上 /retrieval，所以这里就这一个路径。
@@ -206,6 +219,186 @@ def make_write(deps):
             # 没有命中就回空数组。Dify 的约定是「检索不到不算错」，它会把这条知识库
             # 当没有贡献继续走；这里回 404/500 反而会让整个应用报错。
             self._json({"records": items})
+
+        def _compat_error(self, exc: "compat.CompatError",
+                          extra_headers: dict | None = None) -> None:
+            """OpenAI 形状的错误体。SDK 只读 `error.message`，回主协议会让它失明。"""
+            metrics.inc("rag_openai_error_total", {"code": exc.code})
+            self._json(exc.body(), exc.status, extra_headers=extra_headers)
+
+        def _post_openai(self) -> None:
+            """OpenAI 兼容的 chat.completions：非流式与流式两条路。
+
+            复用 `_ask_preflight`：鉴权、限流、幂等、灰度、预算五件事一套口径。
+            另起一套的话，同一个 Key 在 `/api/ask` 与 `/v1` 上会有两种限额，
+            用户看到的是「有时 429 有时不限」。
+            """
+            body, err = self._read_note_body(max_bytes=ASK_MAX_BYTES)
+            if err:
+                self._compat_error(compat.CompatError(err))
+                return
+            model = str(body.get("model") or pipe.settings.model or "jiyi")
+            try:
+                for name in compat.UNSUPPORTED:
+                    if body.get(name):
+                        raise compat.CompatError(
+                            f"不支持 {name}：本服务只依据资料作答，不做工具调用",
+                            code="unsupported_parameter")
+                try:
+                    if int(body.get("n") or 1) != 1:
+                        raise compat.CompatError("只支持 n=1（一次检索只有一份证据）",
+                                                 code="unsupported_parameter")
+                except (TypeError, ValueError):
+                    raise compat.CompatError("n 必须是整数", code="invalid_parameter")
+                query, ignored = compat.messages_to_query(body.get("messages"))
+            except compat.CompatError as exc:
+                self._compat_error(exc)
+                return
+
+            pre, fail = self._ask_preflight({"query": query,
+                                             "session_id": body.get("session_id")})
+            if fail:
+                payload, code, headers = fail
+                kind = {401: "authentication_error", 429: "rate_limit_error"}.get(
+                    int(code), "invalid_request_error")
+                self._compat_error(compat.CompatError(
+                    str(payload.get("message") or "请求被拒绝"), status=int(code),
+                    kind=kind, code=str(payload.get("error") or "request_rejected")),
+                    headers)
+                return
+
+            if body.get("stream"):
+                # 长连接名额与 /api/ask/stream、/mcp 共用一套，断开必须还回去。
+                if not sse_acquire():
+                    self._compat_error(compat.CompatError(
+                        f"同时进行的流式回答已达上限（{sse_limit()} 条）", status=429,
+                        kind="rate_limit_error", code="too_many_streams"),
+                        {"Retry-After": "2"})
+                    return
+                cancel = threading.Event()
+                try:
+                    self._openai_stream(pre, model, cancel, ignored)
+                finally:
+                    cancel.set()
+                    sse_release()
+                return
+
+            started = time.monotonic()
+            result = pipe.ask(pre["query"], model=pre["model"],
+                              force_extractive=pre["budget_blocked"],
+                              session_id=pre["session_id"])
+            self._annotate_result(result, pre)
+            self._record_ask(result, pre, started, "/v1/chat/completions")
+            payload = compat.to_chat_completion(result, model, pre["request_id"])
+            if ignored:
+                payload["x_ignored_parts"] = ignored
+            self._json(payload, extra_headers={
+                "X-Request-Id": pre["request_id"],
+                "X-Answer-Path": str(result.get("path") or "rag"),
+            })
+
+        def _openai_stream(self, pre: dict, model: str,
+                           cancel: threading.Event, ignored: int = 0) -> None:
+            """把内部事件流翻译成 `chat.completion.chunk`。
+
+            与 `/api/ask/stream` 的差别只有协议格式：内部是 `delta/replace/final`
+            三种语义，OpenAI 只有「追加」。`replace` 用 `suffix_for` 折算成追加，
+            折算不掉的极端情况（生成被整段改写）会在结尾用 final 再补一次差量。
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+            completion = compat.completion_id()
+            created = int(time.time())
+            sent = ""
+
+            def emit(frame: str) -> bool:
+                try:
+                    self.wfile.write(frame.encode("utf-8"))
+                    self.wfile.flush()
+                    return True
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                    # 客户端走了：立刻取消生成，别让这一轮 token 白烧。
+                    self.close_connection = True
+                    cancel.set()
+                    return False
+
+            if not emit(compat.to_sse_chunk("", model, completion, created, role=True)):
+                return
+
+            started = time.monotonic()
+            events: queue.Queue = queue.Queue()
+
+            def produce() -> None:
+                stream = None
+                try:
+                    stream = pipe.ask_stream(pre["query"], model=pre["model"],
+                                             force_extractive=pre["budget_blocked"],
+                                             session_id=pre["session_id"])
+                    for item in stream:
+                        if cancel.is_set():
+                            break
+                        events.put(item)
+                except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
+                    events.put(("__error__", str(exc)[:300]))
+                finally:
+                    if stream is not None:
+                        closer = getattr(stream, "close", None)
+                        if closer is not None:
+                            try:
+                                closer()
+                            except Exception:  # noqa: BLE001
+                                pass
+                    events.put(("__done__", None))
+
+            threading.Thread(target=produce, name="openai-stream", daemon=True).start()
+            final: dict | None = None
+            try:
+                while True:
+                    if time.monotonic() - started > SSE_MAX_SECONDS:
+                        emit(compat.error_frame(f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断",
+                                                "timeout_error", "timeout"))
+                        break
+                    try:
+                        event, data = events.get(timeout=SSE_HEARTBEAT_S)
+                    except queue.Empty:
+                        # OpenAI 客户端不解析 SSE 注释，发心跳只会变成噪音；
+                        # 300 秒硬上限已经保证连接不会无限挂着。
+                        continue
+                    if event == "__done__":
+                        break
+                    if event == "__error__":
+                        emit(compat.error_frame(str(data)))
+                        break
+                    if event in ("delta", "replace"):
+                        piece = compat.suffix_for(sent, str(data or ""))
+                        if piece:
+                            sent += piece
+                            if not emit(compat.to_sse_chunk(piece, model, completion, created)):
+                                return
+                    elif event == "final":
+                        final = data
+                        piece = compat.suffix_for(sent, str(data.get("answer") or ""))
+                        if piece:
+                            sent += piece
+                            if not emit(compat.to_sse_chunk(piece, model, completion, created)):
+                                return
+            except (BrokenPipeError, ConnectionResetError):
+                cancel.set()
+                return
+
+            if final is not None:
+                self._annotate_result(final, pre)
+                self._record_ask(final, pre, started, "/v1/chat/completions")
+            usage = compat.usage_of(final or {})
+            emit(compat.to_sse_chunk("", model, completion, created, finish="stop",
+                                     usage=usage))
+            emit(compat.sse_done())
 
         def _post_admin(self, path: str, payload: dict) -> None:
             """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""
@@ -308,7 +501,12 @@ def make_write(deps):
             self._not_found(self.command, path)
 
         def _post_kb_doc(self, path: str, payload: dict) -> None:
-            """PDF / DOCX 上传：解码、解析、暂存，与文本走同一条审批链。"""
+            """文档上传：解码、解析、暂存，与文本走同一条审批链。
+
+            支持 PDF / DOCX / PPTX / XLSX / CSV / TSV / HTML / EML，全部由
+            `ingest` 按扩展名分派；解析结果统一成 Markdown 才进知识库，
+            所以下游（切分、检索、引用、审批）完全不需要知道原始格式。
+            """
             if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
                 name = _safe_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
                 if not name:
@@ -318,7 +516,7 @@ def make_write(deps):
                     return
                 blob = payload.get("data_b64") or payload.get("file") or ""
                 if not isinstance(blob, str) or not blob.strip():
-                    self._json({"ok": False, "error": "PDF 内容为空"}, 400)
+                    self._json({"ok": False, "error": "文件内容为空"}, 400)
                     return
                 try:
                     data = base64.b64decode(blob, validate=False)
@@ -332,8 +530,10 @@ def make_write(deps):
                 # 文件头先校验：改后缀的假文件属于「请求有问题」（400），
                 # 真文件解析失败（加密/扫描件）才是「内容不可用」（422）。
                 ext = os.path.splitext(name)[1].lower()
-                # csv/tsv 是纯文本，没有魔数可校验；xlsx/docx 都是 ZIP
-                magic = {".pdf": b"%PDF", ".docx": b"PK", ".xlsx": b"PK"}.get(ext, b"")
+                # csv/tsv/html/eml 是纯文本，没有魔数可校验；
+                # docx/pptx/xlsx 都是 ZIP（PK\x03\x04），PDF 有自己的头。
+                magic = {".pdf": b"%PDF", ".docx": b"PK", ".pptx": b"PK",
+                         ".xlsx": b"PK"}.get(ext, b"")
                 if magic and not data.startswith(magic):
                     self._json({"ok": False,
                                 "error": f"不是有效的 {ext.lstrip('.').upper()} 文件（文件头不匹配）"}, 400)
@@ -383,6 +583,14 @@ def make_write(deps):
                         "pages": res.get("pages"), "paragraphs": res.get("paragraphs"),
                         "tables": res.get("tables"), "note": res.get("note"),
                         "sheets": res.get("sheets"), "rows": res.get("rows"),
+                    "slides": res.get("slides"),
+                    "slides_empty": res.get("slides_empty"),
+                    "attachments": res.get("attachments"),
+                        # 新增格式的统计：PPT 页数、邮件附件数。不回传的话
+                        # 用户看不到「这 3 页里 2 页是图」这种关键信息。
+                        "slides": res.get("slides"),
+                        "slides_empty": res.get("slides_empty"),
+                        "attachments": res.get("attachments"),
                         "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
                         "pending": approved is None, "change_id": change_id,
                         "version": store.active_version(),
@@ -631,7 +839,32 @@ def make_write(deps):
             self._not_found(self.command, path)
 
         def _post_ops(self, path: str, payload: dict) -> None:
-            """运维动作：反馈落盘、关键词重建、清会话、索引热载。"""
+            """运维动作：反馈落盘、关键词重建、清会话、索引热载、检索调试。"""
+            if path == "/api/search/debug":
+                # 只读动作，但用 POST：query 可能很长，放 query string 会被
+                # 各种代理截断，中文还要再过一层编码，排障时最难查的就是这个。
+                query = payload.get("query")
+                if not isinstance(query, str) or not query.strip():
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "需要 query（要调试的检索问题）"}, 400)
+                    return
+                top_k = payload.get("top_k")
+                if top_k is not None:
+                    try:
+                        top_k = int(top_k)
+                    except (TypeError, ValueError):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "top_k 必须是整数"}, 400)
+                        return
+                try:
+                    detail = pipe.debug_search(query.strip(), top_k=top_k)
+                except Exception as exc:  # noqa: BLE001 —— 索引异常要如实报，不假装空结果
+                    self._json({"ok": False, "error": "retrieval_error",
+                                "message": self._error_text(exc, "检索失败")}, 500)
+                    return
+                detail["ok"] = True
+                self._json(detail)
+                return
             if path == "/api/feedback":
                 # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
                 # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
@@ -914,6 +1147,21 @@ def make_write(deps):
             result["cost_usd"] = cost_usd
             guards.cost.add(tokens)
             guards.idem.put(pre["idem_key"], result)
+
+            if tracer is not None:
+                # 旁路：emit 只入队，永不抛、永不阻塞（队列满就丢并计数）。
+                # 用 started 的单调钟换纳秒起点，保证 span 时长与 latency_ms 同一口径。
+                elapsed_ns = int((time.monotonic() - started) * 1e9)
+                tracer.emit("rag.ask", time.time_ns() - max(0, elapsed_ns), {
+                    "rag.behavior": behavior_of(result),
+                    "rag.path": str(result.get("path") or "rag"),
+                    "rag.mode": str(result.get("mode") or ""),
+                    "rag.latency_ms": int(result.get("latency_ms") or 0),
+                    "rag.citations": len(result.get("citations") or []),
+                    "rag.tokens": tokens,
+                    "rag.api_called": bool(result.get("api_called")),
+                    "http.route": path_label,
+                })
 
             behavior = str(result.get("behavior") or "unknown")
             mode = str(result.get("mode") or "none")

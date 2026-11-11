@@ -158,6 +158,9 @@ class Settings:
     kb_dir: str = "data/kb"
     kb_seed_dir: str = "data/knowledge"   # 首次初始化版本库时的种子目录
     kb_async_reload: str = "on"       # on=上传后立即返回、后台重建索引 | off=同步重建
+    # 目录监听间隔（秒）。0 表示关闭。默认开启是因为「改了文件不生效」是静默故障：
+    # 用户不会怀疑索引，只会怀疑检索不准。5 秒是「改完再看结果」的自然节奏。
+    kb_watch_seconds: int = 5
     kb_keep_versions: int = 30        # 保留最近 N 个版本（0=不清理），活动版本永不删除
     # 对外接口鉴权：为空=开放（仅按 IP 限流）；配置后 /api/ask* 必须带 Key
     api_keys: str = ""
@@ -250,6 +253,7 @@ def load_settings() -> Settings:
         kb_dir=_first_env("KB_DIR", default="data/kb"),
         kb_seed_dir=_first_env("KB_SEED_DIR", default="data/knowledge"),
         kb_async_reload=(_first_env("KB_ASYNC_RELOAD", default="on") or "on").strip().lower(),
+        kb_watch_seconds=_env_int("KB_WATCH_SECONDS", default=5),
         kb_keep_versions=_env_int("KB_KEEP_VERSIONS", 30),
         api_keys=_first_env("API_KEYS", default="").strip(),
         log_sink=(_first_env("LOG_SINK", default="file") or "file").strip().lower(),

@@ -24,3 +24,10 @@ KB_CSS = load("kb.css")
 KB_BODY = load("kb.html")
 KB_SCRIPT = load("kb.js")
 KB_HTML = shell("kb", "知识库 · " + BRAND, KB_BODY, KB_SCRIPT, KB_CSS)
+
+# 检索调试台：答错时用来分清「没检索到」和「检索到了但被阈值挡住」。
+# 单独一页而不是塞进知识库页：它的默认动作是「摊开所有候选」，
+# 与知识库页「管理文档」的心智相反。
+DEBUG_CSS = load("debug.css")
+DEBUG_HTML = shell("debug", "检索调试 · " + BRAND, load("debug.html"),
+                   load("debug.js"), DEBUG_CSS)

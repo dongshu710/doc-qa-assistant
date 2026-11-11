@@ -158,7 +158,11 @@ def scattered_entries() -> dict[str, dict]:
             if name in out:
                 continue
             line = text[:match.start()].count("\n") + 1
-            out[name] = {"field": "", "default": "", "where": f"{path.relative_to(ROOT).as_posix()}:{line}"}
+            # 只记文件，不记行号：行号会随任何无关编辑漂移，于是「改一行别处代码」
+            # 就能让 .env.example 过期、CI 变红，逼着人反复重跑生成器。
+            # 文件级引用已经够定位（一个文件里通常只有一两处 env 读取）。
+            out[name] = {"field": "", "default": "",
+                         "where": path.relative_to(ROOT).as_posix()}
     return out
 
 

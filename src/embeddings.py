@@ -235,13 +235,29 @@ class OpenAIEmbeddingProvider:
 
 
 class EmbeddingCache:
-    """按内容哈希缓存向量；只缓存成功结果，失败不落盘。"""
+    """按内容哈希缓存向量；只缓存成功结果，失败不落盘。
 
-    def __init__(self, path: str, model: str, dim: int):
+    这就是「改一篇文档只付一篇的钱」的实现：键是内容哈希，没变的块直接命中。
+    也因此必须设上限——每次改条款都会留下一个新版块的向量，旧版不会再被命中，
+    不清理的话缓存文件会随编辑次数线性增长（几个月后是几百 MB 的死数据）。
+    """
+
+    def __init__(self, path: str, model: str, dim: int,
+                 max_entries: int | None = None):
         self.path = path
         self.model = model
         self.dim = dim
+        # 上限按条数而不是字节：条数可预测，向量维度随 provider 变，
+        # 按字节算会让「换模型后上限突然不一样」。坏值退回默认，别让配置错误拖垮建库。
+        try:
+            limit = int(max_entries if max_entries is not None
+                        else os.environ.get("EMBEDDING_CACHE_MAX", "20000"))
+        except (TypeError, ValueError):
+            limit = 20000
+        self.max_entries = max(1000, limit)
         self._data: dict[str, list[float]] = {}
+        self._hits = 0
+        self._misses = 0
         self._dirty = False
         self._lock = threading.Lock()
         self._load()
@@ -272,17 +288,41 @@ class EmbeddingCache:
             vectors: list[list[float] | None] = []
             missing: list[int] = []
             for i, text in enumerate(texts):
-                vec = self._data.get(self._key(text))
+                key = self._key(text)
+                vec = self._data.get(key)
                 vectors.append(vec)
                 if vec is None:
+                    self._misses += 1
                     missing.append(i)
+                else:
+                    self._hits += 1
+                    # 命中就挪到末尾：dict 保序，于是「最久没被用到」自然排在最前，
+                    # 淘汰时不用再维护一份 LRU 链表。
+                    self._data[key] = self._data.pop(key)
             return vectors, missing
 
     def put_many(self, texts: list[str], vectors: list[list[float]]) -> None:
         with self._lock:
             for text, vec in zip(texts, vectors):
-                self._data[self._key(text)] = vec
+                key = self._key(text)
+                self._data.pop(key, None)
+                self._data[key] = vec
+            self._trim()
             self._dirty = True
+
+    def _trim(self) -> int:
+        """超出上限就从头淘汰。返回淘汰条数。"""
+        dropped = 0
+        while len(self._data) > self.max_entries:
+            self._data.pop(next(iter(self._data)))
+            dropped += 1
+        return dropped
+
+    def stats(self) -> dict:
+        """给健康检查用：命中多少、还差多少、缓存多大。"""
+        with self._lock:
+            return {"entries": len(self._data), "max_entries": self.max_entries,
+                    "hits": self._hits, "misses": self._misses}
 
     def save(self) -> None:
         if not self.path or not self._dirty:
@@ -290,6 +330,8 @@ class EmbeddingCache:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = self.path + ".tmp"
         try:
+            with self._lock:
+                self._trim()
             with self._lock, open(tmp, "w", encoding="utf-8") as f:
                 for key, vec in self._data.items():
                     f.write(json.dumps({"k": key, "v": vec}, ensure_ascii=False) + "\n")

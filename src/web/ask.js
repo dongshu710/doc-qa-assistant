@@ -157,7 +157,7 @@ function answerHTML(d){
   if(d.citations&&d.citations.length){
     h+='<div class="refs">'+d.citations.map(function(c){
       return '<button type="button" class="ref" data-doc="'+esc(c.doc_id||'')+'" data-chunk="'+(c.chunk_index==null?'':c.chunk_index)+'"'
-        +' data-snippet="'+esc(c.snippet||'')+'" title="查看原文"><b>'+esc(c.ref)+'</b>'+esc(c.title)+' · '+esc(c.section)+'</button>';
+        +' data-snippet="'+esc(c.snippet||'')+'" title="查看原文"><b>'+esc(c.ref)+'</b>'+esc(c.title)+' · '+esc(c.section)+(c.page?' · 第'+esc(c.page)+'页':'')+'</button>';
     }).join('')+'</div>';
   }
   if(d.retrieved&&d.retrieved.length){
@@ -193,7 +193,7 @@ function bindSource(){
       var d=await r.json();
       if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
       titleEl.textContent=d.title||doc;
-      subEl.textContent=(d.section||'')+' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
+      subEl.textContent=(d.section||'')+(d.page?' · 第 '+d.page+' 页':'')+' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
       var safe=esc(d.text||'');
       var needle=esc(snippet);
       if(needle && safe.indexOf(needle)>=0){ safe=safe.replace(needle,'<mark>'+needle+'</mark>'); }
@@ -296,7 +296,7 @@ function exportMarkdown(){
     if(d.citations&&d.citations.length){
       out.push('**引用**','');
       d.citations.forEach(function(c){
-        out.push('- ['+c.ref+'] '+c.title+' · '+c.section+(c.version?'（'+c.version+'）':''));
+        out.push('- ['+c.ref+'] '+c.title+' · '+c.section+(c.page?' · 第'+c.page+'页':'')+(c.version?'（'+c.version+'）':''));
       });
       out.push('');
     }

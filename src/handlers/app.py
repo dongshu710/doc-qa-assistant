@@ -26,8 +26,10 @@ from ..config import api_key, load_settings
 from ..guards import Guards
 from ..metrics_exporter import Metrics
 from ..notes.service import NoteService
+from ..otel import make_exporter
 from ..pipeline import RAGPipeline
 from ..threadstore import ThreadStore
+from ..watcher import KnowledgeWatcher
 from ..version import __version__
 from .common import (_knowledge_dir, _raw_dir)
 
@@ -36,6 +38,12 @@ from .base import make_base
 from .read import make_read
 from .resources import make_resources
 from .write import make_write
+
+
+# 两万块是实测拐点：1024 维下每千块耗时从 21 ms 涨到 39 ms，
+# 再往上就是内存带宽瓶颈，换机器没用，只能换实现。阈值写在代码里而不是配置里，
+# 因为它来自 benchmark，不是使用者的选择。
+SCALE_WARN_CHUNKS = 20000
 
 
 @dataclass
@@ -86,6 +94,7 @@ class AppDeps:
     _pick_folder: Any
     _count_notes: Any
     _copy_notes: Any
+    tracer: Any
 
 
 def build_app(host: str, port: int, knowledge_dir: str | None = None):
@@ -130,6 +139,14 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
 
     _bind_session_loader()
 
+    tracer = None
+    tracer_error = ""
+    try:
+        tracer = make_exporter()
+    except ValueError as exc:
+        # 端点配错要能被看见：静默忽略会让用户以为「已经接上了观测平台」
+        tracer_error = str(exc)
+
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
     feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
     raw_dir = _raw_dir()
@@ -146,8 +163,14 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         # 传统单目录模式（测试/批量导入）保持同步：调用方拿到的 chunks 必须是最终值。
         return store is not None and (pipe.settings.kb_async_reload or "on").strip().lower() == "on"
 
+    # 最近一次主动重建的时刻（单调钟）。目录监听用它做去抖：
+    # 上传/审批自己就会重建，而它同时会改动活动版本目录——监听看到同一个变更
+    # 又重建一次，两次重建撞在一起会让「上传返回的块数」与最终索引对不上。
+    last_reload = {"at": 0.0}
+
     def reload_kb(wait: bool | None = None) -> int | None:
         """重建索引。默认按 KB_ASYNC_RELOAD 走后台；返回 None 表示“已排队”。"""
+        last_reload["at"] = time.monotonic()
         target = store.active_dir() if store is not None else None
         if wait is None:
             wait = not async_reload()
@@ -327,6 +350,13 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
             out.append("embedding 最近一次调用失败，当前为词法兜底")
         if note_ref["service"] is None:
             out.append(f"笔记存储不可用：{note_ref['error']}")
+        # 规模警戒：纯 Python 精确检索的成本随块数线性涨，且 1024 维在两万块后
+        # 因缓存失效而超线性（见 docs/BENCHMARK.md）。这里不偷偷改实现，
+        # 只把「你已经在拐点上了」说出来——静默变慢比报错更难查。
+        chunks = len(pipe.chunks)
+        if chunks >= SCALE_WARN_CHUNKS:
+            out.append(f"知识库已有 {chunks} 块：纯 Python 检索在这个量级首字会到数百毫秒。"
+                       "可设 VECTOR_BACKEND=numpy（需装 numpy）或改用 RETRIEVAL=bm25/hybrid。")
         return out
 
     def _setup_state() -> dict:
@@ -481,7 +511,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         _runtime_warnings=_runtime_warnings, _setup_state=_setup_state,
         _apply_setup=_apply_setup, _mcp_targets=_mcp_targets,
         _picker_command=_picker_command, _pick_folder=_pick_folder,
-        _count_notes=_count_notes, _copy_notes=_copy_notes,
+        _count_notes=_count_notes, _copy_notes=_copy_notes, tracer=tracer,
     )
     ReadRoutes = make_read(deps)
     WriteRoutes = make_write(deps)
@@ -494,4 +524,47 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         do_HEAD = ReadRoutes.do_GET
 
     httpd = BoundedHTTPServer((host, port), Handler)
+
+    # 目录监听：外部改了知识库文件就自动重建索引。
+    # 放在这里而不是每次请求里判断——请求路径上的检查等于「每次提问多一次 scandir」，
+    # 而用户改文件后 5 秒内就该生效，需要一个独立的时间源。
+    watch_seconds = int(getattr(pipe.settings, "kb_watch_seconds", 0) or 0)
+    if watch_seconds > 0:
+        watch_state = {"dir": kb_dir()}
+
+        def _watch_reload() -> None:
+            """目录变化触发的重建。
+
+            要区分两种「变化」：
+            - **同一目录里的文件被外部改了**：必须重建，而且不能去抖——
+              用户连改两次文件，第二次也会被漏掉，那是比不监听更糟的行为。
+            - **活动版本目录被我们自己换掉了**（上传/审批产生新版本）：内容已经
+              由那条路径重建过，再重建一次只会让「上传返回的块数」与最终索引打架。
+              判据是目录路径变了 + 刚刚发生过重建。
+            """
+            current = kb_dir()
+            same_dir = current == watch_state["dir"]
+            watch_state["dir"] = current
+            if not same_dir and time.monotonic() - last_reload["at"] < watch_seconds + 1:
+                return
+            reload_kb()
+
+        watcher = KnowledgeWatcher(
+            lambda: kb_dir(),
+            _watch_reload,
+            interval=watch_seconds,
+            on_error=lambda text: guards.audit.write(
+                "kb.watch_error", client="watcher", reason=text[:200]),
+        )
+        watcher.start()
+        httpd.add_closer(watcher.stop)
+        httpd.kb_watcher = watcher
+
+    if tracer is not None:
+        tracer.start()
+        httpd.add_closer(tracer.stop)
+        httpd.tracer = tracer
+    elif tracer_error:
+        httpd.tracer_error = tracer_error
+
     return httpd, pipe

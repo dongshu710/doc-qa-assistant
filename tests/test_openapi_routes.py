@@ -25,7 +25,9 @@ FAILED = 0
 # 只认这几类开头：页面的 HTML 路由不在 OpenAPI 里，不算泄漏。
 # `/dify/` 是给 Dify 用的适配面，也要进这张表——它的消费者在外部，
 # 漏登记不会有本项目的页面报错，只会让对方的请求静默失败。
-WANTED = ("/api/", "/dify/", "/mcp", "/tools.json", "/openapi.json", "/metrics")
+# 扫描范围。`/v1/` 是 OpenAI 兼容面：它不在 /api 下，漏掉就会把「契约有、代码无」
+# 误报成幽灵端点——这个白名单本身就是「哪些前缀算我们的路由」的定义。
+WANTED = ("/api/", "/dify/", "/v1/", "/mcp", "/tools.json", "/openapi.json", "/metrics")
 
 # `/api/notes/{id}/assets/{name}` 这类模板里的参数段；判断「有实现」时要跳过。
 _PARAM = re.compile(r"^\{[a-z_]+\}$")

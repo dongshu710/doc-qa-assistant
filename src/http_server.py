@@ -28,6 +28,21 @@ class BoundedHTTPServer(ThreadingHTTPServer):
         self._slots = threading.BoundedSemaphore(self.max_workers)
         # 被拒的请求数。过载时这个数会涨，是「服务还活着但忙」的唯一外部证据。
         self.rejected_requests = 0
+        # 需要在停机时收尾的后台组件（目录监听等）。放这里而不是靠进程退出：
+        # 测试会在同一个进程里反复起停服务，线程不回收就会越堆越多。
+        self._closers: list = []
+
+    def add_closer(self, closer) -> None:
+        self._closers.append(closer)
+
+    def server_close(self) -> None:
+        for closer in self._closers:
+            try:
+                closer()
+            except Exception:  # noqa: BLE001 —— 收尾失败不能挡住端口释放
+                pass
+        self._closers.clear()
+        super().server_close()
 
     def process_request(self, request, client_address):
         # 槽位满时立刻回 503，而不是在 accept 阶段干等内核 backlog。

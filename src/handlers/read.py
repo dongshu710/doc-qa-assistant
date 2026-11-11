@@ -13,6 +13,7 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 from .. import (kbstore,
+                openai_compat,
                 report,
                 routing,
                 suggest)
@@ -22,7 +23,7 @@ from ..notes.tools import tools_payload as notes_tools_payload
 from ..openapi import build_spec
 from ..theme import FILES_PAGE
 from ..version import __version__
-from ..web_pages import ASK_HTML, KB_HTML
+from ..web_pages import ASK_HTML, DEBUG_HTML, KB_HTML
 from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
                      _safe_name)
 from .base import sse_acquire, sse_release
@@ -103,6 +104,12 @@ def make_read(deps):
                            405, {"Allow": "POST", **(self._cors_headers() or {})})
                 return
 
+            if path == "/v1/models":
+                # OpenAI 兼容：SDK 与 LiteLLM 启动时会先探这个端点，
+                # 拿不到就认为 base_url 配错，后面的 chat 请求根本不会发。
+                self._json(openai_compat.models_payload(
+                    pipe.settings.model or "jiyi"), 200, self._cors_headers())
+                return
             if path == "/tools.json":
                 host = self.headers.get("Host") or "127.0.0.1"
                 self._json(notes_tools_payload(__version__, f"http://{host}"))
@@ -162,7 +169,8 @@ def make_read(deps):
                 # 汇报页的数据每次都可能变（trace、知识库、配置），不能像静态页那样预拼
                 self._report_page(qs)
                 return
-            html = {"ask": ASK_HTML, "files": FILES_PAGE, "kb": KB_HTML}[page]
+            html = {"ask": ASK_HTML, "files": FILES_PAGE, "kb": KB_HTML,
+                    "debug": DEBUG_HTML}[page]
             self._send(200, html, "text/html; charset=utf-8")
 
         def _report_page(self, qs: dict) -> None:
@@ -236,6 +244,10 @@ def make_read(deps):
                     "sessions": pipe.sessions.status(),
                     "guards": guards.status(),
                     "index": index_payload(),
+                    # 目录监听状态：改了文件没生效时，这里能看出监听是否在跑
+                    "kb_watch": self._watch_status(),
+                    # 观测导出：没配时回 enabled=false；配错时把原因带出来
+                    "otel": self._otel_status(),
                     "auth": api_keys.describe(),
                     "runtime": {
                         # 明确告诉使用者：这是单实例内存态，不是集群
@@ -252,6 +264,22 @@ def make_read(deps):
                 self._send(200, metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
             else:
                 self._not_found(self.command, path)
+
+        def _watch_status(self) -> dict:
+            """监听线程的状态。关闭时也回 enabled=false，而不是省略这个键——
+            省略会让「没开」和「旧版本没有这个功能」看起来一样。"""
+            watcher = getattr(self.server, "kb_watcher", None)
+            if watcher is None:
+                return {"enabled": False}
+            return {"enabled": True, "interval_s": watcher.interval,
+                    "reloads": watcher.reloads, "last_error": watcher.last_error}
+
+        def _otel_status(self) -> dict:
+            tracer = getattr(self.server, "tracer", None)
+            if tracer is None:
+                error = getattr(self.server, "tracer_error", "")
+                return {"enabled": False, "error": error}
+            return tracer.stats()
 
         def _get_admin(self, path: str, qs: dict) -> None:
             """管理面：灰度配置、成本、审计、内部指标，级别在 routing 表里是 ADMIN。"""

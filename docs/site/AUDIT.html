@@ -1,0 +1,273 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AUDIT · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html" class="on">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="项目审查报告">项目审查报告</h1>
+<p>审查对象：<code>rag_assistant</code> v1.13.0（commit <code>b7406bb</code>） 审查维度：架构设计 / 代码质量 / 可维护性 / 依赖管理 / 错误处理 / 安全性 / 性能 / 测试覆盖 方法：全量静态扫描（15,808 行源码、33 个测试脚本）+ 关键路径抽样 + 既有实测数据</p>
+<blockquote>行号以本 commit 为准，改动后会漂移，按函数名检索更稳。</blockquote>
+<hr>
+<h2 id="一-横向数据">一、横向数据</h2>
+<table><thead><tr><th>指标</th><th>数值</th><th>说明</th></tr></thead><tbody><tr><td>源码总量</td><td>15,808 行 / 34 个模块</td><td>不含 tests、tools</td></tr><tr><td>最大三个文件</td><td><code>web_pages.py</code> 1,777 · <code>server.py</code> 1,722 · <code>theme.py</code> 955</td><td>合计占 28%</td></tr><tr><td>宽泛异常捕获</td><td>32 处（31 处显式 <code># noqa: BLE001</code>）</td><td>绝大多数是协议层兜底，属刻意为之</td></tr><tr><td>网络调用无超时</td><td>0 处</td><td><code>urlopen</code> 全部带 timeout，这点做得好</td></tr><tr><td>前端 <code>innerHTML</code></td><td>37 处，配 65 次 <code>esc()</code></td><td>存在未转义插值，见 P0-4</td></tr><tr><td>测试脚本</td><td>33 个 Python + 3 个 Node E2E</td><td>全为集成级，无纯单元测试层</td></tr><tr><td>CI 步骤</td><td>39 个 <code>run</code></td><td>覆盖测试，不含 lint / 类型 / 覆盖率</td></tr><tr><td>运行时依赖</td><td>0（<code>requirements.txt</code> 全为注释）</td><td>与设计目标一致</td></tr></tbody></table>
+<hr>
+<h2 id="1-5-更正与重定级-个人单机使用">1.5 更正与重定级（个人单机使用）</h2>
+<p>前提变更：<strong>仅供个人使用，不部署到局域网或公网。</strong> 威胁模型随之从「外部攻击者」变成「自己误操作 + 本机其他程序 + 数据丢失」。 这直接改变了一批问题的等级——有些消失了，有些<strong>反而更重要</strong>。</p>
+<h3 id="1-5-1-更正-p0-4-是误报">1.5.1 更正：P0-4 是误报</h3>
+<p>初版把 <code>renderApprovals()</code> 里 <code>f.name</code> 直接拼接判为存储型 XSS。复核后发现外层 <code>esc(files.concat(dels).join('；'))</code> 已整体转义；<code>fmtAnswer()</code> 先 <code>esc(t)</code> 再套 markdown； 文档列表、笔记列表、审批列表的动态字段都套了 <code>esc()</code>。<strong>没有可利用的注入点。</strong></p>
+<p>方法教训：判断注入要追到最终的 <code>innerHTML</code> 赋值表达式，不能只看中间变量的拼接片段。</p>
+<h3 id="1-5-2-重定级">1.5.2 重定级</h3>
+<table><thead><tr><th>原编号</th><th>问题</th><th>初版</th><th>个人场景</th><th>理由</th></tr></thead><tbody><tr><td>P0-1</td><td><code>base_url</code> 可指向任意地址</td><td>P0</td><td><strong>撤销</strong></td><td>服务只连自己配的地址，无第三方攻击者；而且本地模型（ollama / vLLM）就在 <code>127.0.0.1</code>，禁私网会挡掉最常见的用法</td></tr><tr><td>P0-2</td><td><code>server.py</code> 1,722 行单体</td><td>P0</td><td>P1</td><td>单人维护无并行冲突，但仍是「改一处惊一片」的根因</td></tr><tr><td>P0-3</td><td>CI 缺 E2E / 静态检查</td><td>P0</td><td>P2</td><td>E2E 已补；lint 收益有限，可选</td></tr><tr><td>P0-4</td><td>前端 XSS</td><td>P0</td><td><strong>撤销（误报）</strong></td><td>见 1.5.1</td></tr><tr><td>P1-1</td><td>测试金字塔倒置</td><td>P1</td><td><strong>P1（保持）</strong></td><td>个人项目更依赖快反馈，全量集成测试以分钟计不划算</td></tr><tr><td>P1-2</td><td>无静态检查</td><td>P1</td><td>P2</td><td>可选，不阻塞</td></tr><tr><td>P1-3</td><td><code>admin_token</code> 用 <code>==</code></td><td>P1</td><td>P3</td><td>已修，零成本，顺手统一规范</td></tr><tr><td>P1-4</td><td>多实例状态两套实现</td><td>P1</td><td><strong>撤销</strong></td><td>明确只支持单实例，不再为对外部署预留心智负担</td></tr><tr><td>P1-5</td><td>错误信息被压缩</td><td>P1</td><td><strong>P1（升级）</strong></td><td>个人使用没人替你看日志，错误必须自解释，否则只能猜</td></tr><tr><td>P1-6</td><td>开发依赖未声明</td><td>P1</td><td>P2</td><td>已补声明</td></tr><tr><td>P2-1</td><td>三处性能可优化</td><td>P2</td><td>P2</td><td>现量级够用，不提前优化</td></tr><tr><td>P2-2</td><td><code>esc</code> 重复定义</td><td>P2</td><td>P2</td><td>已修</td></tr><tr><td>P2-3</td><td><code>src.notes</code> 反向依赖 <code>src.appconfig</code></td><td>P2</td><td><strong>P3（不做）</strong></td><td>只有拆包分发才需要，个人使用无收益、有回归风险</td></tr><tr><td>P2-4</td><td>文档过重</td><td>P2</td><td>P2</td><td>已加「个人使用只看三行」的说明</td></tr></tbody></table>
+<h3 id="1-5-3-逐条改进-做法与预期效果">1.5.3 逐条改进：做法与预期效果</h3>
+<table><thead><tr><th>项</th><th>具体做法</th><th>预期效果</th><th>状态</th></tr></thead><tbody><tr><td>P0-1</td><td><strong>不做地址限制</strong>，<code>_check_base_url</code> 只校验 <code>http(s)</code> 与可解析；在 <code>.env.example</code> 里直接给出 ollama 示例</td><td>本地模型开箱可用；不再有「为了安全把常见用法挡掉」的错配</td><td>完成（撤掉上轮建议）</td></tr><tr><td>P0-2</td><td>把 <code>probe_llm</code> / <code>count_notes</code> / <code>copy_notes</code> / <code>mcp_config</code> 抽到 <code>src/settings_ops.py</code>，server 只留取参后的调用</td><td><code>server.py</code> 减约 80 行；这四个函数可进程内单测，不必起服务</td><td>完成</td></tr><tr><td>P0-3</td><td>CI 增加 <code>e2e_settings.mjs</code>；以后新增测试默认进 workflow</td><td>新功能的端到端保障不再只存在于本机</td><td>完成</td></tr><tr><td>P1-1</td><td>新增 <code>tests/test_settings_ops.py</code>（19 项，含假模型服务 200/401/404/连不上四类）</td><td>建立纯函数单测的第一块模板，后续按同法补 <code>chunking</code> / <code>select</code></td><td>完成</td></tr><tr><td>P1-5</td><td>新增的 500 分支一律带 message；协议层兜底保留 <code>noqa</code> 并记录 type</td><td>用户看到的是「这个位置不可写：Permission denied」而不是「服务端异常：PermissionError」</td><td>部分完成（新代码已达标，旧路由待统一）</td></tr><tr><td>P1-6</td><td>新增 <code>requirements-dev.txt</code>（ruff 范围锁）与 <code>package.json</code>（playwright 版本 + <code>npm run test:e2e</code>）</td><td>新环境照文档能装出同样的测试环境，不再靠读 CI 猜</td><td>完成</td></tr><tr><td>P2-2</td><td><code>SETTINGS_JS</code> 改为 <code>var esc=window.esc</code>，复用 <code>JS_UTIL</code></td><td>转义规则只有一处，不会再分叉</td><td>完成</td></tr><tr><td>P2-4</td><td><code>.env.example</code> 顶部标注「个人使用只改三行」，其余段落注明对外部署才需要</td><td>打开配置文件不再被 40 个变量劝退</td><td>完成</td></tr><tr><td>—</td><td>设置 →「已存」增加「导出全部」，走 JSON bundle 下载</td><td>个人最怕数据丢，一键拿到全部笔记的可迁移副本</td><td>完成</td></tr></tbody></table>
+<h3 id="1-5-4-个人场景下-新增-的重点">1.5.4 个人场景下<strong>新增</strong>的重点</h3>
+<p>重定级之后真正该补的，不是安全加固，而是这三件事：</p>
+<ol>
+<li><strong>数据可带走</strong>（已完成）：导出全部笔记；超过 30 天没导出、或从未导出且库里确有笔记时，</li>
+<p>齿轮图标带红点，点开设置能看到「上次备份 N 天前」。判断依据是真导出过，不是猜目录被拷走。 笔记本身是纯 Markdown，目录可直接拷走。</p>
+<li><strong>错误自解释</strong>（进行中）：失败要说清楚"哪里、为什么、怎么改"，而不是抛类型名。</li>
+<li><strong>启动确定性</strong>（已完成）：端口被占用时打印</li>
+<p>「端口 8036 已被占用。可能已经开着一个实例：先关掉它，或换个端口 <code>--port 8037</code>」并退出码 1， 不再把原始错误码甩给用户。实测 Windows 上抛的是 <code>WinError 10013</code>（errno 13）而不是直觉里的 10048 ——因为 <code>http.server</code> 带 <code>SO_REUSEADDR</code>，两个码都要认，否则提示形同虚设。</p>
+</ol>
+<hr>
+<h2 id="二-初版-p0-清单-原始判断-个人场景定级见-1-5">二、初版 P0 清单（原始判断，个人场景定级见 §1.5）</h2>
+<h3 id="p0-1-设置面板把-用户输入-变成了-服务端出站请求-的入口">P0-1 设置面板把「用户输入」变成了「服务端出站请求」的入口</h3>
+<ul>
+<li><strong>位置</strong>：<code>src/server.py</code> <code>_probe_llm()</code>（约 250 行附近）、<code>src/appconfig.py</code> <code>_check_base_url()</code></li>
+<li><strong>现象</strong>：<code>base_url</code> 只校验「是 http(s) 开头」，随后服务端直接 <code>POST {base_url}/chat/completions</code> 并回显状态码与延迟。</li>
+<li><strong>影响</strong>：能改设置的人可以让服务去请求任意地址——<code>127.0.0.1:6379</code>、内网管理口、</li>
+<p>云厂商元数据地址（<code>169.254.169.254</code>）。响应码与延迟差异足以做端口/服务探测。</p>
+<li><strong>当前边界</strong>：修改类接口只允许本机（<code>_client()</code> 判定），所以风险被压在单机内。</li>
+<p><strong>但</strong>：一旦服务绑 <code>0.0.0.0</code>、或配了 <code>ADMIN_TOKEN</code> 分享给别人，这条路径立刻成为内网跳板。</p>
+<li><strong>建议</strong>（按代价从低到高）：</li>
+</ul>
+<ol>
+<li><code>_check_base_url</code> 增加主机校验：拒绝 <code>localhost</code> / <code>127.0.0.0/8</code> / <code>10.</code> / <code>172.16-31.</code> / <code>192.168.</code> /</li>
+<p><code>169.254.</code> / <code>::1</code> / <code>fc00::/7</code>，除非显式设置 <code>LLM_ALLOW_PRIVATE=on</code>；</p>
+<li>解析 DNS 后对<strong>解析结果</strong>再校验一次（防 DNS rebinding 指向内网）；</li>
+<li>请求禁用重定向跟随（<code>urllib</code> 默认不跟随 30x 到其他 host，但自定义 opener 时要显式关）；</li>
+<li>探测响应只回状态码与延迟（现状已如此，保持），永不回正文。</li>
+</ol>
+<ul>
+<li><strong>状态：撤销，不实施。</strong> 个人单机使用下没有第三方攻击者；且本地模型（ollama / vLLM）</li>
+<p>就监听 <code>127.0.0.1</code>，加私网限制会直接挡掉最常用的一种配置。第 4 条已满足，保持即可。</p>
+</ul>
+<h3 id="p0-2-server-py-已成单体瓶颈-新功能继续往里堆">P0-2 <code>server.py</code> 已成单体瓶颈，新功能继续往里堆</h3>
+<ul>
+<li><strong>位置</strong>：<code>src/server.py</code>（1,722 行，其中 <code>_settings</code> 一族约 250 行是本次新增）</li>
+<li><strong>现象</strong>：路由分发、鉴权、限流、KB 版本、笔记、设置、静态页全在 <code>create_server()</code> 的一个</li>
+<p><code>Handler</code> 类里，且依赖 <code>note_ref</code>、<code>pipe</code>、<code>store</code> 等闭包变量。</p>
+<li><strong>影响</strong>：</li>
+<li>任何新接口都要改同一个文件，回归半径 = 整个服务；</li>
+<li>Handler 无法被单独实例化，<strong>路由层零单元测试</strong>，只能起真实服务打 HTTP；</li>
+<li>闭包依赖让「换一个存储位置要重建哪个对象」这类问题只能靠读代码回答（本次已踩过一次）。</li>
+<li><strong>建议</strong>：</li>
+</ul>
+<ol>
+<li>按资源拆 <code>src/api/{ask,kb,notes,settings,admin}.py</code>，每个模块暴露</li>
+<p><code>handle(ctx, req) -&gt; Response</code>，Handler 只做 URL → 模块的路由表；</p>
+<li>把闭包依赖收进一个显式 <code>AppContext</code>（字段：<code>pipe</code> / <code>store</code> / <code>note_ref</code> / <code>guards</code> / <code>metrics</code>），</li>
+<p>构造函数注入，测试里可以塞假对象；</p>
+<li>路由表用字典声明，顺带生成 <code>/openapi.json</code>，消除 OpenAPI 与实现两处维护。</li>
+</ol>
+<ul>
+<li><strong>状态：部分完成。</strong> 已把 <code>probe_llm</code> / <code>count_notes</code> / <code>copy_notes</code> / <code>mcp_config</code></li>
+<p>抽到 <code>src/settings_ops.py</code>（<code>server.py</code> 减约 80 行，且这四个函数现在可单测）； 整体拆路由层<strong>不做</strong>——单人维护下，2-3 天的结构性改造收益不抵回归风险。</p>
+</ul>
+<h3 id="p0-3-本次新增的端到端测试没进-ci-且流水线缺静态门禁">P0-3 本次新增的端到端测试没进 CI，且流水线缺静态门禁</h3>
+<ul>
+<li><strong>位置</strong>：<code>.github/workflows/ci.yml</code></li>
+<li><strong>现象</strong>：已有 <code>e2e_pages.mjs</code>、<code>e2e_notes.mjs</code> 两个 Node 步骤，</li>
+<p>但本次新增的 <strong><code>tests/e2e_settings.mjs</code>（36 项）没有加进去</strong>； 全流程无 <code>ruff</code> / <code>mypy</code> / <code>eslint</code> / 覆盖率统计。</p>
+<li><strong>影响</strong>：设置抽屉是本次改动的全部交付面，它的端到端验证只在我本机跑过。</li>
+<p>下次任何人改 <code>theme.py</code> 或 <code>server.py</code> 的设置路由，没有任何自动保护。</p>
+<li><strong>状态</strong>：<code>e2e_settings.mjs</code> 已补进 CI（本次提交）；lint 与覆盖率门槛仍待做。</li>
+<li><strong>建议</strong>：</li>
+</ul>
+<ol>
+<li>在 Node 步骤里补 <code>node tests/e2e_settings.mjs</code>（一行）；</li>
+<li>加 <code>ruff check src tests tools</code>（零依赖项目也能用，配置极少）；</li>
+<li>加覆盖率：<code>coverage run -m ... &amp;&amp; coverage report --fail-under=60</code>，</li>
+<p>先设低门槛拦住「新增代码完全不测」；</p>
+<li>Python 版本矩阵只有 3.11/3.13，缺 3.12，补一行即可。</li>
+</ol>
+<h3 id="p0-4-前端存在存储型-xss-面-文件名未转义就进-innerhtml">P0-4 前端存在存储型 XSS 面：文件名未转义就进 <code>innerHTML</code></h3>
+<ul>
+<li><strong>位置</strong>：<code>src/web_pages.py</code> 约 1326 行 <code>renderApprovals()</code></li>
+</ul>
+<pre><code class="lang-js">  var files=(c.files||[]).map(function(f){ return actionText(f.action)+&#x27; &#x27;+f.name; });
+  var dels=(c.deletes||[]).map(function(n){ return &#x27;删除 &#x27;+n; });</code></pre>
+<p>同文件 1540 / 1552 / 1704 行把 <code>g.dataset.name</code>、<code>NOTE.cur.title</code> 直接拼进 <code>confirm()</code> 文案。</p>
+<ul>
+<li><strong>影响</strong>：上传一个名为 <code>&lt;img src=x onerror=alert(1)&gt;.md</code> 的文件，审批面板渲染时脚本执行。</li>
+<p>单人自用影响有限；<strong>一旦知识库共享或服务多人可访问，就是持久化 XSS</strong>（载荷存在文件名里，刷新即触发）。</p>
+<li><strong>建议</strong>：</li>
+</ul>
+<ol>
+<li><code>f.name</code> / <code>n</code> 一律套 <code>esc()</code>（同函数内 <code>c.warnings</code> 已经套了，属遗漏而非设计）；</li>
+<li><code>confirm()</code> 里的拼接至少去掉引号与换行，避免文案截断误导；</li>
+<li>补一条 E2E：上传恶意文件名 → 断言页面无 <code>alert</code> 触发且文件名原样显示；</li>
+<li>中期方案：列表渲染改用 <code>document.createElement</code> + <code>textContent</code>，从根上消除拼接。</li>
+</ol>
+<ul>
+<li><strong>状态：误报，撤销。</strong> 复核见 §1.5。<code>f.name</code> 未被单独转义，但整串在</li>
+<p><code>esc(files.concat(dels).join('；'))</code> 里已转义；<code>fmtAnswer()</code> 也是先 <code>esc()</code> 再套样式。 37 处 <code>innerHTML</code> 逐处核对后未发现可利用注入点。</p>
+</ul>
+<hr>
+<h2 id="三-p1-应尽快处理">三、P1 · 应尽快处理</h2>
+<h3 id="p1-1-测试金字塔倒置-全是集成测试-没有单元层">P1-1 测试金字塔倒置：全是集成测试，没有单元层</h3>
+<ul>
+<li><strong>位置</strong>：<code>tests/</code>（33 个脚本全部起服务或跑完整链路）</li>
+<li><strong>影响</strong>：单次全量回归以分钟计；失败时定位落在「哪一层」要靠日志；</li>
+<p><code>digest_rule</code>、<code>chunking</code>、<code>select</code> 这类纯函数逻辑本可以毫秒级验证。</p>
+<li><strong>建议</strong>：保留现有集成测试作为「回归保障」，为纯函数补 <code>tests/unit/</code>，</li>
+<p>用 Python 标准库 <code>unittest</code> 即可（不引 pytest，维持零依赖）。 优先后补：<code>chunking</code>（切分边界）、<code>select</code>（切片规则）、<code>guards</code>（限流窗口）、<code>appconfig</code>（校验）。</p>
+</ul>
+<h3 id="p1-2-无静态检查-前端-js-零校验">P1-2 无静态检查，前端 JS 零校验</h3>
+<ul>
+<li><strong>位置</strong>：CI 无 lint；<code>theme.py</code> / <code>web_pages.py</code> 里约 3,000 行 JS 全在 Python 字符串中</li>
+<li><strong>影响</strong>：JS 拼错只有运行时才暴露。本次开发中确实出现过「面板套错层」这类问题，</li>
+<p>靠 E2E 和肉眼发现，不是靠工具。</p>
+<li><strong>建议</strong>：<code>ruff check</code>（Python）+ <code>node --check</code>（把内联 JS 抽成临时文件做语法校验，</li>
+<p>一条脚本即可）+ 可选 <code>eslint</code>。前端若要长期演进，考虑抽出 <code>static/app.js</code>。</p>
+</ul>
+<h3 id="p1-3-admin_token-用-比较-与项目自身规范冲突">P1-3 <code>admin_token</code> 用 <code>==</code> 比较，与项目自身规范冲突</h3>
+<ul>
+<li><strong>位置</strong>：<code>src/server.py:468</code>、<code>src/server.py:602</code>（本次新增）</li>
+<li><strong>对照</strong>：<code>src/auth.py</code> 用了 <code>hmac.compare_digest</code>，并注明「避免逐字符比较泄露前缀」</li>
+<li><strong>影响</strong>：同一项目两套标准；token 比较存在理论上的时序侧信道。风险低（本机 + 有长度校验），</li>
+<p>但<strong>规范不一致比漏洞本身更麻烦</strong>——后人不知道哪套是对的。</p>
+<li><strong>状态</strong>：已修。新增 <code>auth.safe_equal()</code>（先各自 SHA-256 再 <code>compare_digest</code>，长度不同也走完整轮），</li>
+<p><code>server.py</code> 两处统一调用，并在 <code>test_auth_openapi.py</code> 补了 5 条断言。</p>
+<li><strong>建议</strong>：抽 <code>auth.safe_equal(a, b)</code>，两处统一调用；并把这条写进 <code>AGENTS.md</code> 的约定里。</li>
+</ul>
+<h3 id="p1-4-会话-幂等-限流三套状态有两份实现-只在部分路径验证">P1-4 会话、幂等、限流三套状态有两份实现，只在部分路径验证</h3>
+<ul>
+<li><strong>位置</strong>：<code>src/sessions.py</code> / <code>src/guards.py</code> / <code>src/redis_client.py</code></li>
+<li><strong>现象</strong>：本地内存实现与 Redis 实现并存，<code>test_server_redis.py</code> 覆盖了两个实例共享，</li>
+<p>但设置/笔记相关的新接口没有走这套一致性测试。</p>
+<li><strong>影响</strong>：多实例部署时，「本机能跑、两台机器行为不同」这类问题会晚发现。</li>
+<li><strong>建议</strong>：明确文档化「哪些状态必须共享」（会话、幂等键、限流桶、成本计数），</li>
+<p>并为每个状态补一条「双实例」断言；或者干脆声明「本项目只支持单实例」， 把 Redis 路径标为实验性，降低预期错配。</p>
+</ul>
+<h3 id="p1-5-错误处理-兜底到位-但异常信息被压缩">P1-5 错误处理：兜底到位，但异常信息被压缩</h3>
+<ul>
+<li><strong>位置</strong>：31 处 <code>except Exception</code> + <code># noqa: BLE001</code></li>
+<li><strong>现象</strong>：多数回给客户端的是 <code>服务端异常：{type(exc).__name__}</code>，原始 message 只进 stderr。</li>
+<li><strong>影响</strong>：用户看到 <code>服务端异常：ValueError</code>，无法自助；排查必须回到服务端日志。</li>
+<li><strong>建议</strong>：区分「可安全外露」与「不可外露」两类异常：</li>
+<p>前者（校验、路径、配置）把 message 带给客户端；后者（内部实现）保留 type + 一个短 <code>error_id</code>，同时把这个 id 打进日志，用户报 id 即可定位。 本次 <code>_settings</code> 的 500 分支已经带了 message，可作为范本统一。</p>
+</ul>
+<h3 id="p1-6-依赖管理-运行时零依赖做得彻底-但开发依赖没声明">P1-6 依赖管理：运行时零依赖做得彻底，但开发依赖没声明</h3>
+<ul>
+<li><strong>位置</strong>：<code>requirements.txt</code>（全为注释）、CI 里 <code>npm install --no-save playwright</code></li>
+<li><strong>影响</strong>：新环境复现「跑 E2E」需要读 CI 文件猜依赖；<code>--no-save</code> 意味着版本不锁，</li>
+<p>上游发新版可能导致 E2E 突然失败。</p>
+<li><strong>建议</strong>：新增 <code>requirements-dev.txt</code>（<code>playwright</code> 固定版本、<code>ruff</code> 固定版本），</li>
+<p><code>package.json</code> 锁 playwright 版本；README 加一节「开发环境」。</p>
+</ul>
+<hr>
+<h2 id="四-p2-可排期优化">四、P2 · 可排期优化</h2>
+<h3 id="p2-1-性能-三处可优化-但当前量级不构成问题">P2-1 性能：三处可优化，但当前量级不构成问题</h3>
+<table><thead><tr><th>位置</th><th>现状</th><th>影响</th><th>建议</th></tr></thead><tbody><tr><td><code>appconfig._read()</code></td><td>每次 1 次 <code>stat</code>，另有 1 秒缓存兜底</td><td>一次问答约 10 次 <code>load_settings</code> → 10 次 stat</td><td>已有缓存，够用；若要更稳可改为「写入时 bump 版本号」</td></tr><tr><td><code>server._count_notes()</code></td><td><code>rglob("*.md")</code> 全盘遍历</td><td>1000 篇约 tens of ms，仅在切换存储时触发</td><td>可接受；超过 1 万篇再改成读索引行数</td></tr><tr><td><code>NoteStore.stats()</code></td><td>全量 <code>list()</code> 后聚合</td><td>首次会触发索引重建（1000 篇 2.0 s）</td><td><code>/api/notes/stats</code> 加「冷启动返回 202 + 后台建索引」</td></tr></tbody></table>
+<blockquote>既有实测：1000 篇笔记保存 P50 12ms / P95 19ms，list 20.9ms，重建 2.0s（4 线程）。 这个量级下不需要提前优化。</blockquote>
+<h3 id="p2-2-重复代码-esc-在两处定义">P2-2 重复代码：<code>esc()</code> 在两处定义</h3>
+<ul>
+<li><strong>位置</strong>：<code>src/theme.py</code> 的 <code>SETTINGS_JS</code>（IIFE 内）与 <code>JS_UTIL</code>（全局）</li>
+<li><strong>影响</strong>：两份转义规则未来可能漂移，改一处漏一处就会出现 XSS 缺口。</li>
+<li><strong>状态</strong>：已修。<code>SETTINGS_JS</code> 改为 <code>var esc=window.esc</code>，直接复用 <code>JS_UTIL</code> 那份。</li>
+<li><strong>建议</strong>：删掉 <code>SETTINGS_JS</code> 里的私有 <code>esc</code>，直接用全局（加载顺序已保证 JS_UTIL 在前）。</li>
+</ul>
+<h3 id="p2-3-包依赖倒置-src-notes-反向依赖-src-appconfig">P2-3 包依赖倒置：<code>src.notes</code> 反向依赖 <code>src.appconfig</code></h3>
+<ul>
+<li><strong>位置</strong>：<code>src/notes/store.py</code> <code>from .. import appconfig</code></li>
+<li><strong>影响</strong>：<code>notes</code> 本可以独立分发（MCP 场景只需这一个包），现在必须带上整个 <code>src</code>。</li>
+<li><strong>建议</strong>：把「读配置」改成构造参数注入（<code>NoteStore(home=...)</code> 已有），</li>
+<p>在 <code>service</code>/<code>cli</code>/<code>mcp_server</code> 入口处读一次配置再传下去。</p>
+</ul>
+<h3 id="p2-4-可维护性-readme-1-300-行-前端全内联">P2-4 可维护性：README 1,300+ 行、前端全内联</h3>
+<ul>
+<li><strong>影响</strong>：文档与实现同步成本高（本次改动要同步 5 处文档）；前端改样式必须重启 Python 服务。</li>
+<li><strong>建议</strong>：README 拆成「快速开始（200 行内）+ docs/ 分册」；</li>
+<p>前端若继续演进，抽出 <code>static/</code> 并用构建期注入的方式挂载。</p>
+</ul>
+<hr>
+<h2 id="五-修复路线建议">五、修复路线建议</h2>
+<blockquote>个人单机使用场景请看 <strong>§1.5.3</strong> 的逐条改进表（已按新威胁模型重排）。 下表保留，作为将来真要对外提供服务时的参考顺序。</blockquote>
+<table><thead><tr><th>顺序</th><th>事项</th><th>理由</th><th>预估</th></tr></thead><tbody><tr><td>1</td><td>P0-3 补 CI（e2e_settings + ruff + 覆盖率门槛）</td><td>先有护栏，后面所有修才不回退</td><td>半天</td></tr><tr><td>2</td><td>P0-4 前端转义 + 一条 XSS E2E</td><td>唯一有实际攻击面的问题，改动小</td><td>半天</td></tr><tr><td>3</td><td>P0-1 base_url 私网校验</td><td>本轮新引入，越早堵越省事</td><td>1 天</td></tr><tr><td>4</td><td>P1-3 统一 <code>safe_equal</code></td><td>半小时的事，避免规范分叉</td><td>0.5 小时</td></tr><tr><td>5</td><td>P2-2 删重复 <code>esc</code>、P1-6 声明 dev 依赖</td><td>顺手清理</td><td>0.5 天</td></tr><tr><td>6</td><td>P0-2 拆路由层</td><td>结构性改造，放最后做，避免与功能开发冲突</td><td>2-3 天</td></tr><tr><td>7</td><td>P1-1 单元测试层</td><td>与 6 并行推进，拆一层补一层</td><td>持续</td></tr></tbody></table>
+<blockquote>本次已落地：P0-3 的 CI 补测、P1-3（常量时间比较）、P2-2（去重复 <code>esc</code>）。 其余项待排期，建议按上表顺序推进。</blockquote>
+<hr>
+<h2 id="六-值得肯定的部分">六、值得肯定的部分</h2>
+<p>审查要给出对照，否则容易误判整体质量：</p>
+<ul>
+<li><strong>外部调用纪律</strong>：<code>urlopen</code> 全部带 timeout，重试有退避与抖动，降级路径写进 trace（<code>degraded</code> / <code>degrade_reason</code>）。</li>
+<li><strong>上传安全</strong>：显式拒绝路径分隔符而不是静默改名，取舍写进了注释。</li>
+<li><strong>数据完整性</strong>：笔记写入走「临时文件 + 原子替换」，索引可删可重建，版本库用硬链接做增量。</li>
+<li><strong>零依赖</strong>：真做到运行时只依赖标准库，xlsx/docx/pdf 都是自己解析的。</li>
+<li><strong>注释质量</strong>：解释 why 不解释 what，关键取舍有记录（这是最难得的一项）。</li>
+<li><strong>测试意识</strong>：33 个可执行脚本 + 3 个 E2E，覆盖了大多数失败路径，只是结构偏集成。</li>
+</ul>
+<hr>
+<h2 id="七-前提已确认-原-待确认清单">七、前提已确认（原「待确认清单」）</h2>
+<ul>
+<li><code>[已确认]</code> 部署形态：<strong>个人单机使用，不部署到局域网或公网</strong>。据此在 §1.5 撤销了私网出站限制与多实例一致性两项。</li>
+<li><code>[已确认]</code> 使用者：单人。XSS、鉴权、CORS 按「防误操作」而非「防外部攻击者」定级。</li>
+<li><code>[待核实]</code> 前端演进计划：若页面还要继续加功能，§8.2 的 A-1（拆路由）与 A-2（前端出仓）应尽早排期。</li>
+</ul>
+<hr>
+<h2 id="八-第二轮审查-v1-13-1">八、第二轮审查（v1.13.1）</h2>
+<p>第一轮之后又做了一轮以「可复现」为标准的复查：每条结论都先跑出证据再写进来。 本轮修掉 11 项，另有 8 项给出方案但未动（原因见 §8.3）。</p>
+<h3 id="8-1-本轮已修-按严重度">8.1 本轮已修（按严重度）</h3>
+<table><thead><tr><th>#</th><th>问题</th><th>证据</th><th>改法</th><th>预期效果</th></tr></thead><tbody><tr><td>1</td><td><strong>配置写坏后点保存，会把密钥整段覆盖</strong></td><td>手写 <code>app.json</code> 多一个逗号 → <code>view()</code> 显示未配置 → <code>update()</code> 写入后 <code>sk-real-key</code> 从文件里消失</td><td><code>_write()</code> 覆盖前检测原文件是否合法，不合法先 <code>copy2</code> 成 <code>app.json.bak-&lt;时间&gt;</code>；<code>view()</code> 回传 <code>config_error</code> / <code>config_backup</code>，抽屉顶部红字提示</td><td>手滑改坏配置不再造成不可逆丢失；用户看得见「现在显示的是默认值」</td></tr><tr><td>1b</td><td><strong>记事本存成 ANSI/GBK 会让服务起不来</strong></td><td>GBK 编码的 <code>app.json</code> → <code>UnicodeDecodeError</code>，不在原 <code>OSError</code> 分支内，<code>load_settings()</code> 直接抛</td><td>读路径按 UTF-8 → GBK 依次解码；都不行才按「坏文件」处理并提示</td><td>中文 Windows 上手改配置不再导致启动失败（实测 GBK 配置可正常读出模型与密钥）</td></tr><tr><td>2</td><td><strong>保存设置后同一响应里「生效值」还是旧的</strong></td><td>1 秒缓存窗口内 POST，返回 <code>model=model-B</code> 但 <code>effective_model=model-A</code></td><td><code>appconfig</code> 增加写入版本号，<code>config._overrides()</code> 按 <code>(版本号, 配置路径)</code> 失效</td><td>保存即生效，不再出现「已保存」与「当前生效」并排矛盾；最长 1 秒的旧配置窗口消失</td></tr><tr><td>3</td><td><strong><code>"store_chat": "false"</code> 被当成开启</strong></td><td><code>bool("false")</code> 为真，实测 <code>update()</code> 回 <code>True</code></td><td>新增 <code>_as_bool()</code>：读路径无法识别按 False，写路径直接 400</td><td>手改配置或第三方客户端传字符串时，开关语义不再反转（这是隐私相关）</td></tr><tr><td>4</td><td><strong>手写无时区时间戳会让整个设置面板 500</strong></td><td><code>"2026-10-01T10:00:00"</code> → <code>TypeError: can't subtract offset-naive and offset-aware</code></td><td>解析后若无 <code>tzinfo</code>，按本机时区 <code>astimezone()</code> 补齐</td><td>手改 <code>last_export_at</code> 不再打挂 <code>/api/settings</code></td></tr><tr><td>5</td><td><strong>HEAD 探测被记成一次备份</strong></td><td><code>curl -I /api/notes/export</code> 后 <code>last_export_at</code> 从空变成当前时间</td><td>只有 <code>self.command == "GET"</code> 且 <code>status == 200</code> 才 <code>mark_exported()</code></td><td>红点只在真的下载后消失，提醒不再说谎</td></tr><tr><td>6</td><td><strong>「存为笔记」要打开一次设置才出现</strong></td><td>按钮条件读 <code>window.__storeChat</code>，该值只在 <code>applyView()</code>（打开抽屉）时赋值；干净页面里是 <code>undefined</code></td><td>页面加载时拉一次 <code>/api/settings</code> 初始化开关；服务端 <code>view()</code> 统一走 <code>store_chat()</code></td><td>开关为开时，首次进入问答页就能看到按钮（v1.13.0 的实际回归）</td></tr><tr><td>7</td><td><strong><code>e2e_notes</code> 依赖本机 <code>data/app.json</code>，干净环境必红</strong></td><td>CI 无该文件 → 开关默认关 → <code>.fb-save</code> 不渲染 → 40s 超时</td><td>测试固定 <code>APP_CONFIG</code> 到临时目录并 <code>STORE_CHAT=on</code>；<code>store_chat()</code> 补环境变量回退</td><td>CI 与开发机行为一致；文档里的 <code>STORE_CHAT</code> 从「写了不生效」变成真生效</td></tr><tr><td>8</td><td><strong>配置为空时表单点保存必然 400</strong></td><td>配置损坏时输入框为空，<code>_check_base_url("")</code> 抛错，用户无法自救</td><td>输入框回填 <code>effective_*</code> 而不是留空</td><td>坏配置可以直接在界面里改回合法值</td></tr><tr><td>9</td><td><strong>创建笔记不校验 <code>status</code> 枚举，PATCH 却校验</strong></td><td>POST <code>hint.status="bogus"</code> 返回 201 并落盘</td><td><code>compose()</code> 用同一份 <code>STATUSES</code> 校验</td><td>创建与修改同一套规则，按状态过滤不再漏篇</td></tr><tr><td>10</td><td><strong>笔记查重与写入不在同一把锁里</strong></td><td>代码审查确认：<code>find_by_hash()</code> 在 <code>with self.lock()</code> 之前</td><td>查重挪进锁内，命中即返回既有篇</td><td>网页与 MCP 同时保存同一段对话不再产生两篇</td></tr></tbody></table>
+<p>另修两处低风险项：<code>_check_home</code> 的写权限探针改用 <code>mkstemp</code>（原先固定 <code>.write-test</code>，目录里真有同名文件会被删掉）；<code>update()</code> / <code>mark_exported()</code> 加进程内写锁（导出记时间与保存设置同时发生会互相覆盖）。</p>
+<p>验证：<code>test_settings</code> 42 → <strong>61 项</strong>；<code>e2e_settings</code> <strong>45 项</strong>（新增坏配置提示、HEAD 不算备份）；<code>test_notes_api</code> 增加创建枚举用例；34 个 Python 测试脚本、3 个 E2E 全绿。</p>
+<h3 id="8-2-未修但建议排期">8.2 未修但建议排期</h3>
+<table><thead><tr><th>优先级</th><th>项</th><th>问题</th><th>建议</th><th>预期效果</th></tr></thead><tbody><tr><td><strong>A-1</strong></td><td>路由层仍是单体</td><td><code>server.py</code> 1,686 行；<code>do_POST</code> 579 行 / 59 个 <code>if</code>；54 处 <code>path ==</code> 字面量；<code>Handler</code> 埋在 <code>create_server</code> 闭包里，路由没有单测</td><td>第一步只搬两族已经自洽的接口：<code>_settings</code>（141 行）与 <code>_notes</code>（约 120 行）到 <code>src/routes/settings.py</code>、<code>src/routes/notes.py</code>，用 <code>AppContext</code>（pipe/store/note_ref/guards）显式注入；每搬一族跑一次全量回归</td><td><code>server.py</code> 降到 1,300 行以内；设置与笔记路由可进程内单测，改一处不必起服务</td></tr><tr><td><strong>A-2</strong></td><td>前端 139 KB 全内联在 Python 字符串里</td><td><code>theme.py</code> 50,975 字符、<code>web_pages.py</code> 88,151 字符；153 个 <code>function(</code>；CI 没有 <code>node --check</code>，JS 语法错误只能等浏览器报错</td><td>抽到 <code>src/web/{ask,kb,theme}.{css,js}</code>，服务启动时读入（仍是零依赖），构建脚本把文件打进 zip；CI 增加 <code>node --check</code></td><td>JS 有语法高亮与静态检查；改样式不再需要改 Python 字符串转义</td></tr><tr><td><strong>B-1</strong></td><td>计时混用墙钟与单调钟</td><td>12 处 <code>time.time()</code> 用于 TTL / 限流 / 墙钟预算，7 处用 <code>monotonic()</code></td><td>所有「间隔、超时、过期」改 <code>monotonic()</code>；仅展示用墙钟</td><td>系统对时或手动改时间时，会话不会突然过期、限流窗口不会错乱</td></tr><tr><td><strong>B-2</strong></td><td>陈旧锁清理有竞态</td><td><code>lock()</code> 判断陈旧后直接 <code>rmtree</code>，若另一进程刚重建锁，会被误删</td><td>先 <code>os.rename</code> 成唯一名字再删；拿不到 rename 就重试</td><td>双进程同时写时不会短暂出现「两个持有者」</td></tr><tr><td><strong>B-3</strong></td><td><code>limit=-5</code> 返回 200 空列表</td><td>负数被 <code>rows[:limit]</code> 当成「去掉最后 5 条」</td><td>小于 0 直接 400，或在入口 clamp 到 0</td><td>参数错误能立刻看见，而不是静默返回空</td></tr><tr><td><strong>B-4</strong></td><td>审计/预算落盘失败被静默吞掉</td><td><code>guards._save()</code> 与 <code>jsonl</code> 的 <code>except OSError: pass</code></td><td>失败计数进 <code>/api/health</code>，并在 trace 里记 <code>audit_write_failed</code></td><td>磁盘满或权限问题时不会「看起来一切正常」</td></tr><tr><td><strong>C-1</strong></td><td>两个超长函数</td><td><code>report.py:render</code> 361 行、<code>openapi.build_spec</code> 280 行</td><td>按「数据（字段表）+ 渲染」拆开，字段表可被测试直接断言</td><td>改报表/OpenAPI 时不必读完整函数</td></tr><tr><td><strong>C-2</strong></td><td>设置接口每次读 <code>.git/config</code></td><td><code>_repo_url()</code> 每次 <code>/api/settings</code> 都读文件</td><td>按 mtime 缓存</td><td>少一次磁盘读；收益小，随 A-1 一起做</td></tr></tbody></table>
+<h3 id="8-3-复核过-确认不是问题的点">8.3 复核过、确认不是问题的点</h3>
+<p>避免把「看起来像问题」的东西重复报一遍，这轮实测了以下项目：</p>
+<table><thead><tr><th>项</th><th>实测</th><th>结论</th></tr></thead><tbody><tr><td>页面体积与首屏</td><td><code>/ask</code> 94 KB，gzip 后 26 KB，TTFB 3–22 ms</td><td>不需要拆包或预渲染</td></tr><tr><td>笔记计数 <code>rglob</code></td><td>1,000 篇 2.9 ms；<code>/api/settings</code> 全程 3–7 ms</td><td>不构成性能问题，不必加缓存</td></tr><tr><td><code>load_settings()</code></td><td>单次 0.30 ms（1,000 次 299 ms）</td><td>一次问答调数次也可忽略</td></tr><tr><td>HEAD 响应体</td><td><code>_send()</code> 已判断 <code>self.command != "HEAD"</code>，实测无正文</td><td>HTTP 语义正确（问题只出在「HEAD 触发副作用」）</td></tr><tr><td>索引被删</td><td>删除 <code>index/notes.jsonl</code> 后 <code>GET /api/notes</code> 仍返回 2 篇</td><td>读路径自愈有效，文档描述属实</td></tr><tr><td>导出 HTML 转义</td><td>标题 / 标签 / 正文 / <code>data-hay</code> 全部走 <code>html.escape</code></td><td>上一轮 P0-4（XSS）确认为误报，已在 §1.5 更正</td></tr></tbody></table>
+<h3 id="8-4-建议顺序">8.4 建议顺序</h3>
+<ol>
+<li>先发 <strong>v1.13.1</strong>（本轮修复，风险低、都是数据安全与语义一致性）。</li>
+<li>再做 <strong>A-2 前端出仓</strong>：纯搬运，但能立刻获得语法检查，为 A-1 的页面改动兜底。</li>
+<li>然后 <strong>A-1 路由拆分</strong>，按 <code>settings → notes → kb</code> 顺序，一族一提交。</li>
+<li>B 组与 C 组随对应模块改动顺手做，不单独开轮。</li>
+</ol>
+<p>完整的优先级、工作量与「不建议做」清单见 <a href="ROADMAP.md">ROADMAP.md</a>； 控件清单与插件集成方式见 <a href="PLUGIN.md">PLUGIN.md</a>。</p><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

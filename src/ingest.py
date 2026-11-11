@@ -2,7 +2,10 @@
 
 PDF → `pdf_ingest`（pypdf / 内置解析）
 DOCX → `docx_text`（纯标准库 zip + XML）
+PPTX → `pptx_text`（纯标准库 zip + XML）
 XLSX / CSV / TSV → `table_text`（纯标准库 zip + XML + csv）
+HTML → `html_text`（纯标准库 html.parser）
+EML → `eml_text`（纯标准库 email）
 
 对外只有 `ingest_bytes()` 一个入口，服务端与命令行共用，避免「上传」和「批量导入」
 两套逻辑各写一遍、行为漂移。
@@ -11,9 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import docx_text, pdf_ingest, table_text
+from . import docx_text, eml_text, html_text, pdf_ingest, pptx_text, table_text
 
-SUPPORTED_EXT = (".pdf", ".docx") + table_text.TABLE_EXT
+SUPPORTED_EXT = ((".pdf", ".docx", ".pptx", ".html", ".htm", ".eml")
+                 + table_text.TABLE_EXT)
 DEFAULT_MIN_CHARS = pdf_ingest.DEFAULT_MIN_CHARS
 
 
@@ -87,7 +91,54 @@ def ingest_bytes(data: bytes, filename: str, out_dir: str | Path,
             "truncated": meta.get("truncated"),
         }
 
+    if ext in (".html", ".htm"):
+        try:
+            md_text, meta = html_text.extract_html(data, title=Path(filename).stem)
+        except html_text.HtmlError as exc:
+            return {"ok": False, "error": str(exc), "format": "html"}
+        return _save(out, "html_", filename, md_text, meta, "html")
+
+    if ext == ".eml":
+        try:
+            md_text, meta = eml_text.extract_eml(data, title=Path(filename).stem)
+        except eml_text.EmlError as exc:
+            return {"ok": False, "error": str(exc), "format": "eml"}
+        return _save(out, "mail_", filename, md_text, meta, "eml")
+
+    if ext == ".pptx":
+        try:
+            md_text, meta = pptx_text.extract_pptx(data, title=Path(filename).stem)
+        except pptx_text.PptxError as exc:
+            return {"ok": False, "error": str(exc), "format": "pptx"}
+        return _save(out, "pptx_", filename, md_text, meta, "pptx")
+
     return {"ok": False,
             "error": f"不支持的文件类型 {ext or '（无扩展名）'}，"
-                     "只接受 PDF / DOCX / XLSX / CSV / TSV",
+                     "只接受 PDF / DOCX / PPTX / XLSX / CSV / TSV / HTML / EML",
             "format": ext.lstrip(".")}
+
+
+def _save(out: Path, prefix: str, filename: str, md_text: str, meta: dict,
+          fmt: str) -> dict:
+    """三种新格式的收尾完全一样：字数闸门 → 落盘 → 统一字段。
+
+    抽出来的理由不是省行数，而是「闸门必须一致」：某一种格式漏了字数检查，
+    用户会上传一个只有标题的空 PPT，然后奇怪为什么问什么都答不出。
+    """
+    chars = len(md_text)
+    if chars < DEFAULT_MIN_CHARS:
+        return {"ok": False, "format": fmt, "chars": chars,
+                "error": f"提取到 {chars} 字，低于阈值 {DEFAULT_MIN_CHARS} 字。"
+                         "文件可能只有图片、或正文在附件里，需要先转成可复制文字。"}
+    out.mkdir(parents=True, exist_ok=True)
+    target = pdf_ingest.unique_path(out, f"{prefix}{pdf_ingest.safe_stem(Path(filename).stem)}.md")
+    target.write_text(md_text, encoding="utf-8")
+    payload = {
+        "ok": True, "md": target.name, "chars": chars,
+        "engine": meta.get("engine"), "format": fmt,
+        "note": None, "truncated": meta.get("truncated"),
+    }
+    for key in ("slides", "slides_empty", "tables", "attachments", "blocks", "subject"):
+        if meta.get(key) is not None:
+            payload[key] = meta[key]
+    return payload

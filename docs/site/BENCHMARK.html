@@ -1,0 +1,72 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>BENCHMARK · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html" class="on">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="基准测试结果">基准测试结果</h1>
+<blockquote>本文件由 <code>python tools/bench.py --write</code> 生成，请勿手改。</blockquote>
+<h2 id="环境">环境</h2>
+<table><thead><tr><th>项</th><th>值</th></tr></thead><tbody><tr><td>版本</td><td>v1.35.0</td></tr><tr><td>Python</td><td>3.13.14</td></tr><tr><td>系统</td><td>Windows 11</td></tr><tr><td>CPU</td><td>Intel64 Family 6 Model 186 Stepping 2, GenuineIntel（16 核）</td></tr></tbody></table>
+<h2 id="口径">口径</h2>
+<ul>
+<li>语料是<strong>合成</strong>的条款文本，不是公开数据集：测的是实现开销，不是答案质量。</li>
+<li>只测纯 Python 路径（默认配置）。装了 numpy/faiss 会更快，那是另一条路径。</li>
+<li>延迟取 5 次中位数，已排除首次调用的懒初始化；计时期间关闭 GC（否则数字会跳 3 倍）。</li>
+<li>每个用例在<strong>独立子进程</strong>里跑：同进程连续测会让后面的用例被前面的内存拖慢。</li>
+<li>数字与 CPU 强相关，跨机器差 2–3 倍属正常；比较时请在同一台机器上重跑。</li>
+</ul>
+<h2 id="检索延迟-top-4-单次">检索延迟（top-4，单次）</h2>
+<table><thead><tr><th>块数</th><th>模式</th><th>延迟</th><th>每千块</th></tr></thead><tbody><tr><td>1000</td><td>bm25</td><td>1.2 ms</td><td>1.2 ms</td></tr><tr><td>1000</td><td>vector</td><td>2.8 ms</td><td>2.8 ms</td></tr><tr><td>5000</td><td>bm25</td><td>6.5 ms</td><td>1.3 ms</td></tr><tr><td>5000</td><td>vector</td><td>9.4 ms</td><td>1.9 ms</td></tr><tr><td>20000</td><td>bm25</td><td>27.5 ms</td><td>1.4 ms</td></tr><tr><td>20000</td><td>vector</td><td>51.3 ms</td><td>2.6 ms</td></tr></tbody></table>
+<h2 id="向量库内积-纯-python-精确检索">向量库内积（纯 Python，精确检索）</h2>
+<table><thead><tr><th>块数</th><th>维度</th><th>单次检索</th><th>每千块</th></tr></thead><tbody><tr><td>5000</td><td>256</td><td>27.7 ms</td><td>5.5 ms</td></tr><tr><td>5000</td><td>1024</td><td>105.1 ms</td><td>21.0 ms</td></tr><tr><td>20000</td><td>256</td><td>113.7 ms</td><td>5.7 ms</td></tr><tr><td>20000</td><td>1024</td><td>781.5 ms</td><td>39.1 ms</td></tr></tbody></table>
+<h2 id="索引构建-单份大文档">索引构建（单份大文档）</h2>
+<table><thead><tr><th>输入条款数</th><th>切分块数</th><th>切分耗时</th><th>关键词索引耗时</th></tr></thead><tbody><tr><td>200</td><td>400</td><td>1 ms</td><td>1 ms</td></tr><tr><td>1000</td><td>2000</td><td>3 ms</td><td>1 ms</td></tr></tbody></table>
+<h2 id="笔记检索-词面通道">笔记检索（词面通道）</h2>
+<table><thead><tr><th>笔记数</th><th>首次（含分词）</th><th>之后（缓存命中）</th></tr></thead><tbody><tr><td>200</td><td>35.8 ms</td><td>2.3 ms</td></tr><tr><td>1000</td><td>147.1 ms</td><td>7.2 ms</td></tr></tbody></table>
+<h2 id="怎么读这些数字">怎么读这些数字</h2>
+<ul>
+<li><code>vector</code>（纯 Python，含重排）在 20000 块时 51.3 ms，折合每千块 2.6 ms；按线性外推，5 万块约 128 ms。</li>
+<li><code>bm25</code> 在 20000 块时 27.5 ms。词法检索的常数远小于向量内积，规模上去时它是更稳的兜底。</li>
+<li>结论：按本次实测外推，5 万块仍在几百毫秒内，纯 Python 路径可用；再上一个数量级才需要考虑 <code>numpy</code>/<code>faiss</code>。</li>
+<li>维度 256：5000 块时每千块 5.5 ms，20000 块时 5.7 ms —— 基本线性。</li>
+<li>维度 1024：5000 块时每千块 21.0 ms，20000 块时 39.1 ms —— 基本线性。</li>
+<li>笔记检索 1000 篇：首次 147.1 ms，缓存命中后 7.2 ms。首次的成本在分词，它随篇数线性增长；命中后只剩打分。</li>
+</ul><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

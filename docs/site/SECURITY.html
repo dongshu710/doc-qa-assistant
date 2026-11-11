@@ -1,0 +1,128 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SECURITY · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html" class="on">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="安全说明">安全说明</h1>
+<h2 id="支持范围">支持范围</h2>
+<p>本项目的安全目标是：</p>
+<ul>
+<li>不泄露模型 Key；</li>
+<li>不因为一句「忽略以上指令」就把系统提示或他人信息吐出来；</li>
+<li>上传入口不被路径穿越、假后缀、超大文件打穿；</li>
+<li>默认不对外网暴露，并提供基础的生产防护。</li>
+</ul>
+<h2 id="密钥处理">密钥处理</h2>
+<ul>
+<li>源码与仓库中<strong>不含任何密钥</strong>；<code>.env</code> 已在 <code>.gitignore</code> 中。</li>
+<li>Key 从两处读取：界面里填的落 <code>data/app.json</code>（该文件已 gitignore，写盘后按当前用户收紧权限：</li>
+<p>POSIX <code>0600</code>，Windows 去掉继承只授权当前用户）；也可以继续用环境变量 <code>LLM_API_KEY</code>（兼容 <code>DEEPSEEK_API_KEY</code>）。 界面配置优先于环境变量。</p>
+<li>日志与 trace 不记录请求头、Key、完整系统提示；<code>/api/settings</code> 只返回 <code>api_key_masked</code> 与 <code>api_key_set</code>。</li>
+<li>前端页面不接触 Key，所有模型调用都在服务端完成。</li>
+</ul>
+<p>如果你在自己的环境部署，建议使用系统密钥管理或容器 Secret，不要把 Key 写进启动脚本并提交。</p>
+<h2 id="请求来源校验-v1-19-1-起">请求来源校验（v1.19.1 起）</h2>
+<p>单机运行<strong>不等于</strong>安全：用户在浏览器里打开任意页面，那个页面可以向 <code>127.0.0.1</code> 发请求， 而对端 IP 就是本机——用 IP 判断「是不是自己人」永远为真。所以来源校验是独立一层 （<code>src/security.py</code>），不依赖「绑了 127.0.0.1」这个前提。</p>
+<table><thead><tr><th>攻击</th><th>拦法</th><th>结果</th></tr></thead><tbody><tr><td>跨站 POST 改配置 / 传语料</td><td>带 body 的写请求必须 <code>Content-Type: application/json</code>；同时校验 <code>Origin</code> 与 <code>Sec-Fetch-Site</code></td><td>403 / 415</td></tr><tr><td>浏览器发起的写请求</td><td>必须带 <code>X-Jiyi-Client: web</code>（跨站伪造它会触发预检，而本项目不开放跨域）</td><td>403</td></tr><tr><td>DNS rebinding 读走全文</td><td>所有请求（含 GET）的 <code>Host</code> 必须是回环地址或 <code>ALLOWED_HOSTS</code> 白名单</td><td>403</td></tr><tr><td>表单 / <code>fetch(no-cors)</code> 绕过</td><td>这两类只能发 <code>text/plain</code>、<code>urlencoded</code>、<code>multipart</code>，一律 415</td><td>415</td></tr></tbody></table>
+<p>三道检查统一在 <code>server.py::_guard(method, path)</code> 里执行，不分散到各 handler—— 之前知识库上传/删除就是因为「各写各的」漏掉了鉴权。前端由 <code>util.js</code> 统一包了一层 <code>fetch</code>， 自动给写请求加 <code>X-Jiyi-Client</code>，新增接口不会忘。</p>
+<p>不拦非浏览器客户端：curl / SDK / MCP 不带 <code>Origin</code>，也不受同源策略约束，拦了只会让接入变难 （它们也不需要带 <code>X-Jiyi-Client</code>）。 局域网访问需显式设置 <code>ALLOWED_HOSTS</code>（如 <code>192.168.1.9</code>），并同时配置 <code>API_KEYS</code>。</p>
+<h2 id="路由鉴权表-v1-21-0-起">路由鉴权表（v1.21.0 起）</h2>
+<p>「记得在 handler 里加鉴权」不是可靠约束——知识库的上传/删除就是这样漏掉的（同目录的审批接口却要管理员）。 现在鉴权等级写在 <code>src/routing.py</code> 的一张表里，分发前由 <code>_guard()</code> 统一执行：</p>
+<table><thead><tr><th>等级</th><th>含义</th><th>覆盖</th></tr></thead><tbody><tr><td><code>open</code></td><td>明确开放</td><td><code>/api/settings</code>（Key 配错时的回退通道）、<code>/api/health</code>、<code>/api/update</code>、<code>/tools.json</code>、<code>/openapi.json</code>、页面</td></tr><tr><td><code>api</code></td><td>配了 <code>API_KEYS</code> 就要 Key</td><td>笔记、会话、文件、存储、知识库读写、原文、提问记录、反馈、评测用例、<code>/api/ask</code></td></tr><tr><td><code>admin</code></td><td>本机或 <code>X-Admin-Token</code></td><td><code>/metrics</code>、<code>/api/audit</code>、<code>/api/admin/*</code>、`/api/kb/approve</td><td>reject</td><td>rollback_doc`</td></tr></tbody></table>
+<p>两条规则值得记住：</p>
+<ul>
+<li><strong>未登记的 <code>/api/*</code> 默认按 <code>api</code> 处理</strong>。漏登记最多让接口多要一个 Key，不会变成「谁都能读原文」。</li>
+<li><strong>读接口不再豁免</strong>。<code>/api/source</code>（整段原文）、<code>/api/trace</code>（用户提问）以前只靠「绑了 127.0.0.1」，</li>
+<p>现在和其他数据面一样按表执行——GET 不等于公开。</p>
+</ul>
+<p>测试 <code>tests/test_routing.py</code> 同时断言表本身（最长前缀优先、默认收紧）与分发函数 （六个 <code>do_*</code> 的第一次调用必须是 <code>_guard</code>），所以「绕过闸门」也会被测试挡住。</p>
+<h2 id="反向代理与来源判定-a6">反向代理与来源判定（A6）</h2>
+<p><code>_client()</code> 只认 TCP 对端的 <code>client_address</code>，<strong>从不读 <code>X-Forwarded-For</code></strong>。这是刻意的：</p>
+<ul>
+<li>伪造成本为零的请求头不能用来决定「是不是本机」，否则一个 <code>X-Forwarded-For: 127.0.0.1</code> 就能冒充管理员；</li>
+<li>代价是：挂上反向代理后，所有请求看起来都来自 <code>127.0.0.1</code>，<code>_is_admin()</code> 的「本机即可」会整体失效。</li>
+</ul>
+<p>所以<strong>一旦放到反代后面，必须同时</strong>：</p>
+<ol>
+<li>设置 <code>ADMIN_TOKEN</code>（此时管理员判定只认 <code>X-Admin-Token</code>，不再看来源 IP）；</li>
+<li>设置 <code>API_KEYS</code>（否则所有调用方都是匿名的同一个身份）；</li>
+<li>设置 <code>ALLOWED_HOSTS</code> 为外部实际访问的域名，否则 Host 校验会 403。</li>
+</ol>
+<h2 id="响应头与可观测面">响应头与可观测面</h2>
+<ul>
+<li>所有响应带 <code>X-Content-Type-Options: nosniff</code>、<code>X-Frame-Options: DENY</code>、<code>Referrer-Policy: no-referrer</code>；</li>
+<p>HTML 页面额外带 CSP（<code>default-src 'self'</code>、<code>frame-ancestors 'none'</code>、<code>base-uri 'none'</code>、<code>form-action 'none'</code>）， 页面不引任何外部脚本，所以不需要放宽。</p>
+<li><code>/metrics</code> 归到 <code>admin</code> 等级；指标的 <code>key</code> 标签只放 Key 名字的 SHA-256 前 8 位，导出后也不泄露密钥名。</li>
+<li>接口异常默认只回 <code>服务端异常：&lt;异常类型&gt;</code>，原文进服务端日志；排查时设 <code>DEBUG=on</code> 才回传完整消息</li>
+<p>（异常里常带绝对路径，不该出现在响应体里）。</p>
+</ul>
+<h2 id="已实现的输入防护">已实现的输入防护</h2>
+<table><thead><tr><th>风险</th><th>处理</th></tr></thead><tbody><tr><td>提示注入（忽略以上指令 / 输出系统提示）</td><td>正则拦截，直接拒答，不进入检索与生成</td></tr><tr><td>越权读取他人信息</td><td>关键词拦截 + 拒答</td></tr><tr><td>金融合规（荐股、收益承诺）</td><td><code>finance</code> profile 额外拒答规则；<code>generic</code> 可关闭</td></tr><tr><td>零宽字符 / 控制字符绕过</td><td>输入归一化后再匹配</td></tr><tr><td>超长输入</td><td>默认上限 500 字，超出转为追问</td></tr><tr><td>文件名路径穿越</td><td>显式拒绝 <code>/</code>、<code>\</code>、<code>..</code>，不做静默改名</td></tr><tr><td>假 PDF / DOCX 后缀</td><td>校验文件头，假后缀返回 400</td></tr><tr><td>超大文件</td><td>文本 512KB、PDF/DOCX 6MB 上限（413）</td></tr><tr><td>扫描件 / 加密 PDF</td><td>解析失败返回 422，并提示先 OCR / 解密</td></tr><tr><td>模型探测被当成内网跳板（SSRF）</td><td><code>POST /api/settings/test</code> 的地址由调用方完全控制，所以：(1) 只接受 <code>http</code>/<code>https</code>；(2) <strong>不跟随 3xx 重定向</strong>——否则填个正常域名 302 到 <code>169.254.169.254</code> 就能探测内网；(3) <code>PROBE_ALLOW_PRIVATE=0</code> 时拒绝本机/内网/链路本地地址（默认 <code>1</code> 是为了放行本地 ollama）</td></tr><tr><td>附件路径穿越 / 编码绕过</td><td>先 <code>unquote</code> 再校验（顺序反了 <code>%2F</code> 会被当普通字符放过），清洗后复核不含分隔符与 <code>..</code>，单独拒读 <code>.tmp</code></td></tr><tr><td>跨源请求只比主机不比端口</td><td><code>Origin</code> 的 <code>host:port</code> 必须与本次 <code>Host</code> 一致（<code>localhost:9999</code> 与 <code>:8011</code> 是两个源）。<code>ALLOWED_HOSTS</code> 里的域名不按端口比——反代会把 443 改写成内部端口</td></tr><tr><td>开放接口泄露本机路径</td><td><code>GET /api/settings</code> 是 open 级（Key 配错时的回退通道）。<strong>配了 <code>API_KEYS</code> 且没带有效 Key</strong> 时，回包里的家目录、配置文件路径、MCP 配置中的绝对路径一律压成 <code>…/末级</code>，并带 <code>redacted: true</code>；开放模式不脱敏（单机自用，设置页要显示路径）</td></tr><tr><td>审计日志里的证件号</td><td><code>AuditLog.mask_pii</code>：手机号/身份证/卡号保留前 3 后 4，其余打码。审计只用于追责与排查，不该因为用户粘贴了身份证就变成凭证级数据。<code>trace.jsonl</code> 不脱敏（评测要重现模型看到什么）</td></tr></tbody></table>
+<h2 id="生产防护">生产防护</h2>
+<table><thead><tr><th>能力</th><th>实现</th></tr></thead><tbody><tr><td>限流</td><td>按客户端 IP（或 API Key）令牌桶，默认 5 rps / burst 10；超限 429 + <code>Retry-After</code></td></tr><tr><td>API Key</td><td><code>API_KEYS=名字:密钥,...</code>；支持 <code>Authorization: Bearer</code> 与 <code>X-API-Key</code>；常量时间比较；审计只记名字与末 4 位</td></tr><tr><td>幂等</td><td><code>Idempotency-Key</code> 在 TTL 内复用首次结果，避免重试重复计费</td></tr><tr><td>审计</td><td>问答摘要、上传/删除、审批/回滚、用例运行、灰度变更写入 <code>logs/audit.jsonl</code>；<code>LOG_SINK=stdout</code> 可输出 JSON 供集中采集</td></tr><tr><td>多实例状态</td><td>配置 <code>REDIS_URL</code> 后限流/幂等/成本跨实例共享；连接支持密码，失败回退本地</td></tr><tr><td>知识库审批</td><td><code>KB_APPROVAL=on</code> 时上传只进 <code>pending/</code>，管理员审批后才成为活动版本；审批/回滚需 admin</td></tr><tr><td>成本上限</td><td>每日 token 预算，超限跳过模型调用并标记 <code>budget_exceeded</code></td></tr><tr><td>灰度</td><td>按调用方身份（API Key 或 IP）+ query 哈希稳定分流到灰度模型，比例可运行时调整</td></tr><tr><td>回滚</td><td>运行配置保留历史快照，<code>POST /api/admin/rollback</code> 恢复上一版</td></tr><tr><td>管理接口</td><td>设置 <code>ADMIN_TOKEN</code> 后需 <code>X-Admin-Token</code>；未设置时仅本机可调用（含审批/回滚）</td></tr></tbody></table>
+<h2 id="已知缺口">已知缺口</h2>
+<ol>
+<li><strong>业务接口鉴权默认关闭</strong>：<code>API_KEYS</code> 为空时所有接口不做调用方认证（单机自用场景的默认值）。</li>
+<p>一旦配置 <code>API_KEYS</code>，读接口与写接口一样要求 Key（v1.21.0 起由 <code>src/routing.py</code> 统一执行， 含 <code>/api/source</code>、<code>/api/trace</code>、<code>/api/knowledge</code> 等原先只看「是不是本机」的接口）。对外暴露必须配 <code>API_KEYS</code>。</p>
+<li><strong>Redis 自身的安全</strong>：连接支持密码，但没有内置 TLS 校验与 ACL 管理；<code>REDIS_URL</code> 必须只在内网可达，禁止裸奔到公网。Redis 失联时会回退进程内状态，此时多实例限流不再一致。</li>
+<li><strong>trace 与审计会记录用户问题原文</strong>：<code>logs/audit.jsonl</code> 已对手机号/身份证/卡号打码（保留前 3 后 4），但<strong>问题文本本身仍会落盘</strong>；<code>logs/trace.jsonl</code> 不脱敏——它要用于评测，改了就重现不了模型当时看到什么。接入真实业务前必须自定保留期并限制目录权限，或把这两类日志写到单独的卷。</li>
+<li><strong>上传解析在进程内完成</strong>：没有沙箱与杀毒扫描。只接受文本型 PDF/DOCX；不要接受来源不明的文件。</li>
+<li><strong>embedding 会把文档与问题发到模型端点</strong>：若用外部 API，等于把知识库内容出网；敏感语料应部署内网 bge（TEI/Xinference），并在 <code>EMBEDDING_BASE_URL</code> 里指向内网地址。<code>EMBEDDING_API_KEY</code> 与 LLM Key 同等对待，不写日志。</li>
+<li><strong>审批锁是本机文件锁</strong>：多实例下审批应由单实例处理，或改用 Redis 分布式锁；否则两个实例同时审批可能各自生成版本（<code>state.json</code> 的 <code>os.replace</code> 保证不会写坏，但后写者覆盖先写者）。陈旧锁的判定阈值是 <code>KB_LOCK_STALE_S</code>（默认 120 秒）：判得太短会把「还在写的大版本」当死锁清掉，判得太长则真崩了要多等一会。</li>
+<li><strong>提示注入只能降低概率</strong>：规则拦截覆盖常见句式，不保证 100%。模型输出仍应视为不可信内容。</li>
+<li><strong>模型输出可能出错</strong>：引用校验能降低「无出处」的比例，但不能保证事实一定正确；关键业务需人工复核。</li>
+<li><strong>无 OCR</strong>：扫描件 PDF 会被拒绝，而不是给出空答案。</li>
+<li><strong>无多租户隔离</strong>：所有请求共享同一知识库与索引。</li>
+<li><strong>审计只保证本机落盘</strong>：stdout 采集链路（Fluent Bit → Loki/ES）的丢失、篡改与保留期由日志平台负责；应用侧没有 WORM 存储。</li>
+</ol>
+<h2 id="部署建议">部署建议</h2>
+<ul>
+<li>只在本机或内网使用；如需公网访问，放在反向代理后面并加认证与 HTTPS。</li>
+<li>对外提供 API 时设置 <code>API_KEYS</code>（按调用方命名），并把用量与 <code>rag_api_cost_usd_total{key}</code> 接入告警；Key 轮换期间可让新旧 Key 同名并存。</li>
+<li>设置 <code>ADMIN_TOKEN</code>，并限制 <code>/api/admin/*</code>、<code>/api/kb/approve|reject|rollback_doc</code> 的来源 IP。</li>
+<li>Redis 只监听内网，启用 <code>requirepass</code> / ACL，禁止公网暴露；<code>REDIS_TIMEOUT_S</code> 控制在 1~2s，避免故障时拖垮请求。</li>
+<li>用内网 embedding 端点处理敏感语料；外部 API 场景先在数据合规侧确认出网范围。</li>
+<li>设置 <code>LLM_TIMEOUT_S</code>、<code>LLM_MAX_RETRIES</code>、<code>WALL_CLOCK_BUDGET_S</code>、<code>DAILY_TOKEN_BUDGET</code>，避免单请求长时间占用与成本失控。</li>
+<li>定期清理 <code>logs/</code>，不要把 trace 提交到仓库。</li>
+<li>不要把 <code>.env</code>、<code>logs/</code>、<code>dist/</code> 打进公开镜像或压缩包（本项目 <code>.gitignore</code> 已处理）。</li>
+</ul>
+<h2 id="报告问题">报告问题</h2>
+<p>发现安全问题请开 GitHub Issue，描述复现步骤与影响范围，不要附带真实密钥或个人数据。</p><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

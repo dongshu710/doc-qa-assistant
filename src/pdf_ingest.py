@@ -39,6 +39,63 @@ def _engine_order(engine: str) -> list[str]:
     return order
 
 
+# 页标记：写进 Markdown 的 HTML 注释，切分时用它给 chunk 定页码，随后被剥掉。
+#
+# 为什么写进文件而不是另存一份页码映射：切分发生在「以后某次重建索引」时，
+# 那时手里只有 Markdown。映射表要跟着版本目录一起搬、还要防它和文件不同步，
+# 而一个注释行是自描述的——文件在，页码就在。
+PAGE_MARK = "<!--page:{n}-->"
+PAGE_MARK_RE = re.compile(r"<!--page:(\d+)-->")
+
+
+def extract_pages(source: bytes | str | Path,
+                  engine: str = "auto") -> tuple[list[tuple[int, str]], dict]:
+    """按页抽文本：`[(页码, 文本), ...]`。空页保留为空串（页码不能前移）。"""
+    if isinstance(source, (str, Path)):
+        data = Path(source).read_bytes()
+    else:
+        data = source
+
+    errors: list[str] = []
+    for name in _engine_order(engine):
+        try:
+            if name == "pypdf":
+                import io
+
+                from pypdf import PdfReader
+
+                reader = PdfReader(io.BytesIO(data))
+                pages = [(index, clean(page.extract_text() or ""))
+                         for index, page in enumerate(reader.pages, 1)]
+                joined = "\n\n".join(text for _n, text in pages if text)
+                return pages, {"engine": "pypdf", "pages": len(pages),
+                               "chars": len(joined)}
+            pages, meta = pdf_text.extract_pages(data)
+            pages = [(number, clean(text)) for number, text in pages]
+            return pages, meta
+        except Exception as exc:  # noqa: BLE001 —— 换引擎再试，最后统一报错
+            errors.append(f"{name}: {exc}")
+
+    raise pdf_text.PDFError("；".join(errors) or "PDF 解析失败")
+
+
+def with_page_marks(pages: list[tuple[int, str]]) -> str:
+    """把分页文本拼成带页标记的全文。空页只留标记，不产出空行堆。"""
+    parts: list[str] = []
+    for number, text in pages:
+        if not text:
+            continue
+        parts.append(PAGE_MARK.format(n=number))
+        parts.append(text)
+    return "\n\n".join(parts)
+
+
+def strip_page_marks(text: str) -> str:
+    """去掉页标记并收拾多余空行；给「看原文」这类展示用。"""
+    out = PAGE_MARK_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
 def extract_text(source: bytes | str | Path, engine: str = "auto") -> tuple[str, dict]:
     """抽取 PDF 文本。source 可以是字节或路径。返回 (文本, 统计信息)。"""
     if isinstance(source, (str, Path)):
@@ -134,7 +191,10 @@ def pdf_bytes_to_markdown(data: bytes, filename: str, out_dir: str | Path,
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    text, meta = extract_text(data, engine=engine)
+    # 一次解析同时拿到「全文」与「分页」：分两次解析等于把 PDF 解压两遍，
+    # 大文件上是秒级开销，而两份结果还可能因为引擎兜底不同而不一致。
+    page_list, meta = extract_pages(data, engine=engine)
+    text = "\n\n".join(page_text for _n, page_text in page_list if page_text)
     pages = int(meta.get("pages") or 0)
     warn = assess(text, pages, min_chars=min_chars)
     if warn:
@@ -145,7 +205,7 @@ def pdf_bytes_to_markdown(data: bytes, filename: str, out_dir: str | Path,
 
     stem = Path(filename).stem or "document"
     target = unique_path(out, f"{prefix}{safe_stem(stem)}.md")
-    target.write_text(to_markdown(stem, text), encoding="utf-8")
+    target.write_text(to_markdown(stem, with_page_marks(page_list)), encoding="utf-8")
     return {
         "ok": True,
         "md": target.name,

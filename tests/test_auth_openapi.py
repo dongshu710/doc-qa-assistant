@@ -96,7 +96,10 @@ def main() -> None:
         print("X-API-Key 正确 Key → 200 OK")
 
         status, _, health = _call(port, "/api/health")
-        assert status == 200 and health["auth"] == {"mode": "key", "keys": 2}, health.get("auth")
+        # read_only 是描述里的新字段（v1.36.0）：没配只读 Key 时必须是 0，
+        # 而不是缺字段——缺字段分不清「没有只读 Key」和「旧版本没这个功能」。
+        assert status == 200 and health["auth"] == {"mode": "key", "keys": 2,
+                                                    "read_only": 0}, health.get("auth")
         assert "names" not in health["auth"], "健康检查不应暴露调用方名字"
         print("健康检查暴露鉴权模式 OK（不回名字）")
 

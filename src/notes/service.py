@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from . import assets as assets_mod
 from . import digest_llm
@@ -176,7 +177,8 @@ class NoteService:
         """
         if not isinstance(changes, dict) or not changes:
             raise NoteError("changes 不能为空，至少给一个字段（title / tags / status / kind / sections）")
-        unknown = set(changes) - {"title", "tags", "status", "kind", "sections"}
+        unknown = set(changes) - {"title", "tags", "status", "kind", "sections",
+                                  "valid_until", "supersedes"}
         if unknown:
             raise NoteError(f"不支持的字段：{', '.join(sorted(unknown))}")
         current_rev = self.store.rev(note_id)
@@ -196,6 +198,10 @@ class NoteService:
             if changes["kind"] not in KINDS:
                 raise NoteError(f"kind 只能是 {' / '.join(KINDS)}")
             note.kind = str(changes["kind"])
+        if "valid_until" in changes:
+            note.valid_until = _check_date(changes["valid_until"], "valid_until")
+        if "supersedes" in changes:
+            note.supersedes = str(changes["supersedes"] or "")[:64]
         if "status" in changes:
             if changes["status"] not in STATUSES:
                 raise NoteError(f"status 只能是 {' / '.join(STATUSES)}")
@@ -321,11 +327,22 @@ class NoteService:
                     "search": {"mode": "filter", "degraded": "", "indexed": 0,
                                "pending": 0, "total": len(candidates)}}
         outcome = self.searcher().search(query, candidates, semantic=semantic)
-        ranked = sorted(
-            ({"score": round(outcome.scores.get(row["id"], 0.0), 4), **row}
-             for row in candidates if outcome.scores.get(row["id"], 0.0) > 0),
-            key=lambda item: (-item["score"], str(item.get("created") or "")),
-        )
+        today = _today()
+        ranked = []
+        for row in candidates:
+            score = outcome.scores.get(row["id"], 0.0)
+            if score <= 0:
+                continue
+            expired = _is_expired(row.get("valid_until"), today)
+            # 过期不隐藏、只降权：旧条款可能是用户要的历史依据（「去年怎么写的」），
+            # 直接过滤掉会让这类提问永远找不到答案。降权保证它不会盖过现行版本。
+            if expired:
+                score *= EXPIRED_WEIGHT
+            item = {"score": round(score, 4), **row}
+            if row.get("valid_until"):
+                item["expired"] = expired
+            ranked.append(item)
+        ranked.sort(key=lambda item: (-item["score"], str(item.get("created") or "")))
         return {"items": ranked[:limit] if limit else ranked, "search": outcome.as_dict()}
 
     def rebuild_search(self, semantic: str = "auto") -> dict:
@@ -346,6 +363,39 @@ class NoteService:
 
     def stats(self) -> dict:
         return self.store.stats()
+
+
+# 过期笔记的分数折扣。0.5 是实测取值：够让现行版本稳定排在前，
+# 又不至于让过期条目彻底沉底（搜「旧版赎回费」时它仍在前三）。
+EXPIRED_WEIGHT = 0.5
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _check_date(value, field: str) -> str:
+    """只收 `YYYY-MM-DD` 或空串。
+
+    为什么不接受任意字符串：`valid_until: 明年` 这种值既不会被判过期，
+    也不会报错，于是「设了有效期但一直生效」——又一个静默失败。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        datetime.strptime(text[:10], "%Y-%m-%d")
+    except ValueError as exc:
+        raise NoteError(f"{field} 需要 YYYY-MM-DD 格式，收到 {text[:20]!r}") from exc
+    return text[:10]
+
+
+def _is_expired(valid_until: str | None, today: str) -> bool:
+    """`valid_until` 当天仍算有效（含当天），过了才算过期。"""
+    text = str(valid_until or "").strip()
+    if not text:
+        return False
+    return text[:10] < today
 
 
 def _clip_messages(messages: list[Msg], per_message: int = 4000) -> list[Msg]:

@@ -17,11 +17,29 @@ class Chunk:
     section: str
     text: str
     chunk_index: int
+    # 页码只在 PDF 入库时有值（Markdown 里的 `<!--page:N-->` 标记换算而来）。
+    # 默认 None 而不是 0：0 会被前端显示成「第 0 页」，而 md/docx/xlsx 根本没有页概念。
+    page: int | None = None
 
 
 # 「自动」不是 0：0 只在当前语料恰好全短时才安全，换一份带长条款的合同就会丢跨块指代。
 # None 表示按内容自适应，真实数字才是用户显式指定的行为。
 AUTO = None
+
+# PDF 入库时写进 Markdown 的页标记（与 `pdf_ingest.PAGE_MARK` 同一个格式）。
+# 这里不 import pdf_ingest：切分是底层模块，不该依赖某个具体解析器；
+# 两边靠格式约定对齐，改格式必须同时改这里（有测试钉着）。
+_PAGE_MARK = re.compile(r"<!--page:(\d+)-->")
+
+
+def _page_at(marks: list[tuple[int, int]], offset: int) -> int | None:
+    """某个字符偏移属于哪一页：取最后一个「起始偏移 ≤ offset」的标记。"""
+    page = None
+    for start, number in marks:
+        if start > offset:
+            break
+        page = number
+    return page
 
 
 def _env_int(name: str, default: int) -> int:
@@ -96,25 +114,58 @@ def _split_section(body: str, max_chars: int = 320, overlap: int | None = AUTO) 
 
 def parse_document(raw: str, fname: str, max_chars: int = 320,
                    overlap: int | None = AUTO) -> list[Chunk]:
-    """解析单份文档。拆出来是为了让增量重建只重读变更过的文件。"""
+    """解析单份文档。拆出来是为了让增量重建只重读变更过的文件。
+
+    页标记（`<!--page:N-->`）在这里换算成 `Chunk.page` 并从正文剥掉：
+    切分发生在「以后某次重建」时，那时只有 Markdown，所以页码必须随文件走。
+    标记一旦漏进正文，会被当成人话检索，还会占掉 chunk 的字符预算。
+    """
     chunks: list[Chunk] = []
     doc_id = fname.rsplit(".", 1)[0]
     title = doc_id
     section = "概述"
     buf: list[str] = []
+    buf_pages: list[int | None] = []
     idx = 0
+    current_page: int | None = None
 
     def flush(doc: str, doc_title: str, section_name: str) -> None:
-        nonlocal buf, idx
-        body = "\n".join(buf).strip()
-        if body:
+        nonlocal buf, buf_pages, idx
+        if not buf:
+            return
+        body = "\n".join(buf)
+        # 每行在 body 里的起始偏移 → 该行属于哪一页。切出来的块按起始偏移查页码，
+        # 于是一节跨页时，前后两个块能各自指到自己那页。
+        marks: list[tuple[int, int]] = []
+        offset = 0
+        seen: int | None = None
+        for line, page in zip(buf, buf_pages):
+            if page is not None and page != seen:
+                marks.append((offset, page))
+                seen = page
+            offset += len(line) + 1
+
+        cursor = 0
+        if body.strip():
             for piece in _split_section(body, max_chars, overlap):
-                chunks.append(Chunk(doc, doc_title, section_name, piece, idx))
+                found = body.find(piece, cursor)
+                if found < 0:
+                    # 重叠前缀会让查找落空：退回到整段里找，找不到就用本节起始页
+                    found = body.find(piece)
+                if found >= 0:
+                    cursor = found + len(piece)
+                page = _page_at(marks, found if found >= 0 else 0)
+                chunks.append(Chunk(doc, doc_title, section_name, piece, idx, page))
                 idx += 1
         buf = []
+        buf_pages = []
 
     for line in raw.splitlines():
         stripped = line.strip()
+        marker = _PAGE_MARK.fullmatch(stripped)
+        if marker:
+            current_page = int(marker.group(1))
+            continue
         if stripped.startswith("#"):
             flush(doc_id, title, section)
             if stripped.startswith("# "):
@@ -124,6 +175,7 @@ def parse_document(raw: str, fname: str, max_chars: int = 320,
                 section = stripped.lstrip("#").strip() or section
             continue
         buf.append(line)
+        buf_pages.append(current_page)
     flush(doc_id, title, section)
     return chunks
 

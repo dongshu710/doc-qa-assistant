@@ -1,0 +1,254 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AGENT_NOTES_PLAN · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html" class="on">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="智能体笔记工具-改造规划-v2-0-方向">智能体笔记工具 · 改造规划（v2.0 方向）</h1>
+<blockquote>状态：方案待确认（Phase 0–1 交付），尚未改动代码。 结论先行：把现有「五页 RAG 演示站」收成「两页 + 一个智能体可调用的个人笔记存储」。 存储以 Markdown 文件为唯一真相，索引可删可重建；摘要走「规则引擎保底 + 大模型增强」双引擎； 接入走「MCP 主通道 + HTTP 兼容 + CLI 兜底 + 文件直读」四级阶梯。</blockquote>
+<hr>
+<h2 id="1-目标与边界-五要素">1. 目标与边界（五要素）</h2>
+<table><thead><tr><th>项</th><th>内容</th></tr></thead><tbody><tr><td>目标</td><td>让任意智能体在对话中<strong>挑选</strong>有价值的内容，整理成结构化笔记，落到<strong>用户自己的</strong>目录；人能离线翻、随手改；同一份内容可被下一个智能体读到</td></tr><tr><td>输入</td><td>智能体传来的消息数组（含 role/text），可带选中范围、标题、标签、类型提示；也接受人工在页面上勾选</td></tr><tr><td>输出</td><td>一个 Markdown 文件（front matter + 六段正文）+ 一条索引记录 + 一个稳定 <code>note_id</code></td></tr><tr><td>成功指标</td><td>① 无大模型时 100% 能产出合法笔记；② 保存 P95 &lt; 300ms（1k 字）；③ 索引删除后可 100% 重建；④ 人工改文件后读取立即生效（自愈率 100%）；⑤ ≥ 5 种智能体可按文档接入</td></tr><tr><td>约束</td><td>零第三方依赖（标准库）；全中文；单机优先、数据不出本机（除显式开启的大模型摘要）；不破坏现有问答与文档上传能力</td></tr></tbody></table>
+<p><strong>不做什么</strong>：不做云端同步、不做多租户、不做向量化笔记库（先留接口）、不做自动抓取对话（必须显式调用/勾选）。</p>
+<hr>
+<h2 id="2-先回答-这需要-agent-吗">2. 先回答：这需要 Agent 吗？</h2>
+<p><strong>不需要，而且不该做成 Agent。</strong></p>
+<p>这是给智能体用的<strong>工具 + 记忆层</strong>：无自主循环、无规划器、无工具编排。真正的 Agent 在调用方（Claude/Cursor/自研），本项目的职责是把「一次工具调用」做对：幂等、可预览、可撤销、格式稳定。</p>
+<p>由此定下三条设计红线：</p>
+<ol>
+<li><strong>不引入自主循环</strong> —— 本项目没有 <code>while True</code>，不需要 max_steps；但必须给调用方提供<strong>幂等键</strong>与<strong>预算上限</strong>（单次摘要 token 上限），防止调用方重试把成本放大。</li>
+<li><strong>写操作要能预览</strong> —— <code>draft</code> 先返回渲染结果与目标路径，<code>commit</code> 才落盘；删除是 L2，必须带 <code>confirm_token</code>。</li>
+<li><strong>格式即契约</strong> —— 文件格式一旦发布就要向后兼容，所有接口都是它的皮。</li>
+</ol>
+<hr>
+<h2 id="3-总体架构">3. 总体架构</h2>
+<pre><code class="lang-mermaid">flowchart TB
+  subgraph Agents[调用方]
+    A1[Claude / Cursor&lt;br/&gt;MCP]
+    A2[ChatGPT / Dify&lt;br/&gt;OpenAPI]
+    A3[任意可执行命令的智能体&lt;br/&gt;CLI]
+    A4[人&lt;br/&gt;编辑器 / 静态页]
+  end
+
+  subgraph Surface[接入层 M4]
+    MCP[MCP Server&lt;br/&gt;stdio JSON-RPC]
+    HTTP[HTTP API&lt;br/&gt;/api/notes + openapi.json]
+    CLI[CLI&lt;br/&gt;notes save/list/get]
+  end
+
+  subgraph Core[内核]
+    SVC[NoteService&lt;br/&gt;统一用例层]
+    SEL[选择与归一化 M2&lt;br/&gt;切片 / 去重 / 幂等]
+    DIG[摘要双引擎 M3&lt;br/&gt;RuleDigest / LlmDigest]
+    IDX[派生索引 M1&lt;br/&gt;notes.jsonl + 自愈重建]
+  end
+
+  subgraph Store[存储 M1]
+    FILES[(NOTE_HOME/notes/**.md&lt;br/&gt;唯一真相)]
+    ASSET[(assets/ 附件)]
+    TRASH[(.trash/ 软删除)]
+  end
+
+  A1 --&gt; MCP --&gt; SVC
+  A2 --&gt; HTTP --&gt; SVC
+  A3 --&gt; CLI --&gt; SVC
+  A4 --&gt; FILES
+  SVC --&gt; SEL --&gt; DIG --&gt; IDX --&gt; FILES
+  SVC --&gt; ASSET
+  SVC --&gt; TRASH
+  FILES -.扫盘重建.-&gt; IDX</code></pre>
+<p>关键取舍：</p>
+<ul>
+<li><strong>文件是真相，索引是缓存</strong>。索引删了不丢数据；外部编辑以文件为准，索引只跟随不覆盖。</li>
+<li><strong>三个入口一套用例</strong>。MCP/HTTP/CLI 只做协议转换，全部调 <code>NoteService</code>，避免三套行为漂移。</li>
+<li><strong>摘要是可插拔的</strong>。<code>DIGEST=rule</code> 时零依赖零成本；<code>auto</code> 时有 Key 走模型、失败即降级。</li>
+</ul>
+<hr>
+<h2 id="4-存储契约-v1-最贵的一步-先定死">4. 存储契约 v1（最贵的一步，先定死）</h2>
+<h3 id="4-1-目录">4.1 目录</h3>
+<pre><code>NOTE_HOME（默认 ~/agent-notes，可用环境变量或 --home 覆盖）
+├─ notes/2026/10/20261024-204512-7f3a9c.md     # 正文，路径即时间线
+├─ assets/20261024-204512-7f3a9c/…             # 大代码块、附件（可选）
+├─ index/notes.jsonl                            # 派生索引，可删
+├─ index/tags.json                              # 派生
+├─ exports/                                     # 单文件 HTML / bundle
+├─ .trash/                                      # 软删除，默认留 30 天
+└─ AGENTS.md                                    # 给智能体读的接入契约</code></pre>
+<p>文件名用 <code>id</code>，不用标题：避免改名、避免中文/特殊字符在跨平台同步时出问题；标题只放 front matter。</p>
+<h3 id="4-2-单个笔记">4.2 单个笔记</h3>
+<pre><code class="lang-markdown">---
+schema: note/v1
+id: 20261024-204512-7f3a9c
+title: 出口退税申报口径确认
+created: 2026-10-24T20:45:12+08:00
+updated: 2026-10-24T20:45:12+08:00
+kind: decision          # decision | howto | reference | qa | log
+status: draft           # draft | final | archived
+tags: [税务, 出口退税, 待跟进]
+source:
+  agent: claude-desktop
+  model: claude-sonnet-4-5
+  session: sess_8f21
+  messages: 12
+digest: rule            # rule | llm | llm-fallback
+hash: sha256:9c1f…
+---
+
+## 摘要
+
+一句话结论……
+
+## 要点
+
+- 要点一（≤ 40 字）
+- 要点二
+
+## 决策
+
+- 采用 13% 退税率，2026-11-01 起执行
+
+## 待办
+
+- [ ] 财务部复核申报表（负责人待定）
+
+## 原文
+
+&gt; 可选段落，`NOTE_KEEP_RAW=off` 时不写。
+
+## 引用
+
+- https://example.com/policy</code></pre>
+<p>六段固定顺序、缺则省略；正文允许用户任意增删小节（解析器按标题取段，多余小节原样保留）。</p>
+<h3 id="4-3-解析容错-决定-能不能随便改">4.3 解析容错（决定"能不能随便改"）</h3>
+<table><thead><tr><th>情况</th><th>行为</th></tr></thead><tbody><tr><td>front matter 缺字段</td><td>用文件名/正文补默认值，<code>schema</code> 缺失仍可读</td></tr><tr><td>front matter 语法坏掉</td><td>整篇按正文处理，<code>id</code> 取文件名，标记 <code>external: true</code>，<strong>不报错</strong></td></tr><tr><td>用户改了标题/标签</td><td>下次读取按 <code>mtime+size+hash</code> 判定变更，刷新索引</td></tr><tr><td>用户手动新增 .md</td><td><code>notes index --rebuild</code> 扫盘纳入；服务读路径也会按需补录</td></tr><tr><td>同名 id 冲突</td><td>以 <code>created</code> 较早者为准，另一篇加 <code>-2</code> 后缀并写告警</td></tr></tbody></table>
+<hr>
+<h2 id="5-模块划分与优先级">5. 模块划分与优先级</h2>
+<table><thead><tr><th>#</th><th>模块</th><th>职责</th><th>关键产物</th><th>失败处理</th><th>优先级</th><th>规模</th></tr></thead><tbody><tr><td>M1</td><td>存储内核</td><td>契约、路径、原子写、锁、索引、自愈</td><td><code>src/notes/store.py</code>、<code>index.py</code></td><td>写失败回滚临时文件；索引坏 → 重建</td><td><strong>P0</strong></td><td>M</td></tr><tr><td>M2</td><td>选择与归一化</td><td>消息切片、角色归一、去重、幂等、draft/commit</td><td><code>src/notes/select.py</code></td><td>空选择 → 400 明确原因；超长 → 截断并标注</td><td><strong>P0</strong></td><td>S</td></tr><tr><td>M3</td><td>摘要双引擎</td><td>RuleDigest 保底、LlmDigest 增强、schema 校验、降级</td><td><code>src/notes/digest_rule.py</code>、<code>digest_llm.py</code></td><td>模型超时/坏 JSON → 回落规则并标 <code>digest: llm-fallback</code></td><td><strong>P0</strong></td><td>M</td></tr><tr><td>M4</td><td>工具面</td><td>MCP(stdio) / HTTP / CLI 三入口 + <code>AGENTS.md</code></td><td><code>src/notes/mcp_server.py</code>、<code>api.py</code>、<code>cli.py</code></td><td>协议层异常 → 结构化错误码，不抛栈</td><td><strong>P0</strong></td><td>L</td></tr><tr><td>M5</td><td>页面收敛</td><td>删首页/数据中心；<code>/ask</code> 勾选保存；<code>/kb</code> 加「我的笔记」</td><td>改动 <code>web_pages.py</code>、<code>server.py</code></td><td>页面接口不可用 → 只读降级，仍可看笔记</td><td>P1</td><td>M</td></tr><tr><td>M6</td><td>离线导出</td><td>单文件 HTML、JSON bundle 导入导出</td><td><code>src/notes/export.py</code></td><td>导出失败保留已有文件，不半写</td><td>P1</td><td>S</td></tr><tr><td>M7</td><td>检索与流转</td><td>全文检索、标签、跨智能体接续、引用回链</td><td><code>src/notes/search.py</code></td><td>无索引走线性扫，结果标 <code>degraded</code></td><td>P1</td><td>M</td></tr><tr><td>M8</td><td>加固与评测</td><td>并发锁、权限、trace、20+ 评测集、备份</td><td><code>tests/eval_notes.py</code>、<code>docs/</code></td><td>任一项不过线 → 阻断发版</td><td>P2</td><td>M</td></tr></tbody></table>
+<h3 id="依赖与执行顺序">依赖与执行顺序</h3>
+<pre><code class="lang-mermaid">flowchart LR
+  M1[M1 存储内核] --&gt; M2[M2 选择归一化]
+  M2 --&gt; M3[M3 摘要双引擎]
+  M3 --&gt; M4[M4 工具面]
+  M1 --&gt; M6[M6 离线导出]
+  M2 --&gt; M5[M5 页面收敛]
+  M3 --&gt; M5
+  M1 --&gt; M7[M7 检索流转]
+  M4 --&gt; M8[M8 加固评测]
+  M5 --&gt; M8</code></pre>
+<p>里程碑：</p>
+<ul>
+<li><strong>M0（0.5 天）</strong> 收口页面：删 <code>/</code>（302→<code>/ask</code>）、删 <code>/insights</code> 与 <code>insights.py</code>，导航两项。先把"两页"这个前提坐实。</li>
+<li><strong>M1（P0 第一步）</strong> 契约 + 存储内核 + 规则摘要 + CLI 竖切片 → 通过第 6 节 5 条验收。</li>
+<li><strong>M2（P0）</strong> HTTP API（<code>/api/notes</code> 六个端点）+ <code>openapi.json</code> + <code>tools.json</code>。</li>
+<li><strong>M3（P0）</strong> MCP stdio server（7 工具 + 2 resources）+ <code>AGENTS.md</code>。</li>
+<li><strong>M4（P1）</strong> LLM 摘要接入（含预算、超时、降级）；<code>/ask</code> 勾选保存；<code>/kb</code> 笔记区。</li>
+<li><strong>M5（P1）</strong> 离线导出 + 导入；全文检索。</li>
+<li><strong>M6（P2）</strong> 评测集、压测、备份恢复、灰度。</li>
+</ul>
+<hr>
+<h2 id="6-第一步-只做一件事-p0-竖切片">6. 第一步：只做一件事（P0 竖切片）</h2>
+<blockquote><strong>把「一段对话 → 一个合法 Markdown 文件 → 读回来 → 手改后仍读得对」跑通，全程不接大模型。</strong></blockquote>
+<p>范围（只含 M1 + M2 最小集 + M3 的 <code>RuleDigest</code> + 一个 <code>notes</code> CLI）：</p>
+<pre><code>src/notes/__init__.py
+src/notes/model.py       # Note 数据类、校验、序列化/反序列化
+src/notes/store.py       # 路径、原子写、锁、软删除、扫盘
+src/notes/index.py       # notes.jsonl 生成 / 重建 / 增量刷新
+src/notes/select.py      # 消息切片、去重 hash、幂等表
+src/notes/digest_rule.py # 规则摘要（标题/要点/决策/待办/引用）
+src/notes/cli.py         # save / list / get / rebuild / export
+tests/test_notes_store.py
+tests/test_notes_digest_rule.py</code></pre>
+<p>CLI 接口（先定形，后续 HTTP/MCP 复用同一参数语义）：</p>
+<pre><code class="lang-bash">notes save --from conv.json --kind decision --tags 税务,出口退税 [--draft] [--keep-raw]
+notes list --tag 税务 --since 2026-10-01 --limit 20 --json
+notes get &lt;id&gt; [--json]
+notes rebuild</code></pre>
+<h3 id="验收标准-可执行-缺一不算完成">验收标准（可执行，缺一不算完成）</h3>
+<ol>
+<li><code>notes save --from conv.json</code> 生成 <code>notes/2026/10/&lt;id&gt;.md</code>，front matter 六字段齐全，正文含「摘要 + 要点」两节。</li>
+<li>手工把标题改成「改过的标题」→ <code>notes get &lt;id&gt; --json</code> 返回新标题（自愈）。</li>
+<li><code>rm -rf index/</code> → 下次 <code>notes list</code> 自动重建，条数与磁盘 <code>.md</code> 数一致。</li>
+<li>同样的 <code>conv.json</code> 保存两次 → 第二次返回 <code>duplicate_of=&lt;id&gt;</code>，不产生新文件。</li>
+<li>把 front matter 删掉再读 → 不报错，<code>external: true</code>，标题取文件名/首行。</li>
+<li>1k 字笔记：<code>save</code> P95 &lt; 300ms、<code>list</code>(1000 篇) &lt; 100ms、零第三方依赖。</li>
+</ol>
+<p><strong>为什么先做这个</strong>：文件格式是唯一会被用户长期持有、被多个智能体共同读写的东西，改一次就要迁移全部数据；接口层（HTTP/MCP）都是薄壳，晚做一天不影响正确性，格式做错一天要还债一年。</p>
+<hr>
+<h2 id="7-工具面设计-m4-预定稿">7. 工具面设计（M4 预定稿）</h2>
+<table><thead><tr><th>工具</th><th>级别</th><th>输入要点</th><th>行为</th></tr></thead><tbody><tr><td><code>save_conversation</code></td><td>L1 可撤销写</td><td><code>messages[]</code>、<code>select</code>、<code>hint</code>、<code>mode=draft/commit</code>、<code>idempotency_key</code></td><td>草稿只渲染不落盘；commit 写文件并返回 <code>id/path/preview</code></td></tr><tr><td><code>preview_note</code></td><td>L0 只读</td><td>同 <code>save_conversation</code>，强制 draft</td><td>返回 markdown 预览与目标路径</td></tr><tr><td><code>search_notes</code></td><td>L0</td><td><code>query</code>、<code>tags[]</code>、<code>since/until</code>、<code>limit≤50</code></td><td>返回 <code>id/title/summary/tags/updated</code></td></tr><tr><td><code>get_note</code></td><td>L0</td><td><code>id</code>、<code>section?</code></td><td>返回正文，超 6000 字截断并标 <code>truncated</code></td></tr><tr><td><code>append_to_note</code></td><td>L1</td><td><code>id</code>、<code>markdown</code>、<code>section</code></td><td>追加到指定小节，不重写其他内容</td></tr><tr><td><code>update_note</code></td><td>L1</td><td><code>id</code>、<code>base_hash</code>、<code>patch</code></td><td>乐观锁，hash 不符返回 <code>409 conflict</code></td></tr><tr><td><code>delete_note</code></td><td>L2</td><td><code>id</code>、<code>confirm_token</code></td><td>移入 <code>.trash</code>，可 restore</td></tr></tbody></table>
+<p>resources：<code>note://{id}</code>（单篇全文）、<code>notes://recent</code>（最近 20 条摘要）——让智能体不调工具也能读。</p>
+<p>错误码统一：<code>invalid_argument</code> / <code>not_found</code> / <code>conflict</code> / <code>duplicate</code> / <code>unavailable</code> / <code>confirm_required</code>，全部带 <code>message</code> 与可执行建议；不向上抛异常栈。</p>
+<hr>
+<h2 id="8-摘要双引擎与降级矩阵">8. 摘要双引擎与降级矩阵</h2>
+<table><thead><tr><th>场景</th><th>引擎</th><th>输出</th><th>标记</th></tr></thead><tbody><tr><td>无 Key / <code>DIGEST=rule</code></td><td>RuleDigest（分句打分 + 关键词段落归类）</td><td>六段中至少摘要 + 要点</td><td><code>digest: rule</code></td></tr><tr><td>有 Key / <code>DIGEST=auto</code> 或 <code>llm</code></td><td>LlmDigest（JSON 输出 + 强校验）</td><td>六段齐全</td><td><code>digest: llm</code></td></tr><tr><td>模型超时 / 非 200 / JSON 坏 / 字段非法</td><td>先重试 2 次（指数退避 + 抖动），仍失败 → RuleDigest</td><td>与规则同</td><td><code>digest: llm-fallback</code> + <code>degrade_reason</code></td></tr><tr><td>输入超长</td><td>先按 token 预算截断（保留首尾）</td><td>标 <code>truncated</code></td><td><code>digest: *</code></td></tr></tbody></table>
+<p>硬性要求：<strong>RuleDigest 永不抛异常</strong>，任何输入都要产出可用笔记——这是"不依赖大模型也能完成基本功能"的兜底。</p>
+<hr>
+<h2 id="9-多智能体适配矩阵">9. 多智能体适配矩阵</h2>
+<table><thead><tr><th>智能体</th><th>接入方式</th><th>说明</th></tr></thead><tbody><tr><td>Claude Desktop / Claude Code</td><td>MCP stdio</td><td>配置里填启动命令与 <code>NOTE_HOME</code></td></tr><tr><td>Cursor / Windsurf / Cline</td><td>MCP stdio</td><td>同上，一套配置通用</td></tr><tr><td>ChatGPT（Actions）/ Dify / Coze</td><td>OpenAPI HTTP</td><td>读 <code>/openapi.json</code>，需可达地址（本机需隧道）</td></tr><tr><td>LangChain / LlamaIndex / 自研</td><td>HTTP 或 <code>tools.json</code></td><td>直接拿 function schema</td></tr><tr><td>只给执行命令的智能体</td><td>CLI <code>--json</code></td><td>兜底通道，任何环境可用</td></tr><tr><td>完全离线</td><td>直接读 Markdown</td><td>无服务、无依赖、无 Key</td></tr></tbody></table>
+<p>四层阶梯的意义：<strong>文件是通用货币，MCP 是主通道，HTTP 是广谱适配，CLI 是兜底</strong>。任何一个通道坏掉，其余仍可用。</p>
+<hr>
+<h2 id="10-页面收敛">10. 页面收敛</h2>
+<table><thead><tr><th>现状</th><th>处置</th></tr></thead><tbody><tr><td><code>/</code> 首页</td><td>删除，302 → <code>/ask</code></td></tr><tr><td><code>/insights</code> 数据中心 + <code>insights.py</code> + <code>report.py</code> 在线渲染</td><td>删除（<code>report.py</code> 的 CLI 导出如仍需要，保留为纯脚本）</td></tr><tr><td><code>/ask</code> 问答</td><td>保留；新增「勾选轮次 → 预览 → 保存」，保存后展示 <code>note_id</code> 与文件路径</td></tr><tr><td><code>/kb</code> 文档上传</td><td>保留上传；新增「我的笔记」分区（列表 / 搜索 / 预览 / 编辑跳转 / 删除 / 导出）</td></tr><tr><td>导航</td><td>两项：问答、知识库</td></tr></tbody></table>
+<blockquote>假设：个人笔记的浏览入口放在 <code>/kb</code>（原上传页）内，而不是新增第三页——这样才符合"仅保留两页"。</blockquote>
+<hr>
+<h2 id="11-风险清单">11. 风险清单</h2>
+<table><thead><tr><th>风险</th><th>概率</th><th>影响</th><th>应对</th></tr></thead><tbody><tr><td>文件格式定错，后期迁移痛苦</td><td>中</td><td>高</td><td>第 6 节 6 条验收先跑通再谈接口；<code>schema: note/v1</code> 显式版本号</td></tr><tr><td>手写 MCP/JSON-RPC 与各家客户端不兼容</td><td>中</td><td>中</td><td>先只做 stdio（最稳），HTTP 传输后置；保留官方 SDK 可选适配层 <code>[待核实: 查阅 MCP 规范当前版本与传输定义]</code></td></tr><tr><td>用户手改文件把 front matter 改坏</td><td>高</td><td>低</td><td>容错解析，坏格式降级为 <code>external</code>，永不 500</td></tr><tr><td>笔记与文档库混检污染问答</td><td>中</td><td>中</td><td>默认物理隔离：笔记不进 RAG 检索；需要时用开关打开</td></tr><tr><td>对话原文含敏感信息</td><td>中</td><td>高</td><td>原文段默认关闭（<code>NOTE_KEEP_RAW=off</code>）、日志脱敏、除摘要外不出网</td></tr><tr><td>并发写同一篇（人改 + 智能体追加）</td><td>中</td><td>中</td><td>目录锁 + <code>base_hash</code> 乐观锁；追加型写入优先，少整篇重写</td></tr></tbody></table>
+<hr>
+<h2 id="12-决策记录-2026-10-24-已定-不再待确认">12. 决策记录（2026-10-24 已定，不再待确认）</h2>
+<table><thead><tr><th>#</th><th>议题</th><th>决定</th><th>理由</th></tr></thead><tbody><tr><td>1</td><td>存储位置</td><td>默认 <code>~/agent-notes</code>，<code>NOTE_HOME</code> 或 <code>--home</code> 覆盖</td><td>「个人储存空间」要跨项目、跨智能体复用；放项目里换个目录就丢</td></tr><tr><td>2</td><td>首页与数据中心</td><td>删除；<code>/</code>、<code>/insights</code>、<code>/dashboard</code>、<code>/report</code> 全部 302 到 <code>/ask</code></td><td>只留两页；旧链接不 404</td></tr><tr><td>3</td><td>笔记浏览入口</td><td>并入 <code>/kb</code> 的第二分区，不新增第三页</td><td>用户明确「仅保留问答页和文档上传页」</td></tr><tr><td>4</td><td>原文默认</td><td>不保存；<code>--keep-raw</code> 或 <code>NOTE_KEEP_RAW=on</code> 才写</td><td>对话原文最容易带敏感信息，默认少存</td></tr><tr><td>5</td><td>接入顺序</td><td>先 HTTP（便于自测与 CI），再做 MCP；MCP 只做 stdio</td><td>stdio 跨客户端最稳，HTTP 传输等规范稳定后再补</td></tr></tbody></table>
+<h2 id="13-第一步完成情况-v1-10-0">13. 第一步完成情况（v1.10.0）</h2>
+<p>已落地并验证（<code>tests/test_notes_store.py</code>、<code>tests/test_notes_digest_rule.py</code>）：</p>
+<ul>
+<li>Note v1 契约、原子写、目录锁、派生索引、扫盘重建、软删除。</li>
+<li>规则摘要（无模型）覆盖正常/边界/对抗共 20 条样本，另有 8 类非法输入的可读报错。</li>
+<li>CLI 五个子命令，<code>--json</code> 供机器消费。</li>
+<li>页面收口为两页，旧入口 302。</li>
+</ul>
+<p>实测：保存 P95 19 ms、列出 1000 篇 21 ms、索引重建 2.0 s（并行读）。</p>
+<h3 id="第二步-v1-11-0-已完成">第二步（v1.11.0，已完成）</h3>
+<ul>
+<li>六个 HTTP 端点：POST / GET / GET{id} / PATCH / DELETE / stats；<code>PATCH</code> 用 <code>rev</code> 乐观锁，<code>DELETE</code> 需 <code>confirm</code>。</li>
+<li><code>GET /tools.json</code> 给出 5 个 function calling 工具声明；<code>/openapi.json</code> 增加到 21 个路径。</li>
+<li>鉴权与问答同口径；<code>NOTES_CORS</code> 默认关闭，显式配置才放行浏览器跨域。</li>
+<li><code>tests/test_notes_api.py</code> 覆盖 11 组场景（含 401、409、confirm_required）。</li>
+</ul>
+<h3 id="第三步-v1-12-0-已完成-m3-m4-m5-m6-收口">第三步（v1.12.0，已完成，M3/M4/M5/M6 收口）</h3>
+<table><thead><tr><th>里程碑</th><th>落地</th><th>测试</th></tr></thead><tbody><tr><td>M3 摘要双引擎</td><td><code>digest_llm.py</code>：JSON 校验 + 四类失败回落 + <code>digest_fallback</code> 留痕；<code>auto</code> / <code>llm</code> 两种严格度</td><td><code>test_notes_digest_llm.py</code> 25 项</td></tr><tr><td>M4 工具面</td><td>MCP stdio 7 工具 + 2 资源；<code>/tools.json</code> 与 MCP 共用 schema；<code>AGENTS.md</code> 两条（仓库 + 笔记库）</td><td><code>test_notes_mcp.py</code> 31 项</td></tr><tr><td>M5 页面收敛</td><td><code>/kb</code> 第二分区（列表 / 编辑 / 删除 / 导出）；<code>/ask</code> 每条回答「存为笔记」+ 预览</td><td><code>tests/e2e_notes.mjs</code> 23 项</td></tr><tr><td>M6 离线导出</td><td>单文件 HTML（自包含、转义、原子写）+ JSON bundle；CLI / HTTP / MCP 三处入口</td><td><code>test_notes_export.py</code> 26 项</td></tr></tbody></table>
+<p>四条通道现在是：文件直读 → CLI → HTTP → MCP，任一层坏了其余仍可用。 未做（后续可选）：跨设备同步、附件上传、按语义检索笔记（当前是标签 + 关键词）。</p><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

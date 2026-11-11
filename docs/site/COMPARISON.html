@@ -1,0 +1,179 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>COMPARISON · 文档站</title><style>
+:root{--bg:#fbfbf9;--surface:#fff;--text:#1c2521;--muted:#5b6b64;--line:#e2e6e2;
+--brand:#2f6f5e;--code-bg:#f4f6f4}
+@media (prefers-color-scheme: dark){
+:root{--bg:#141917;--surface:#1b211e;--text:#e8ede9;--muted:#9aa8a1;--line:#2c3431;
+--brand:#82c0a9;--code-bg:#202724}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font:16px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:var(--brand)}
+.layout{display:flex;min-height:100vh}
+.side{width:260px;flex:0 0 260px;border-right:1px solid var(--line);padding:22px 16px;
+position:sticky;top:0;height:100vh;overflow:auto;background:var(--surface)}
+.side h1{font-size:15px;margin:0 0 4px}
+.side .ver{font-size:12px;color:var(--muted);margin-bottom:16px}
+.side a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none;
+font-size:14px;color:var(--text)}
+.side a:hover{background:var(--code-bg)}
+.side a.on{background:var(--code-bg);color:var(--brand);font-weight:600}
+.main{flex:1;min-width:0;padding:34px 40px 80px;max-width:920px}
+.main h1{font-size:28px;line-height:1.35;margin:0 0 18px}
+.main h2{font-size:21px;margin:34px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+.main h3{font-size:17px;margin:24px 0 8px}
+.main h4{font-size:15px;margin:20px 0 6px}
+p,li{overflow-wrap:anywhere}
+code{background:var(--code-bg);padding:1px 5px;border-radius:4px;font-size:13.5px;
+font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre{background:var(--code-bg);padding:14px 16px;border-radius:10px;overflow:auto;
+border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:13px;line-height:1.6}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px;display:block;overflow:auto}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+blockquote{margin:14px 0;padding:8px 14px;border-left:3px solid var(--brand);
+background:var(--code-bg);border-radius:0 8px 8px 0;color:var(--muted)}
+hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+.foot{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+font-size:12.5px;color:var(--muted)}
+@media (max-width:820px){
+.layout{display:block}
+.side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+.main{padding:22px 18px 60px}
+}
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.36.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html" class="on">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="相似开源项目拆解与借鉴清单">相似开源项目拆解与借鉴清单</h1>
+<blockquote>目的：不靠「再抄一个 DeepSeek 界面」来决定长什么样，而是看同类产品<strong>各自解决了什么</strong>， 只借能解决本项目问题的部分。每条都写清「借什么 / 不借什么 / 为什么」。  事实口径：项目定位与能力取自各项目官方仓库与文档（2026-10 查阅）； 具体版本号、Star 数、界面上某个按钮的位置这类会随版本变的信息，一律不写成断言， 需要时标 <code>[待核实]</code>。</blockquote>
+<h2 id="一-选这几家的理由">一、选这几家的理由</h2>
+<p>本项目定位：<strong>可接入不同智能体的文档记忆管理应用</strong>。它同时踩在三个圈里—— 文档问答（RAG）、个人知识库（PKM）、智能体的记忆层（Agent Memory）。 所以样本从这三个圈各取两个，外加固化成「文件即数据」的两个参照。</p>
+<table><thead><tr><th>项目</th><th>圈层</th><th>一句话</th></tr></thead><tbody><tr><td><strong>AnythingLLM</strong></td><td>文档问答</td><td>多工作区 + 文档入库 + 向量库，面向「把资料变成可对话的知识」</td></tr><tr><td><strong>RAGFlow</strong></td><td>文档问答</td><td>强调「深度文档理解」，把切分与召回过程可视化</td></tr><tr><td><strong>Reor</strong></td><td>个人知识库</td><td>本地 Markdown 笔记 + 本地向量库 + 自动关联与问答</td></tr><tr><td><strong>Khoj</strong></td><td>个人知识库</td><td>个人 AI：在你自己的文件上做语义检索与对话，可自托管</td></tr><tr><td><strong>Mem0</strong></td><td>智能体记忆</td><td>给智能体用的记忆层：写入 / 检索 / 按用户与会话隔离</td></tr><tr><td><strong>Logseq / Obsidian</strong></td><td>文件即数据</td><td>笔记就是磁盘上的 Markdown，工具只是它的一个视图</td></tr></tbody></table>
+<hr>
+<h2 id="二-逐个拆-借什么-不借什么">二、逐个拆：借什么，不借什么</h2>
+<h3 id="1-anythingllm-工作区-workspace-是最好的隔离单位">1. AnythingLLM —— 工作区（workspace）是最好的隔离单位</h3>
+<p><strong>它做对了什么</strong></p>
+<ul>
+<li>把「一批文档 + 一段对话」打包成<strong>工作区</strong>，切工作区等于换一套资料与上下文；</li>
+<li>文档入库、向量化、检索、对话是一条龙，用户不需要知道 RAG 的每个零件；</li>
+<li>桌面端与自托管同一套界面，降低了「本地跑」的门槛。</li>
+</ul>
+<p><strong>借什么</strong></p>
+<ul>
+<li><strong>「一次对话绑定一个资料范围」</strong>：本项目已有知识库版本，但问答页只显示一个 <code>知识库 v0009</code> 标签。</li>
+<p>下一步可以让会话记住「当时用的是哪一版知识库」，导出与复现时有据可查。</p>
+<li><strong>入库即完成</strong>：用户不该被迫理解 chunk、embedding。本项目的上传框已经做到「拖进去就能问」，</li>
+<p>但失败提示仍偏工程化，可以再降一层。</p>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>多工作区切换器</strong>：本项目是单人单机、一个知识库，加一层「工作区」只会让「东西存在哪」更难回答。</li>
+<p>我们用的是<strong>一个存储区 + 两个区（文档 / 笔记）</strong>，比工作区更贴近「记忆」这个隐喻。</p>
+</ul>
+<hr>
+<h3 id="2-ragflow-把-切分-摊开给用户看">2. RAGFlow —— 把「切分」摊开给用户看</h3>
+<p><strong>它做对了什么</strong></p>
+<ul>
+<li>强调文档理解：版面、表格、标题层级都参与切分，而不是按字数硬切；</li>
+<li>把 chunk 的可视化与召回结果放在同一个界面里，用户能判断「为什么答错了」。</li>
+</ul>
+<p><strong>借什么</strong></p>
+<ul>
+<li><strong>可解释的引用</strong>：本项目的答案已经带引用与「检索依据」折叠区，方向一致。</li>
+<p>可以补的是「命中片段在原文里的位置」——引用行点开时，除了段落文本，再给出它在文件中的标题路径。</p>
+<li><strong>失败可诊断</strong>：没答出来时，RAGFlow 让用户看到「检索到了但没用」还是「根本没检索到」。</li>
+<p>本项目 <code>behavior=no_answer</code> 已有区分，界面上可以更直白地说出是哪一种。</p>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>一套独立的「知识库工程控制台」</strong>：那是给 RAG 工程师调参用的。我们的用户要的是「记住并找回」，</li>
+<p>不是调 top-k。参数留在配置文件里，界面只留结论。</p>
+</ul>
+<hr>
+<h3 id="3-reor-最接近本项目的一家-两个设计直接采纳">3. Reor —— 最接近本项目的一家，两个设计直接采纳</h3>
+<p><strong>它做对了什么</strong>（官方仓库与文档口径）</p>
+<ul>
+<li><strong>首次启动让你选一个目录</strong>，所有笔记就是那个目录里的 Markdown 文件；换目录等于换库；</li>
+<li>本地向量库 + 自动关联：写着写着侧栏会浮出「语义相关的旧笔记」；</li>
+<li>官方那句定位很准：<em>"a RAG app with two generators: the LLM and the human"</em>——</li>
+<p>人写的时候 AI 找相关，人问的时候 AI 用人写过的东西回答。</p>
+</ul>
+<p><strong>借什么</strong>（已落地）</p>
+<ul>
+<li><strong>首启建存储区</strong>：本项目 v1.19.0 加了「先给文档安个家」，选目录、自动建 <code>notes/ threads/ index/</code>，</li>
+<p>并明确「目录不存在会自动创建、整个目录拷走就是完整备份」。</p>
+<li><strong>文件即数据</strong>：笔记是 Markdown、会话是 JSON，页面上能直接改原文，也能交给系统编辑器打开。</li>
+<li><strong>双向生成</strong>（部分落地）：问答 → 存为笔记是「人筛 AI」；下一步可做「写笔记时浮出相关记忆」。</li>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>默认本地大模型</strong>：它假设用户愿意为隐私付算力。本项目的默认路径是「不配模型也能用」（离线抽取），</li>
+<p>模型是可选增强——这条不能跟着改，否则新用户第一步就卡在下载模型上。</p>
+<li><strong>自动双链/图谱</strong>：需要稳定的 embedding 与较多笔记量才有价值。当前先做「搜索 + 标签」，</li>
+<p>等笔记过百篇再谈关联，否则只是给空库加装饰。</p>
+</ul>
+<hr>
+<h3 id="4-khoj-在你自己的文件上问答-而不是-再建一个知识库">4. Khoj —— 「在你自己的文件上问答」，而不是「再建一个知识库」</h3>
+<p><strong>它做对了什么</strong></p>
+<ul>
+<li>直接把用户已有的文件（pdf / markdown / org / 文本）纳为语料，而不是要求先导入到它的格式；</li>
+<li>对话与语义检索是一等公民，模型可换（本地或云端）。</li>
+</ul>
+<p><strong>借什么</strong></p>
+<ul>
+<li><strong>不搬运、只索引</strong>：本项目的「知识库」已经是「指向目录」而不是「复制进数据库」，</li>
+<p>但界面上仍像「上传中心」。v1.19.0 把上传降级为「只读语料」，把<strong>写记忆</strong>的主路径让给智能体调 API， 就是沿着这条线改的。</p>
+<li><strong>模型可换</strong>：已有（任意 OpenAI 兼容端点 + 离线抽取兜底）。</li>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>聊天机器人形态的首页</strong>：Khoj 的核心是「随时问」。本项目的核心是「记忆」，</li>
+<p>所以首页保留「提问」但把它说成「今天想记住什么」，并让「已存记忆」始终一键可达。</p>
+</ul>
+<hr>
+<h3 id="5-mem0-记忆要分层-写入要收敛">5. Mem0 —— 记忆要分层，写入要收敛</h3>
+<p><strong>它做对了什么</strong></p>
+<ul>
+<li>把「记忆」抽象成独立一层：写入（add）、检索（search）、按用户 / 会话 / 智能体作用域隔离；</li>
+<li>记忆不是聊天记录，而是<strong>被抽取、被压缩过的结论</strong>，检索时按相关度取回。</li>
+</ul>
+<p><strong>借什么</strong></p>
+<ul>
+<li><strong>记忆 ≠ 会话</strong>：本项目 v1.19.0 把会话也搬进存储区（<code>threads/*.json</code>），但<strong>没有</strong>把它们混进笔记：</li>
+<p>会话是过程，笔记是结论；只有「存为笔记」才进记忆库。这条边界要在界面文案里一直说清。</p>
+<li><strong>作用域</strong>：<code>NOTE_HOME</code> 就是单机场景下的「用户作用域」；MCP 的 7 个工具天然带这份边界。</li>
+<li><strong>写入要收敛</strong>：规则摘要先抽结论再落盘（<code>digest_rule</code>），与本项目已有实现一致。</li>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>向量库依赖</strong>：Mem0 的价值依赖 embedding 质量。本项目坚持「零依赖也能用」，</li>
+<p>embedding 是可选加速（<code>RETRIEVAL=vector</code> 可开可关），不做成硬前置。</p>
+</ul>
+<hr>
+<h3 id="6-logseq-obsidian-文件是唯一真相-工具只是视图">6. Logseq / Obsidian —— 文件是唯一真相，工具只是视图</h3>
+<p><strong>它做对了什么</strong></p>
+<ul>
+<li>库就是一个文件夹，.md 是原始数据；换工具、换电脑、用 git 都能带走；</li>
+<li>编辑体验优先：所见即所得、快速切换、全文搜索。</li>
+</ul>
+<p><strong>借什么</strong>（已落地）</p>
+<ul>
+<li><strong>存储区即库</strong>：<code>~/记忆文档/</code> 下有 <code>notes/</code>、<code>threads/</code>、<code>index/</code>，<code>index/</code> 删了会自动重建；</li>
+<li><strong>可自由修改</strong>：页面里能改原文（带乐观锁，别处改过会拒绝覆盖），也能用系统编辑器打开；</li>
+<li><strong>可迁移</strong>：设置里换位置会提示「原位置还有 N 篇，要复制过来吗」。</li>
+</ul>
+<p><strong>不借什么</strong></p>
+<ul>
+<li><strong>双向链接与图谱</strong>：同上，等规模到了再说。</li>
+<li><strong>插件生态</strong>：本项目的扩展点是 <strong>MCP</strong>，不是插件市场——接智能体比接插件更符合定位。</li>
+</ul>
+<hr>
+<h2 id="三-落到本项目的决策表">三、落到本项目的决策表</h2>
+<table><thead><tr><th>借鉴点</th><th>来源</th><th>落到哪里</th><th>状态</th></tr></thead><tbody><tr><td>首启选目录、自动建库</td><td>Reor</td><td><code>GET/POST /api/settings/setup</code> + 首启弹窗</td><td>v1.19.0 已做</td></tr><tr><td>文件即数据、可自由修改</td><td>Reor / Obsidian / Logseq</td><td><code>PUT /api/files/raw</code>、<code>POST /api/files/open</code>、页内编辑</td><td>v1.19.0 已做</td></tr><tr><td>会话也不放浏览器</td><td>Mem0（记忆分层）+ 本项目痛点</td><td><code>src/threadstore.py</code>、<code>/api/threads</code></td><td>v1.19.0 已做</td></tr><tr><td>入库路径以智能体为主</td><td>Khoj / Mem0</td><td>知识库页「让智能体来整理文档」引导 + 智能体面板</td><td>v1.19.0 已做</td></tr><tr><td>存储占用说人话</td><td>AnythingLLM（少即是多）</td><td>存储面板改成「位置 + 四个数字」</td><td>v1.19.0 已做</td></tr><tr><td>引用可解释、失败可诊断</td><td>RAGFlow</td><td>答案引用行 + 无答案原因</td><td>部分（引用已有，原因待细化）</td></tr><tr><td>写作时浮出相关记忆</td><td>Reor</td><td>笔记编辑页侧栏「相关记忆」</td><td>待做（需 embedding + 一定笔记量）</td></tr><tr><td>会话记录绑定知识库版本</td><td>AnythingLLM</td><td>会话文件里存 <code>kb_version</code>，导出时带出</td><td>待做</td></tr><tr><td>向量记忆层</td><td>Mem0</td><td>可选 embedding 索引（已有开关）</td><td>已有，但未用于「关联推荐」</td></tr></tbody></table>
+<p><strong>明确不采纳</strong>：多工作区切换、RAG 参数控制台、默认本地大模型、双向链接图谱、插件市场。 理由统一是：<strong>它们都在增加「先配置才能用」的成本，而本项目的卖点是「下载、建个目录、就能接智能体用」。</strong></p>
+<hr>
+<h2 id="四-这次界面为什么不再像-deepseek">四、这次界面为什么不再像 DeepSeek</h2>
+<p>对照下来，DeepSeek 的布局解决的是「多轮聊天」，而本项目的核心动作是「存 / 找 / 改记忆」。 所以 v1.19.0 做了三处方向性调整：</p>
+<ol>
+<li><strong>配色从蓝白改成墨绿 + 米纸</strong>：档案感，且不和聊天工具撞脸；标题换衬线，正文仍无衬线。</li>
+<li><strong>首屏从「有什么可以帮你」改成「今天想记住什么」</strong>：把动作从「聊天」拉到「沉淀」。</li>
+<li><strong>存储面板从面积条 + 五段图例改成四个数字</strong>：用户只想知道「多大、还剩多少」，</li>
+<p>不想学一套颜色编码。</p>
+</ol><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>

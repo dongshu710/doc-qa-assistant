@@ -13,8 +13,9 @@ import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-from .. import (routing, security)
-from ..auth import safe_equal
+from .. import (openai_compat as compat,
+                routing, security)
+from ..auth import READ_ONLY_POSTS, safe_equal
 
 # 错误体统一形状：{"ok": false, "error": "<机器码>", "message": "<中文>"}。
 # 1.27.0 之前同一个服务里同时存在 5 种：`{"error":"not found"}`、
@@ -60,6 +61,12 @@ def normalize_error(obj, code: int):
     if "jsonrpc" in obj:
         return obj
     err = obj.get("error")
+    if isinstance(err, dict):
+        # `error` 是对象 = 该端点用了别人的协议（OpenAI 的
+        # `{error:{message,type,code}}`）。这类形状由协议规定，归一化成字符串
+        # 会让 SDK 只看到「unexpected response」——真正的原因被我们自己的
+        # 统一逻辑吃掉，比不统一更糟。与上面的 JSON-RPC 同一条原则。
+        return obj
     if code < 400 and obj.get("ok") is not False:
         return obj
     if not isinstance(err, str) or not err:
@@ -340,11 +347,51 @@ def make_base(deps):
             if pipe.settings.debug:
                 return f"{prefix}：{type(exc).__name__}: {exc}"
             return f"{prefix}：{type(exc).__name__}（详情见服务端日志，设 DEBUG=on 可显示）"
+        def _key_scope(self) -> str:
+            """当前请求所用 Key 的作用域；没配 Key 或 Key 无效时返回空串。
+
+            「没配 Key」（单机开放）不能返回 rw 以外的东西，否则默认形态下
+            所有写接口都会被自己的作用域检查挡住。
+            """
+            if not api_keys.enabled:
+                return ""
+            _name, scope, err = api_keys.identify_scope(self._presented_key())
+            return "" if err else scope
+
         def _is_admin(self) -> bool:
             token = pipe.settings.admin_token
             if token:
+                # 显式配了管理员令牌时，它是唯一凭据：Admin Key 也不能绕过它。
+                # 否则「我设了令牌为什么别人还能审批」会变成一个安全盲区。
                 return safe_equal(self.headers.get("X-Admin-Token", ""), token)
+            if self._key_scope() == "admin":
+                # 作用域为 admin 的 Key 等同管理员。没有这条，`admin` 这个作用域
+                # 只是个标签，发出去的 Key 一样批不了、回滚不了。
+                return True
             return self._client() in ("127.0.0.1", "::1")
+
+        def _readonly_gate(self, verb: str, path: str) -> bool:
+            """只读 Key 的写操作闸门：拒绝并说明该换成什么 Key。
+
+            为什么要单独一道而不是在 `_write_gate` 里判：那里判的是「有没有 Key」，
+            这里是「这把 Key 能不能写」。混在一起时，只读 Key 会收到
+            「需要 API Key」——而它明明带了 Key，用户会去反复核对密钥。
+            """
+            if verb in ("GET", "HEAD", "OPTIONS"):
+                return False
+            if self._key_scope() != "ro":
+                return False
+            if path in READ_ONLY_POSTS:
+                return False
+            metrics.inc("rag_readonly_rejected_total")
+            guards.audit.write("request.forbidden", client=self._client(),
+                               path=path[:160], reason="read_only_key",
+                               key=api_keys.mask(self._presented_key()))
+            self._json({"ok": False, "error": "read_only_key",
+                        "message": f"这把 API Key 是只读的，不能调用 {path}。"
+                                   "需要写入请换有写权限的 Key（或去掉配置里的 :ro 后缀）。"},
+                       403)
+            return True
         def _auto_approve(self) -> bool:
             """KB_APPROVAL=off 全放行；on 全审批；auto 仅本机管理员直通。"""
             mode = (pipe.settings.kb_approval or "auto").strip().lower()
@@ -398,15 +445,29 @@ def make_base(deps):
                 if level == routing.API and api_keys.enabled:
                     return self._require_key(path, "read.unauthorized")
                 return False
-            return self._write_gate(path)
+            if self._write_gate(path):
+                return True
+            return self._readonly_gate(verb, path)
         def _require_key(self, path: str, action: str) -> bool:
-            """配了 API_KEYS 就必须带有效 Key；未配置时直接放行（单机默认形态）。"""
+            """配了 API_KEYS 就必须带有效 Key；未配置时直接放行（单机默认形态）。
+
+            `/v1/*` 要用 OpenAI 的错误体：调这个端点的是 SDK，它只认
+            `error.message`。回主协议的形状时，SDK 一律显示「unexpected
+            response」，把「Key 不对」这个唯一有用的信息吞掉。
+            """
             _name, err = self._api_auth()
             if not err:
                 return False
             metrics.inc("rag_unauthorized_total")
             guards.audit.write(action, client=self._client(),
                                path=path[:160], reason=err)
+            if path == "/v1" or path.startswith("/v1/"):
+                body = compat.CompatError(
+                    "缺少或无效的 API Key：Authorization: Bearer <key>",
+                    status=401, kind="authentication_error",
+                    code="invalid_api_key").body()
+                self._json(body, 401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
+                return True
             self._json({"ok": False, "error": "unauthorized",
                         "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
                        401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})

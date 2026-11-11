@@ -1,0 +1,29 @@
+/* 检索调试页：只放这一页需要的排版，颜色全部走设计令牌（--brand 等），不写死色值。 */
+.dbg-main { padding: 18px 20px 60px; max-width: 980px; }
+.dbg-form { margin-bottom: 14px; }
+.dbg-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dbg-q { flex: 1 1 320px; min-width: 220px; }
+.dbg-topk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.dbg-topk .field { width: 72px; }
+.dbg-hint { margin: 10px 0 0; font-size: 12.5px; line-height: 1.6; }
+.dbg-list { display: flex; flex-direction: column; gap: 10px; }
+.dbg-item {
+  border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px;
+  background: var(--surface); display: flex; flex-direction: column; gap: 8px;
+}
+.dbg-item.dropped { border-left: 3px solid var(--bad); }
+.dbg-item.kept { border-left: 3px solid var(--brand); }
+.dbg-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.dbg-ref { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--brand); }
+.dbg-meta { font-size: 12.5px; color: var(--muted); }
+.dbg-score { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.dbg-bar { height: 4px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.dbg-bar i { display: block; height: 100%; background: var(--brand); }
+.dbg-item.dropped .dbg-bar i { background: var(--bad); }
+.dbg-text {
+  font-size: 13px; line-height: 1.7; color: var(--text); white-space: pre-wrap;
+  max-height: 7.5em; overflow: auto;
+}
+.dbg-sum { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+.dbg-sum b { font-variant-numeric: tabular-nums; }
+.dbg-sum span { color: var(--muted); }

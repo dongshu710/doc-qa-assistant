@@ -373,6 +373,9 @@ class EmbeddingIndex:
         cache = EmbeddingCache(os.path.join(self.index_dir, "embeddings.cache.jsonl"),
                                self.provider.model, self.dim)
         vectors, missing = cache.get_many(texts)
+        # `reused` 必须报出去：用户改一条条款后看到「embedded: 0」会怀疑没生效，
+        # 而实际是命中了内容哈希缓存。这两个数一起看才知道这次重建花没花钱。
+        reused = len(texts) - len(missing)
         if missing:
             batch = [texts[i] for i in missing]
             result = _embed_with_budget(self.provider, batch, self.build_budget_s)
@@ -380,10 +383,13 @@ class EmbeddingIndex:
                 vectors[pos] = vec
             cache.put_many(batch, result.vectors)
             cache.save()
-            self.build_usage = {"embedded": len(batch), **result.usage}
+            self.build_usage = {"embedded": len(batch), "reused": reused, **result.usage}
             self.dim = result.dim
         else:
-            self.build_usage = {"embedded": 0, "prompt_tokens": 0, "total_tokens": 0}
+            self.build_usage = {"embedded": 0, "reused": reused,
+                                "prompt_tokens": 0, "total_tokens": 0}
+        # 缓存规模一并带出去：它无上限地长会变成磁盘里的死数据
+        self.build_usage["cache"] = cache.stats()
 
         dim = self.dim or len(vectors[0])
         if any(len(v) != dim for v in vectors if v is not None):

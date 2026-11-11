@@ -33,6 +33,10 @@ def entry_for(note, path: Path, home: Path) -> dict:
         "digest": note.digest,
         "summary": note.summary,
         "hash": note.hash,
+        # 时效字段要进索引：检索时若还要为每篇回读文件才能判断是否过期，
+        # 1000 篇就是 1000 次 open——代价远高于多存两个字段。
+        "valid_until": note.valid_until,
+        "supersedes": note.supersedes,
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
     }

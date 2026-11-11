@@ -109,6 +109,33 @@ def _paths_qa(secured: list) -> dict:
 
 def _paths_ops() -> dict:
     return {
+        "/api/search/debug": {
+            "post": {
+                "tags": ["运维"], "summary": "检索调试（候选 / 分数 / 是否被阈值挡掉）",
+                "description": ("多召回 3 倍后逐条标注 `kept`：false 表示检索到了但"
+                                "分数低于 `min_score`，会被当成「无法找到答案」。"
+                                "答错时用它区分「没检索到」与「切分坏了」。"
+                                "返回含原文片段，属于语料内容，需 API Key。"),
+                "requestBody": {"required": True, "content": {"application/json": {
+                    "schema": {
+                        "type": "object", "required": ["query"],
+                        "properties": {
+                            "query": {"type": "string", "maxLength": 4000},
+                            "top_k": {"type": "integer", "minimum": 1, "maximum": 20,
+                                      "description": "保留条数；实际召回是其 3 倍（上限 40）"},
+                        },
+                    }}}},
+                "responses": {
+                    "200": {"description": (
+                        "`{ok, query, retrieval, min_score, top_k, recalled, kept, "
+                        "chunks_total, elapsed_ms, candidates:[{ref, doc_id, title, "
+                        "section, page, chunk_index, score, kept, chars, text}]}`")},
+                    "400": _err("缺少 query 或参数不合法"),
+                    "401": _err("缺少或无效的 API Key"),
+                    "500": {"description": "检索失败（索引异常，如实报错不返回空结果）"},
+                },
+            }
+        },
         "/api/health": {
             "get": {
                 "tags": ["运维"], "summary": "健康检查",
@@ -687,6 +714,62 @@ def _paths_dify(secured: list) -> dict:
     }
 
 
+def _paths_openai(secured: list) -> dict:
+    """OpenAI 兼容面。
+
+    为什么它必须出现在契约里而不是「顺手加的别名」：接了 SDK 的人会拿这份
+    契约去生成客户端，漏登记的结果是客户端能调通、文档里却查不到，
+    下一个人会以为这是内部接口而另写一套适配层。
+    """
+    return {
+        "/v1/models": {
+            "get": {
+                "tags": ["集成"],
+                "summary": "OpenAI 兼容：模型清单",
+                "description": ("SDK 与 LiteLLM 启动时会先探这个端点。"
+                                "始终只报一个模型（由 `LLM_MODEL` 决定）。"),
+                "operationId": "openaiModels",
+                **_sec(secured),
+                "responses": {"200": {"description": "`{object:list, data:[模型]}`"}},
+            }
+        },
+        "/v1/chat/completions": {
+            "post": {
+                "tags": ["集成"],
+                "summary": "OpenAI 兼容：对话补全（含流式）",
+                "description": ("把 `messages` 里最后一条 user 当作检索问题，"
+                                "答案正文与 `/api/ask` 一致（带 `[n]` 编号）。"
+                                "引用放在非标准字段 `citations` 里，不拼进正文。"
+                                "不支持 `tools`/`functions`/`n>1`。"),
+                "operationId": "openaiChatCompletions",
+                **_sec(secured),
+                "requestBody": {"required": True, "content": {"application/json": {
+                    "schema": {
+                        "type": "object", "required": ["messages"],
+                        "properties": {
+                            "model": {"type": "string"},
+                            "messages": {"type": "array", "items": {
+                                "type": "object",
+                                "properties": {"role": {"type": "string"},
+                                               "content": {"type": "string"}}}},
+                            "stream": {"type": "boolean", "default": False},
+                            "session_id": {"type": "string", "maxLength": 64},
+                        },
+                    }}}},
+                "responses": {
+                    "200": {"description": (
+                        "非流式：`chat.completion`（含 `citations` / `x_behavior`）；"
+                        "`stream=true` 时为 SSE，每条 `data: {...chunk...}`，"
+                        "以 `data: [DONE]` 结束")},
+                    "400": {"description": "请求不合法（`{error:{message,type,code}}`）"},
+                    "401": _err("缺少或无效的 API Key"),
+                    "429": _err("限流或流式连接已达上限"),
+                },
+            }
+        },
+    }
+
+
 def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
     secured = [{"bearerAuth": []}, {"apiKeyAuth": []}] if auth.get("mode") == "key" else []
     spec = {
@@ -696,7 +779,7 @@ def build_spec(version: str, auth: dict, model: str, retrieval: str) -> dict:
         "tags": _tags(),
         "paths": {**_paths_qa(secured), **_paths_ops(), **_paths_kb(),
                   **_paths_admin(), **_paths_data(), **_paths_client(),
-                  **_paths_dify(secured), **_paths_meta()},
+                  **_paths_dify(secured), **_paths_openai(secured), **_paths_meta()},
         "components": _components(),
     }
     spec["paths"].update(notes_paths())

@@ -1,0 +1,26 @@
+<header class="topbar">
+  <div class="tb-title">检索调试</div>
+  <span class="tb-sub">看清楚检索到了什么、哪条被阈值挡掉</span>
+</header>
+<main class="wrap dbg-main">
+  <section class="card dbg-form">
+    <div class="row dbg-row">
+      <input class="field dbg-q" id="dbgQuery" type="search" autocomplete="off"
+             placeholder="输入要调试的问题，例如：稳盈系列产品的起购金额是多少"
+             aria-label="调试用的检索问题">
+      <label class="dbg-topk" title="多召回 3 倍，被阈值挡掉的候选才有机会露面">
+        Top K
+        <input class="field" id="dbgTopK" type="number" min="1" max="20" value="4">
+      </label>
+      <button class="btn" id="dbgRun" type="button">检索</button>
+    </div>
+    <p class="muted dbg-hint">
+      「未保留」= 检索到了但分数低于阈值（<span class="mono" id="dbgMinScore">-</span>），
+      会被当成「无法找到答案」。这一栏空着，才说明是该调切分而不是调阈值。
+    </p>
+  </section>
+
+  <section class="card" id="dbgSummary" hidden></section>
+  <section class="dbg-list" id="dbgList"></section>
+  <p class="empty" id="dbgEmpty">还没有检索记录。输入一个问题，按回车。</p>
+</main>
