@@ -43,8 +43,13 @@ jobs:
         with:
           node-version: "22"
 
+      # compileall 用哪个版本跑就只验哪个版本的语法。开发机是 3.13，
+      # f-string 里带反斜杠这种写法在 3.11 是语法错误、在 3.13 完全合法，
+      # 于是本地全绿、CI 第一步就红（而且后面所有测试都没跑）。这条补上这个盲区。
       - name: 语法检查
-        run: python -m compileall -q src tests tools
+        run: |
+          python -m compileall -q src tests tools
+          python tests/test_py311_fstrings.py
 
       # 这两条是「结构性」门禁，改接口或拆函数时最先报警，所以放前面。
       # test_openapi_routes 静态扫 dispatch 的路径字面量与 build_spec 双向比对：

@@ -46,6 +46,9 @@
   （一律重建，不去抖）与「活动版本目录被自己换掉」（刚重建过就跳过）。
 - `.env.example` 生成器原来把 `文件:行号` 写进清单，任何无关编辑都会让它过期、CI 变红。
   改为只写文件名。
+- `tools/build_docs_site.py` 用了 3.12+ 才允许的写法（f-string 表达式里带反斜杠），
+  py3.11 job 在「语法检查」就失败。已改写，并新增 `tests/test_py311_fstrings.py`
+  做词法级扫描——`ast.parse(feature_version=(3,11))` 抓不到这一类。
 
 ### 变更
 

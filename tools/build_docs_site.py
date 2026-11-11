@@ -78,10 +78,13 @@ font-size:12.5px;color:var(--muted)}
 
 
 def page(title: str, body: str, nav: list[tuple[str, str]], active: str) -> str:
-    links = "".join(
-        f'<a href="{html.escape(href)}"{" class=\"on\"" if href == active else ""}>'
-        f"{html.escape(label)}</a>"
-        for label, href in nav)
+    # 先算好属性串再拼：3.11 的 f-string 表达式里不允许出现反斜杠，
+    # 写成 `{" class=\"on\"" if ...}` 在本地 3.13 能过、CI 的 3.11 直接语法错误。
+    rows = []
+    for label, href in nav:
+        attr = ' class="on"' if href == active else ""
+        rows.append(f'<a href="{html.escape(href)}"{attr}>{html.escape(label)}</a>')
+    links = "".join(rows)
     return (
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -89,7 +92,7 @@ def page(title: str, body: str, nav: list[tuple[str, str]], active: str) -> str:
         '<div class="layout"><aside class="side">'
         '<h1>记忆文档 · 文档站</h1>'
         f'<div class="ver">v{html.escape(__version__)}</div>'
-        f"{links}</aside><main class=\"main\">{body}"
+        f'{links}</aside><main class="main">{body}'
         '<div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，'
         "请勿直接编辑这里的 HTML。</div></main></div></body></html>"
     )
