@@ -65,8 +65,18 @@ def _knowledge_dir() -> str:
 
 
 def _raw_dir() -> str:
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    path = os.path.join(root, "data", "raw")
+    """上传原文的落点。
+
+    允许用 `RAW_DIR` 覆盖，不是为灵活性，是为**测试隔离**：端到端验证必然要
+    真的上传文件，落点写死就会在仓库里留下二进制文件——真实踩过，验证表格
+    格式时上传的 xlsx 被 `git add -A` 一起带进了提交。默认仍放在 `data/raw`。
+    """
+    configured = (os.environ.get("RAW_DIR") or "").strip()
+    if configured:
+        path = os.path.abspath(os.path.expanduser(configured))
+    else:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        path = os.path.join(root, "data", "raw")
     os.makedirs(path, exist_ok=True)
     return path
 

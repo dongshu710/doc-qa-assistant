@@ -105,7 +105,9 @@ jobs:
         run: python tests/test_injection_wrap.py
 
       - name: 表格入库（xlsx / csv / tsv）
-        run: python tests/test_table_ingest.py
+        run: |
+          python tests/test_table_ingest.py
+          python tests/test_table_styles.py
 
       # 上传口只卡压缩后大小，卡不住解压膨胀；这条守的是「解压前先看体积」。
       - name: 压缩包体积闸门（炸弹防护）
