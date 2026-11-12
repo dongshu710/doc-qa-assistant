@@ -236,11 +236,11 @@ def cmd_doctor(args) -> int:
     pages_ok = False
     if service_ok:
         try:
-            with urllib.request.urlopen(f"{base_url(args)}/files", timeout=2.5) as resp:
+            with urllib.request.urlopen(f"{base_url(args)}/notes", timeout=2.5) as resp:
                 pages_ok = resp.status == 200
         except Exception:  # noqa: BLE001
             pages_ok = False
-    checks.append(("文件页", pages_ok, "/files 可访问" if pages_ok else "/files 打不开"))
+    checks.append(("笔记页", pages_ok, "/notes 可访问" if pages_ok else "/notes 打不开"))
 
     if args.json:
         print(json.dumps({
@@ -545,8 +545,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--format", choices=["json", "html"], default="json")
     p_export.add_argument("--out", help="写入文件；省略则打印到标准输出")
 
-    p_open = sub.add_parser("open", parents=[common], help="打开页面（默认 /files）")
-    p_open.add_argument("--page", choices=["files", "ask", "kb"], default="files")
+    p_open = sub.add_parser("open", parents=[common], help="打开页面（默认 /notes）")
+    p_open.add_argument("--page", choices=["notes", "ask", "kb"], default="notes")
     p_open.add_argument("--no-launch", action="store_true", help="只打印地址，不拉起浏览器")
     return parser
 

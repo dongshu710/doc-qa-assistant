@@ -108,10 +108,45 @@ def test_node_check() -> None:
     check("语法错误判为失败", not ok and "bad.js" in detail, detail)
 
 
+def test_wiring() -> None:
+    """脚本找的 id 必须在页面上真的存在。
+
+    这类错误在浏览器里没有报错、没有日志，表现只是「点了没反应」——
+    比语法错误难查得多。浏览器 E2E（Playwright）是开发期可选依赖，
+    CI 里没有，所以用静态对齐兜住最基本的一层。
+    """
+    ask = web_pages.ASK_HTML
+    kb = web_pages.KB_HTML
+    ask_js = (ROOT / "src" / "web" / "ask.js").read_text(encoding="utf-8")
+    kb_js = (ROOT / "src" / "web" / "kb.js").read_text(encoding="utf-8")
+    theme_js = (ROOT / "src" / "web" / "theme.js").read_text(encoding="utf-8")
+    base_css = (ROOT / "src" / "web" / "base.css").read_text(encoding="utf-8")
+    report_py = (ROOT / "src" / "report.py").read_text(encoding="utf-8")
+    admin_js = (ROOT / "src" / "web" / "report_admin.js").read_text(encoding="utf-8")
+
+    checks = [
+        ("引用角标 → 抽屉里的候选区", 'id="srcAlt"' in ask and "srcAlt" in ask_js),
+        ("角标是按钮且带 data-ref", 'class="cite-n"' in ask_js and "data-ref=" in ask_js),
+        ("分段抽屉骨架", all(f'id="{i}"' in kb for i in
+                       ("ckDrawer", "ckList", "ckQ", "ckRun", "ckResult"))),
+        ("分段抽屉脚本接上", all(i in kb_js for i in
+                        ("openChunks", "runDocTest", "ckClose"))),
+        ("空库模板卡与脚本", 'id="kbSeed"' in kb and "seedTemplate" in kb_js
+                            and 'data-tpl="policy"' in kb),
+        ("批量操作条与全选", 'id="kbBatch"' in kb and 'id="kbAll"' in kb
+                            and "batchDelete" in kb_js),
+        ("汇报页反馈分组", 'id="agFeedback"' in report_py and "loadFeedback" in admin_js),
+        ("快捷键弹层有样式", "kbd-modal" in theme_js and ".kbd-modal" in base_css),
+    ]
+    for name, ok in checks:
+        check(f"接线：{name}", ok)
+
+
 def main() -> int:
     test_files()
     test_pages()
     test_python_thin()
+    test_wiring()
     test_node_check()
     print(f"\n{PASS} 通过 / {FAIL} 失败")
     return 1 if FAIL else 0

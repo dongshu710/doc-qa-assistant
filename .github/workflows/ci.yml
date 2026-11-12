@@ -274,6 +274,10 @@ jobs:
       - name: 检索调试台（接口 + 页面）
         run: python tests/test_search_debug.py
 
+      # 空库模板：坏了的症状是「三个按钮点了没反应」，比没有按钮更糟
+      - name: 空库模板与笔记页改名
+        run: python tests/test_kb_seed.py
+
       # PPTX / HTML / EML 三种新格式，都是零依赖自己解
       - name: 文档格式扩展（pptx / html / eml）
         run: python tests/test_doc_formats.py

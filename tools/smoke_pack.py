@@ -69,7 +69,7 @@ def main() -> int:
                 print("错误：服务没起来")
                 return 1
 
-            for page in ("/ask", "/kb", "/files", "/report"):
+            for page in ("/ask", "/kb", "/notes", "/report"):
                 st, body = get(base + page)
                 print(f"{'ok  ' if st == 200 and body else 'FAIL'} {page} 200 · {len(body)} B")
                 ok = ok and st == 200 and bool(body)

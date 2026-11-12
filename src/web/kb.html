@@ -27,6 +27,18 @@
         </div>
         <div class="kb-status" id="kbMsg"></div>
       </section>
+
+      <section class="card kb-seed" id="kbSeed" hidden>
+        <div class="side-title">空库怎么起步</div>
+        <p class="seed-sub">导入一份内置演示文档，先把上传→检索→引用这条链路跑通。</p>
+        <button class="seed-card" type="button" data-tpl="policy">
+          <b>制度办法</b><span>客户适当性、信息披露、销售适当性 3 份</span></button>
+        <button class="seed-card" type="button" data-tpl="product">
+          <b>产品要素</b><span>理财产品要素说明、大额存单与定期 2 份</span></button>
+        <button class="seed-card" type="button" data-tpl="regulatory">
+          <b>监管摘录</b><span>理财业务监督管理办法 1 份</span></button>
+        <p class="seed-note">导入的是仓库里真实存在的演示文档，不是临时编的内容；重复点不会重复入库。</p>
+      </section>
     </div>
 
     <section class="card kb-list">
@@ -65,9 +77,16 @@
         </select>
       </div>
 
+      <div class="kb-batch" id="kbBatch" hidden>
+        <span id="kbBatchCount">已选 0 份</span>
+        <button class="btn ghost sm" id="kbBatchRebuild" type="button">重建索引</button>
+        <button class="btn danger-ghost sm" id="kbBatchDel" type="button">删除选中</button>
+        <button class="btn ghost sm" id="kbBatchClear" type="button">取消选择</button>
+      </div>
+
       <div class="table-wrap">
         <table>
-          <thead><tr><th>文件</th><th class="num">知识块</th><th class="num">关键词</th><th class="num">大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
+          <thead><tr><th class="sel"><input type="checkbox" id="kbAll" aria-label="全选"></th><th>文件</th><th class="num">知识块</th><th class="num">关键词</th><th class="num">大小</th><th>更新时间</th><th style="text-align:right">操作</th></tr></thead>
           <tbody id="kbBody"></tbody>
         </table>
       </div>
@@ -84,7 +103,7 @@
     </div>
     <div class="ag-actions">
       <button class="btn sm" id="agOpen" type="button">接入配置</button>
-      <a class="btn ghost sm" href="/files" target="_blank" rel="noopener">看已存记忆</a>
+      <a class="btn ghost sm" href="/notes" target="_blank" rel="noopener">看已存记忆</a>
     </div>
   </section>
   </div>
@@ -96,4 +115,18 @@
       <button id="kbModalClose" type="button" aria-label="关闭">×</button></div>
     <div class="kb-modal-body" id="kbModalBody"></div>
   </div>
+
+  <div class="ck-mask" id="ckMask" hidden></div>
+  <aside class="ck-drawer" id="ckDrawer" hidden aria-label="文档分段">
+    <div class="ck-head">
+      <div><b id="ckTitle">分段</b><div class="ck-sub" id="ckSub"></div></div>
+      <button class="ck-close" id="ckClose" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="ck-list" id="ckList"></div>
+    <div class="ck-foot">
+      <input id="ckQ" type="search" placeholder="用这份文档试一个问题" autocomplete="off">
+      <button class="btn sm" id="ckRun" type="button">检索</button>
+    </div>
+    <div class="ck-result" id="ckResult" hidden></div>
+  </aside>
 </main>

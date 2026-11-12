@@ -10,9 +10,10 @@ import select
 import time
 from collections import Counter
 from datetime import datetime
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
-from .. import (kbstore,
+from .. import (ingest,
+                kbstore,
                 openai_compat,
                 report,
                 routing,
@@ -158,8 +159,13 @@ def make_read(deps):
         def _get_page_html(self, path: str, qs: dict) -> None:
             """页面分派：清单在 `routing.PAGE_ROUTES`，这里只负责把键换成 HTML。"""
             if path in routing.PAGE_ALIASES:
-                # 只留问答、知识库、文件、汇报四页，旧入口统一回落到问答页
+                # 只留问答、知识库、笔记、汇报四页，旧入口统一回落到问答页
                 self._redirect("/ask")
+                return
+            moved = routing.PAGE_MOVED.get(path)
+            if moved:
+                # 301 而不是 302：改名是永久的，浏览器与搜索引擎都该记住新地址
+                self._redirect(moved, 301)
                 return
             page = routing.PAGE_ROUTES.get(path)
             if page is None:
@@ -312,8 +318,68 @@ def make_read(deps):
             else:
                 self._not_found(self.command, path)
 
+        def _get_kb_doc_read(self, path: str, qs: dict) -> bool:
+            """单文档读侧：原件与分段。
+
+            为什么不并进 `_get_kb_view`：那边是「版本 / 审批 / 文档清单」，
+            回答的是「库里有什么」；这里读的是**当前索引内存**与 raw 目录，
+            回答的是「这份文档长什么样」。两类问题的生命周期都不一样
+            （索引换代 vs 版本发布），混在一条 200 行的链上只会两边都难改。
+            返回 True 表示已经写过响应，调用方直接 return。
+            """
+            if path == "/api/knowledge/raw":
+                # 上传时的原件（PDF / DOCX / XLSX …）。用途只有一个：引用里带页码时
+                # 能「打开第 N 页」对回原件——解析后的 md 已经丢掉了版式。
+                name = _safe_name((qs.get("name") or [""])[0], ingest.SUPPORTED_EXT, 120)
+                if not name:
+                    self._json({"error": "name 只能是文件名"}, 400)
+                    return True
+                # 双保险：文件名已经过滤过路径分隔符，这里再按 realpath 确认没跑出 RAW_DIR
+                root = os.path.realpath(raw_dir)
+                full = os.path.realpath(os.path.join(root, name))
+                if os.path.commonpath([full, root]) != root or not os.path.isfile(full):
+                    self._json({"error": "原件不存在（只有文档类上传会留存原件）"}, 404)
+                    return True
+                with open(full, "rb") as f:
+                    blob = f.read()
+                # HTML / EML 一律当附件下载：内联渲染等于把上传者写的脚本放到本服务源上跑，
+                # 它能直接调 /api/*（单机也一样）。PDF 才允许 inline，浏览器 PDF 阅读器不执行脚本。
+                ext = os.path.splitext(name)[1].lower()
+                inline = {".pdf": "application/pdf"}
+                ctype = inline.get(ext, "application/octet-stream")
+                disp = "inline" if ext in inline else "attachment"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(blob)))
+                self.send_header("Content-Disposition",
+                                 f"{disp}; filename*=UTF-8''{quote(name)}")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "private, max-age=600")
+                self.end_headers()
+                self.wfile.write(blob)
+                return True
+            if path == "/api/knowledge/chunks":
+                # 单文档分段速览：知识库行内「分段」抽屉、以及「用本文档测一次」的前置信息。
+                # 不挂在 /api/kb 下，是因为这里读的是索引内存，与版本库的文档历史是两件事。
+                raw = (qs.get("name") or [""])[0]
+                # 知识库目录里只会是解析后的 .md（以及手传的 .txt），所以用 ALLOWED_EXT
+                name = _safe_name(raw, ALLOWED_EXT, 120)
+                if not name:
+                    self._json({"error": "name 只能是文件名"}, 400)
+                    return True
+                detail = pipe.doc_chunks(name.rsplit(".", 1)[0])
+                if detail is None:
+                    self._json({"error": "文档不存在或尚未建立索引", "name": name,
+                                "rebuilding": bool(pipe.rebuild_state().get("rebuilding"))}, 404)
+                    return True
+                self._json(detail)
+                return True
+            return False
+
         def _get_kb_view(self, path: str, qs: dict) -> None:
             """知识库读侧：用例、示例、版本清单、变更、文档历史、关键词。"""
+            if self._get_kb_doc_read(path, qs):
+                return
             if path == "/api/cases":
                 curated = _read_jsonl(os.path.join(project_root, "tests", "eval_cases.jsonl"), 100000)
                 fb_cases = _read_jsonl(feedback_cases_path, 100000)
@@ -361,6 +427,13 @@ def make_read(deps):
                 self._json({"items": suggest.examples(ordered, n)})
             elif path == "/api/knowledge":
                 counts = Counter(c.doc_id for c in pipe.chunks)
+                # 每份文档有哪些页：状态列要能区分「PDF 有页码」与「PDF 转出来没页标」，
+                # 后者在调页码引用时是硬伤（无法跳到第 N 页），但不影响检索，所以只是提示。
+                pages_of: dict[str, set] = {}
+                for c in pipe.chunks:
+                    page_no = getattr(c, "page", None)
+                    if page_no:
+                        pages_of.setdefault(c.doc_id, set()).add(page_no)
                 files = []
                 # 清单来源统一走 kbstore 的 manifest。原来这里是自己 listdir，
                 # 与 /api/health、汇报页各算一遍：审批通过到索引重建完成之间，
@@ -378,11 +451,23 @@ def make_read(deps):
                 for name in names:
                     try:
                         full = os.path.join(kb_dir(), name)
+                        doc_id = name.rsplit(".", 1)[0]
+                        pages = pages_of.get(doc_id) or set()
+                        # 状态只从索引事实推导，不读解析日志：解析警告从来没落过盘，
+                        # 编一个「degraded」字段出来只会让人以为能查到。
+                        if not counts.get(doc_id):
+                            status = "no_index"
+                        elif name.lower().endswith((".pdf", ".pptx")) and not pages:
+                            status = "no_page"
+                        else:
+                            status = "ok"
                         files.append({
                             "name": name,
-                            "chunks": counts.get(name.rsplit(".", 1)[0], 0),
+                            "chunks": counts.get(doc_id, 0),
                             "size": os.path.getsize(full),
                             "mtime": datetime.fromtimestamp(os.path.getmtime(full)).strftime("%Y-%m-%d %H:%M"),
+                            "status": status,
+                            "pages": len(pages),
                         })
                     except OSError:
                         # 并发删除/改名：跳过这一条。少显示一份，比整个列表 500 好。

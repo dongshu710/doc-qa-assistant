@@ -307,11 +307,11 @@ try {
     () => fetch('/api/settings').then((r) => r.json()).then((d) => d.notes.backup.last_export_at));
   check('HEAD 探测不算备份', beforeHead === afterHead, `${beforeHead} -> ${afterHead}`);
 
-  // ---- 独立文件页 /files：加不进客户端工具栏时的固定地址 ----
-  await page.goto(`${base}/files`, { waitUntil: 'networkidle' });
+  // ---- 独立笔记页 /notes：加不进客户端工具栏时的固定地址 ----
+  await page.goto(`${base}/notes`, { waitUntil: 'networkidle' });
   await page.waitForSelector('.file-item', { timeout: 8000 }).catch(() => {});
-  check('/files 是独立页', await page.isVisible('.pf-grid'));
-  check('/files 列出文件', (await page.locator('.file-item').count()) >= 1);
+  check('/notes 是独立页', await page.isVisible('.pf-grid'));
+  check('/notes 列出笔记', (await page.locator('.file-item').count()) >= 1);
   await page.waitForFunction(
     () => {
       const t = (document.getElementById('pfDetail') || {}).textContent || '';

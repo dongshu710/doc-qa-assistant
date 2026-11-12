@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -102,6 +103,44 @@ def main() -> None:
     check("top_k=2 时召回 6 条（语料不足则按全库块数封顶）",
           body.get("recalled") == min(6, body.get("chunks_total") or 0),
           f"recalled={body.get('recalled')} chunks={body.get('chunks_total')}")
+
+    print("按单文档调试（/kb 行内「用本文档测一次」）")
+    status, body = post("/api/search/debug", {"query": "稳盈系列产品的起购金额是多少",
+                                               "doc": "产品要素.md"})
+    check("带 doc 返回 200", status == 200, json.dumps(body, ensure_ascii=False)[:160])
+    check("回显 doc（前端据此区分「本文档没候选」与「全库没候选」）",
+          body.get("doc") == "产品要素", str(body.get("doc")))
+    check("候选只剩本文档",
+          all(item["doc_id"] == "产品要素" for item in body.get("candidates", [])),
+          str([item["doc_id"] for item in body.get("candidates", [])])[:120])
+    check("带 doc_chunks_total", isinstance(body.get("doc_chunks_total"), int),
+          str(body.get("doc_chunks_total")))
+    status, body = post("/api/search/debug", {"query": "x", "doc": "../密码.md"})
+    check("doc 带路径 → 400（不拿它当文件读取口）", status == 400, f"{status} {body}")
+
+    print("单文档分段")
+    with urllib.request.urlopen(base + "/api/knowledge/chunks?name="
+                                + urllib.parse.quote("产品要素.md"), timeout=10) as resp:
+        chunks = json.loads(resp.read().decode("utf-8"))
+    check("分段接口 200 且有内容", bool(chunks.get("items")), json.dumps(chunks, ensure_ascii=False)[:160])
+    first = (chunks.get("items") or [{}])[0]
+    check("分段带序号/页码/字数/正文",
+          {"chunk_index", "page", "section", "chars", "text"} <= set(first), str(first)[:160])
+    check("分段按序号升序",
+          [x["chunk_index"] for x in chunks.get("items", [])]
+          == sorted(x["chunk_index"] for x in chunks.get("items", [])))
+    try:
+        urllib.request.urlopen(base + "/api/knowledge/chunks?name="
+                               + urllib.parse.quote("不存在.md"), timeout=10)
+        check("不存在的文档 → 404", False, "居然 200")
+    except urllib.error.HTTPError as exc:
+        check("不存在的文档 → 404", exc.code == 404, str(exc.code))
+    try:
+        urllib.request.urlopen(base + "/api/knowledge/chunks?name="
+                               + urllib.parse.quote("../x.md"), timeout=10)
+        check("分段接口拒路径 → 400", False, "居然 200")
+    except urllib.error.HTTPError as exc:
+        check("分段接口拒路径 → 400", exc.code == 400, str(exc.code))
 
     print("页面")
     with urllib.request.urlopen(base + "/debug", timeout=10) as resp:

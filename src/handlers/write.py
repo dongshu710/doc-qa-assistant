@@ -143,6 +143,7 @@ def make_write(deps):
                             "/api/knowledge/upload_file", "/api/knowledge/delete",
                             "/api/cases/from_doc", "/api/cases/run",
                             "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
+                            "/api/kb/seed",
                             "/api/keywords/rebuild", "/api/session/clear",
                             "/api/search/debug",
                             "/api/admin/config", "/api/admin/rollback",
@@ -441,9 +442,106 @@ def make_write(deps):
                 self._post_kb_doc(path, payload)
             elif path == "/api/knowledge/upload":
                 self._post_kb_upload(path, payload)
+            elif path == "/api/kb/seed":
+                self._post_kb_seed(payload)
             else:
                 self._post_kb_review(path, payload)
             return
+
+        def _post_kb_seed(self, payload: dict) -> None:
+            """空库引导：把仓库自带的演示文档一键导入。
+
+            为什么不直接内嵌示例文本：示例必须和 `data/knowledge/` 里那份**是同一份**，
+            否则演示文档改了、种子数据没跟着改，用户装完看到的是一套过期内容。
+            所以这里只做「读仓库里的文件 → 走正常入库链路」。
+
+            不造「客服问答对」这一类模板：仓库里没有对应的示范文档，
+            凭空写一份假的问答对进去，只会让人以为系统自带的语料就长这样。
+            """
+            templates = {
+                "policy": {
+                    "title": "制度办法",
+                    "names": ["02_客户适当性管理制度.md",
+                              "pdf_演示制度_信息披露与消费者权益保护办法.md",
+                              "pdf_演示制度_销售适当性管理实施细则.md"],
+                },
+                "product": {
+                    "title": "产品要素",
+                    "names": ["01_理财产品要素说明.md", "03_大额存单与定期存款.md"],
+                },
+                "regulatory": {
+                    "title": "监管摘录",
+                    "names": ["pdf_监管摘录_商业银行理财业务监督管理办法.md"],
+                },
+            }
+            key = str(payload.get("template") or "").strip()
+            chosen = templates.get(key)
+            if chosen is None:
+                self._json({"ok": False, "error": "invalid_argument",
+                            "message": "template 只能是 " + " / ".join(templates)}, 400)
+                return
+            source_dir = os.path.join(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))), "data", "knowledge")
+            if not os.path.isdir(source_dir):
+                self._json({"ok": False, "error": "seed_missing",
+                            "message": "找不到内置演示文档（data/knowledge），"
+                                       "请直接把文件拖进上传框"}, 404)
+                return
+            files: dict[str, str] = {}
+            skipped: list[str] = []
+            existing = set()
+            if os.path.isdir(kb_dir()):
+                existing = {n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
+            for name in chosen["names"]:
+                safe = _safe_name(name, ALLOWED_EXT, 120)
+                if not safe:
+                    continue
+                if safe in existing:
+                    # 幂等：重复点不会生成同名覆盖的那条「旧内容没了」告警
+                    skipped.append(safe)
+                    continue
+                try:
+                    with open(os.path.join(source_dir, safe), encoding="utf-8") as f:
+                        files[safe] = f.read()
+                except OSError:
+                    continue
+            if not files:
+                self._json({"ok": True, "template": key, "added": [], "skipped": skipped,
+                            "message": "这些文档已经在知识库里了"})
+                return
+            if store is not None:
+                try:
+                    _staged, change_id, approved, total = self._stage_and_maybe_approve(
+                        files, note=f"空库模板：{chosen['title']}")
+                except (kbstore.KnowledgeError, ValueError) as exc:
+                    self._json({"ok": False, "error": str(exc)}, 400)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
+                    return
+                self._json({
+                    "ok": True, "template": key, "title": chosen["title"],
+                    "added": sorted(files), "skipped": skipped,
+                    "pending": approved is None, "change_id": change_id,
+                    "version": store.active_version(),
+                    **index_fields(),
+                })
+                guards.audit.write("kb.seed", client=self._client(), template=key,
+                                   files=len(files), pending=approved is None)
+                return
+            # 无版本库（KB_STORE=off）：直接落盘后重建
+            for name, content in files.items():
+                with open(os.path.join(kb_dir(), name), "w", encoding="utf-8") as f:
+                    f.write(content)
+            try:
+                total = pipe.reload()
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
+                return
+            self._json({"ok": True, "template": key, "title": chosen["title"],
+                        "added": sorted(files), "skipped": skipped, "chunks": total})
+            guards.audit.write("kb.seed", client=self._client(), template=key,
+                               files=len(files), chunks=total)
 
         def _post_kb_upload(self, path: str, payload: dict) -> None:
             """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
@@ -856,8 +954,26 @@ def make_write(deps):
                         self._json({"ok": False, "error": "invalid_argument",
                                     "message": "top_k 必须是整数"}, 400)
                         return
+                # 只认文件名/文档 id 两种写法：带路径或控制字符一律 400，避免有人
+                # 拿它当文件读取口（检索只按 doc_id 过滤，本来就不碰磁盘，但边界要守住）
+                raw_doc = payload.get("doc")
+                doc = ""
+                if raw_doc not in (None, ""):
+                    if not isinstance(raw_doc, str):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "doc 必须是字符串"}, 400)
+                        return
+                    candidate = raw_doc.strip()
+                    if (not candidate or len(candidate) > 120 or "/" in candidate
+                            or "\\" in candidate or ".." in candidate
+                            or any(ch in candidate for ch in '<>:"|?*\x00')):
+                        self._json({"ok": False, "error": "invalid_argument",
+                                    "message": "doc 只能是文件名，不能带路径"}, 400)
+                        return
+                    # /kb 传文件名（带扩展名），引用卡片传 doc_id（不带）——两种都收
+                    doc = candidate.rsplit(".", 1)[0] if "." in candidate else candidate
                 try:
-                    detail = pipe.debug_search(query.strip(), top_k=top_k)
+                    detail = pipe.debug_search(query.strip(), top_k=top_k, doc=doc or None)
                 except Exception as exc:  # noqa: BLE001 —— 索引异常要如实报，不假装空结果
                     self._json({"ok": False, "error": "retrieval_error",
                                 "message": self._error_text(exc, "检索失败")}, 500)

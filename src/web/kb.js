@@ -1,6 +1,19 @@
 
 function $(id){ return document.getElementById(id); }
 var KB={files:[],total_chunks:0}, FILTER='all', SORT='name', Q='', BUSY=false;
+/* 选中集合挂在全局：列表重绘（筛选、排序、刷新）后勾选不能丢。
+   用对象而不是 DOM 状态，是因为每次 render 都会整体重写 tbody。 */
+var SEL={};
+function selCount(){ return Object.keys(SEL).length; }
+function clearSel(){ SEL={}; updateBatch(); }
+function updateBatch(){
+  var n=selCount(), bar=$('kbBatch');
+  if(!bar) return;
+  bar.hidden=n===0;
+  if(n) $('kbBatchCount').textContent='已选 '+n+' 份';
+  var all=$('kbAll');
+  if(all) all.checked=!!n&&n===visibleFiles().length;
+}
 
 function typeOf(name){
   var ext=(name.split('.').pop()||'').toLowerCase();
@@ -25,6 +38,12 @@ function visibleFiles(){
   return list;
 }
 
+function statusOf(f){
+  if(f.status==='no_index') return {cls:'no_index',text:'未索引',tip:'还没进检索索引：可能是索引正在重建，或这份文档没有可切分的正文'};
+  if(f.status==='no_page') return {cls:'no_page',text:'无页码',tip:'PDF/PPTX 转出来没有页标，引用里点不到「第 N 页」；检索本身不受影响'};
+  return {cls:'ok',text:'正常',tip:'已建索引，页码可用'};
+}
+
 function render(){
   var total=(KB.files||[]).length, chunks=KB.total_chunks||0;
   $('kbMeta').textContent=total+' 份 · '+chunks+' 块'+(KB.rebuilding?' · 索引重建中':'')
@@ -33,25 +52,33 @@ function render(){
   var list=visibleFiles();
   $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
   $('kbHint').textContent=total?('合计 '+chunks+' 个知识块'):'';
+  if($('kbSeed')) $('kbSeed').hidden=total>0;
   if(!list.length){
-    $('kbBody').innerHTML=emptyRow(6,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx / .xlsx');
+    $('kbBody').innerHTML=emptyRow(7,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx / .xlsx');
+    updateBatch();
     return;
   }
   $('kbBody').innerHTML=list.map(function(f){
     var t=typeOf(f.name), kws=f.keywords||[], kc=(f.keyword_count!=null?f.keyword_count:kws.length);
-    return '<tr data-name="'+esc(f.name)+'"><td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
-      +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span></div></td>'
+    var st=statusOf(f);
+    return '<tr data-name="'+esc(f.name)+'"><td class="sel"><input type="checkbox" class="pick" data-name="'+esc(f.name)+'"'
+      +(SEL[f.name]?' checked':'')+' aria-label="选择 '+esc(f.name)+'"></td>'
+      +'<td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
+      +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span>'
+      +'<span class="fstat '+st.cls+'" title="'+esc(st.tip)+'">'+esc(st.text)+'</span></div></td>'
       +'<td class="num"><span class="pill">'+f.chunks+'</span></td>'
       +'<td class="num"><button class="kw-btn" type="button" data-kw="'+esc(f.name)+'" title="'+(kws.length?esc(kws.join(' · ')):'暂无关键词')+'">'+(kc?kc:'—')+'</button></td>'
       +'<td class="num mono" style="font-size:12px;color:var(--muted)">'+fmtBytes(f.size)+'</td>'
       +'<td class="ts">'+esc(f.mtime||'—')+'</td>'
       +'<td><div class="row-actions">'
+      +'<button class="btn ghost sm chk" data-name="'+esc(f.name)+'">分段</button>'
       +'<button class="btn ghost sm hist" data-name="'+esc(f.name)+'">历史</button>'
       +'<button class="btn ghost sm gen" data-name="'+esc(f.name)+'">出题</button>'
       +'<button class="btn danger-ghost sm del" data-name="'+esc(f.name)+'">删除</button>'
       +'</div></td></tr>';
   }).join('');
   renderKwMeta();
+  updateBatch();
 }
 function renderKwMeta(){
   var kw=KB.keywords||{}, n=kw.terms||0;
@@ -67,7 +94,7 @@ async function toggleKw(name,btn){
   if(open&&open.dataset.name===name){ open.remove(); return; }
   if(open) open.remove();
   var tr=document.createElement('tr'); tr.className='kw-row'; tr.dataset.name=name;
-  tr.innerHTML='<td colspan="6"><div class="kw-box"><span class="kw-load">读取关键词…</span></div></td>';
+  tr.innerHTML='<td colspan="7"><div class="kw-box"><span class="kw-load">读取关键词…</span></div></td>';
   (btn.closest('tr')||btn.parentNode.parentNode).after(tr);
   try{
     var d=await (await fetch('/api/keywords?name='+encodeURIComponent(name))).json();
@@ -200,7 +227,12 @@ async function rollbackTo(name,version){
 async function loadKb(){
   try{
     var r=await (await fetch('/api/knowledge')).json();
-    KB=r; render(); await loadApprovals();
+    KB=r;
+    // 文档被别处删掉后，残留的勾选会让「删除选中」带上已经不存在的文件名
+    var alive={};
+    (KB.files||[]).forEach(function(f){ alive[f.name]=true; });
+    Object.keys(SEL).forEach(function(n){ if(!alive[n]) delete SEL[n]; });
+    render(); await loadApprovals();
   }catch(e){ setMsg('加载失败：'+(e.message||e),'err'); }
 }
 
@@ -301,6 +333,133 @@ async function uploadFiles(files){
   }
 }
 
+/* ---------- 分段抽屉 ----------
+   分段是「切分结果」的唯一可见形态：用户要判断的是「这块切得对不对」，
+   所以序号、页码、字数、正文开头缺一样都不行。整页跳转太重，抽屉刚好。 */
+var CK={name:'', items:[]};
+function ckOpen(){
+  $('ckMask').hidden=false; $('ckDrawer').hidden=false;
+  requestAnimationFrame(function(){ $('ckDrawer').classList.add('open'); });
+}
+function ckClose(){
+  $('ckDrawer').classList.remove('open');
+  $('ckDrawer').hidden=true; $('ckMask').hidden=true;
+  $('ckResult').hidden=true; $('ckResult').innerHTML='';
+}
+async function openChunks(name){
+  CK={name:name, items:[]};
+  $('ckTitle').textContent=name;
+  $('ckSub').textContent='读取分段…';
+  $('ckList').innerHTML='<div class="ck-empty">读取中…</div>';
+  $('ckResult').hidden=true;
+  ckOpen();
+  try{
+    var r=await fetch('/api/knowledge/chunks?name='+encodeURIComponent(name));
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
+    CK.items=d.items||[];
+    var avg=0;
+    if(CK.items.length){
+      var sum=0; CK.items.forEach(function(x){ sum+=x.chars; }); avg=Math.round(sum/CK.items.length);
+    }
+    $('ckSub').textContent=CK.items.length+' 块 · '+(d.page_count?d.page_count+' 页 · ':'')+'平均 '+avg+' 字/块'
+      +(d.truncated?'':'');
+    if(!CK.items.length){ $('ckList').innerHTML='<div class="ck-empty">这份文档没有可显示的分段</div>'; return; }
+    $('ckList').innerHTML=CK.items.map(function(x){
+      return '<div class="ck-item"><button type="button" class="ck-row" data-i="'+x.chunk_index+'">'
+        +'<span class="ck-no">#'+(x.chunk_index+1)+'</span>'
+        +'<span class="ck-meta">'+(x.page?'第 '+x.page+' 页 · ':'')+x.chars+' 字</span>'
+        +'<span class="ck-sec">'+esc(x.section||'')+'</span></button>'
+        +'<pre class="ck-text" hidden>'+esc(x.text)+(x.truncated?'\n…（已截断，完整原文点引用查看）':'')+'</pre></div>';
+    }).join('');
+  }catch(e){
+    $('ckSub').textContent='读取失败';
+    $('ckList').innerHTML='<div class="ck-empty">'+esc(e.message||e)
+      +'<br>文档刚上传时索引可能还在重建，等几秒再试。</div>';
+  }
+}
+/* 「用这份文档测一次」：不是全库检索，而是把 doc 交给检索调试，
+   这样「这份文档能不能答这个问题」才有确定答案。 */
+async function runDocTest(){
+  var q=($('ckQ').value||'').trim();
+  if(!q){ toast('先写一个要试的问题',true); return; }
+  var box=$('ckResult');
+  box.hidden=false; box.innerHTML='<div class="ck-empty">检索中…</div>';
+  try{
+    var r=await fetch('/api/search/debug',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:q,doc:CK.name})});
+    var d=await r.json();
+    if(!r.ok) throw new Error(d.message||d.error||('HTTP '+r.status));
+    var rows=(d.candidates||[]).map(function(c){
+      return '<div class="ck-hit'+(c.kept?'':' off')+'"><span class="ck-h-sc">'+esc(Math.round(c.score*1000)/1000)+'</span>'
+        +'<span class="ck-h-sec">#'+(c.chunk_index+1)+(c.page?' · 第 '+c.page+' 页':'')+' '+esc(c.section||'')+'</span>'
+        +'<span class="ck-h-tag">'+(c.kept?'采用':'被挡')+'</span></div>';
+    }).join('');
+    box.innerHTML='<div class="ck-h-head">本文档命中 '+d.kept+' / '+d.recalled+' 块 · 阈值 '+esc(d.min_score)
+      +(d.degraded?' · <span class="warn">检索降级：'+esc(d.degrade_reason||'')+'</span>':'')+'</div>'
+      +(rows||'<div class="ck-empty">这份文档里没有相关分段——要么切分没切到，要么文档确实没写这件事</div>');
+  }catch(e){
+    box.innerHTML='<div class="ck-empty">检索失败：'+esc(e.message||e)+'</div>';
+  }
+}
+
+/* ---------- 空库模板 ----------
+   空库只给一个上传框，用户不知道该放什么。模板直接复用仓库里的演示文档，
+   与 docs/README 里截图示意的内容是同一份，不会出现「示例和实际对不上」。 */
+async function seedTemplate(tpl,btn){
+  if(BUSY) return;
+  BUSY=true; btn.disabled=true;
+  setMsg('正在导入模板…');
+  try{
+    var r=await (await fetch('/api/kb/seed',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({template:tpl})})).json();
+    if(!r.ok){ setMsg('导入失败：'+(r.message||r.error||''),'err'); btn.disabled=false; BUSY=false; return; }
+    var msg=r.added&&r.added.length?('已导入 '+r.added.length+' 份'):(r.message||'已在库中');
+    setMsg(msg+(r.pending?'，等待审批':'')+'。',r.pending?'':'ok');
+    toast(msg);
+    btn.disabled=false; BUSY=false;
+    await settleIndex(r.rebuilding&&!r.pending, msg);
+  }catch(e){
+    setMsg('导入失败：'+(e.message||e),'err'); toast('导入失败',true); btn.disabled=false; BUSY=false;
+  }
+}
+
+/* ---------- 批量操作 ----------
+   批量删除逐份调用单删接口：一次失败不会连坐，进度和失败原因都能说清。
+   整体回滚在这里反而是错的——已删的文档在版本库里仍可找回。 */
+async function batchDelete(){
+  var names=Object.keys(SEL);
+  if(!names.length) return;
+  if(!confirm('确认删除选中的 '+names.length+' 份文档？索引会重新构建，删掉的仍可在「版本」里找回。\n\n'
+    +names.slice(0,8).join('\n')+(names.length>8?'\n…':''))) return;
+  var ok=0, fail=[];
+  BUSY=true;
+  for(var i=0;i<names.length;i++){
+    setMsg('删除中 '+(i+1)+'/'+names.length+'：'+names[i]);
+    try{
+      var d=await (await fetch('/api/knowledge/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:names[i]})})).json();
+      if(d.ok){ ok++; delete SEL[names[i]]; } else { fail.push(names[i]+'：'+(d.error||'失败')); }
+    }catch(e){ fail.push(names[i]+'：'+(e.message||e)); }
+  }
+  BUSY=false;
+  setMsg('已删除 '+ok+' 份'+(fail.length?('，失败 '+fail.length+' 份（'+fail[0]+'）'):''),fail.length?'err':'ok');
+  updateBatch();
+  await settleIndex(true,'已删除 '+ok+' 份');
+}
+async function batchRebuild(){
+  if(!Object.keys(SEL).length) return;
+  var btn=$('kbBatchRebuild'); btn.disabled=true;
+  setMsg('正在按当前文档重建索引…');
+  try{
+    var r=await (await fetch('/api/reload',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
+    if(r.ok){ await settleIndex(true,'已开始重建'); }
+    else{ setMsg('重建失败：'+r.error,'err'); }
+  }catch(e){ setMsg('重建失败：'+(e.message||e),'err'); }
+  btn.disabled=false;
+  clearSel();
+}
+
 /* ---------- 事件 ---------- */
 $('kbFile').onchange=function(){ var fs=[].slice.call(this.files||[]); this.value=''; uploadFiles(fs); };
 $('drop').onclick=function(e){ if(e.target.id!=='kbFile') $('kbFile').click(); };
@@ -328,6 +487,14 @@ $('kbModalBody').onclick=function(ev){
   if(b && !b.disabled){ rollbackTo(b.dataset.name,b.dataset.v); }
 };
 $('kbBody').onclick=async function(ev){
+  var pick=ev.target.closest('.pick');
+  if(pick){
+    if(pick.checked) SEL[pick.dataset.name]=true; else delete SEL[pick.dataset.name];
+    updateBatch();
+    return;
+  }
+  var ck=ev.target.closest('.chk');
+  if(ck){ await openChunks(ck.dataset.name); return; }
   var kw=ev.target.closest('.kw-btn');
   if(kw){ await toggleKw(kw.dataset.kw, kw); return; }
   var h=ev.target.closest('.hist');
@@ -356,6 +523,27 @@ $('kbBody').onclick=async function(ev){
 };
 
 $('apprRefresh').onclick=loadApprovals;
+$('kbAll').onchange=function(){
+  var on=this.checked;
+  visibleFiles().forEach(function(f){ if(on) SEL[f.name]=true; else delete SEL[f.name]; });
+  render();
+};
+$('kbBatchDel').onclick=batchDelete;
+$('kbBatchRebuild').onclick=batchRebuild;
+$('kbBatchClear').onclick=function(){ clearSel(); render(); };
+$('kbSeed').onclick=function(ev){
+  var b=ev.target.closest('.seed-card'); if(!b) return;
+  seedTemplate(b.dataset.tpl,b);
+};
+$('ckClose').onclick=ckClose;
+$('ckMask').onclick=ckClose;
+$('ckRun').onclick=runDocTest;
+$('ckQ').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); runDocTest(); } });
+$('ckList').onclick=function(ev){
+  var row=ev.target.closest('.ck-row'); if(!row) return;
+  var pre=row.nextElementSibling;
+  if(pre) pre.hidden=!pre.hidden;
+};
 $('adminSave').onclick=function(){
   var v=($('adminToken').value||'').trim();
   try{
@@ -370,7 +558,7 @@ $('apprList').onclick=function(ev){
 };
 $('kbModalClose').onclick=closeKbModal;
 $('kbMask').onclick=closeKbModal;
-document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeKbModal(); });
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ closeKbModal(); ckClose(); } });
 
 $('reload').onclick=async function(){
   var btn=this; btn.disabled=true; setMsg('正在重建索引…');
@@ -390,7 +578,7 @@ $('reload').onclick=async function(){
    删除只进 .trash。页面不缓存笔记内容，避免和磁盘上的手改打架。 */
 
 /* 笔记统一到 /files：知识库只留文档。旧链接 /kb#notes 直接送过去 */
-if(location.hash==='#notes'){ location.replace('/files'); }
+if(location.hash==='#notes'){ location.replace('/notes'); }
 
 loadKb();
 

@@ -1,6 +1,6 @@
 ---
 name: jiyi-files
-description: 读写本机「记忆文档」的笔记库并打开它的文件页。当用户说「看看我的笔记 / 之前存过什么 / 打开文件页 / 把这轮对话存成笔记 / 找一下关于某个主题的笔记 / 导出笔记」，或需要确认笔记目录里到底有哪些 Markdown 文件时使用。只读写本机文件与 localhost 接口，不联网。
+description: 读写本机「记忆文档」的笔记库并打开它的笔记页。当用户说「看看我的笔记 / 之前存过什么 / 打开笔记页 / 打开文件页 / 把这轮对话存成笔记 / 找一下关于某个主题的笔记 / 导出笔记」，或需要确认笔记目录里到底有哪些 Markdown 文件时使用。只读写本机文件与 localhost 接口，不联网。
 display_name: 记忆文档
 agent_created: true
 ---
@@ -9,12 +9,12 @@ agent_created: true
 
 ## 这个技能能做什么
 
-把「记忆文档」的笔记能力交给智能体：列文件、按关键词搜、读一篇全文、把对话存成结构化笔记、导出 JSON/HTML、打开文件页。
+把「记忆文档」的笔记能力交给智能体：列文件、按关键词搜、读一篇全文、把对话存成结构化笔记、导出 JSON/HTML、打开笔记页。
 读走本地 Markdown（服务没起也能看），写走本地 HTTP 接口（切分、摘要、去重由服务负责）。
 
 ## 什么时候用
 
-- 用户提到「我的笔记」「之前存的内容」「文件页」「导出笔记」；
+- 用户提到「我的笔记」「之前存的内容」「笔记页」「文件页」（旧称）「导出笔记」；
 - 用户说「把这段存成笔记」「记一下这个结论」，需要落盘；
 - 排查笔记库：篇数不对、想确认某篇在哪、NOTE_HOME 配到哪了；
 - 需要给用户一个能点的地址看已存内容。
@@ -38,7 +38,7 @@ python <skill>/scripts/jy.py doctor
   ✓ 笔记目录   C:\Users\你\agent-notes
   ✓ 可写       能写才能存新笔记
   ✓ 服务       http://127.0.0.1:8000 · v1.15.1
-  ✓ 文件页      /files 可访问
+  ✓ 笔记页      /notes 可访问
   · 笔记篇数   2
 结论：可用（读本地文件，写走服务）
 ```
@@ -59,7 +59,7 @@ python <skill>/scripts/jy.py doctor
 | 读全文（id 或标题片段） | `jy.py get 赎回到账时点` |
 | 存对话 | `jy.py save --file conv.json --title "…" --tags 产品,规则` |
 | 导出 | `jy.py export --format html --out notes.html` |
-| 打开文件页 | `jy.py open`（`--page ask\|kb\|files`，`--no-launch` 只打印地址） |
+| 打开笔记页 | `jy.py open`（`--page notes\|kb\|ask`，`--no-launch` 只打印地址） |
 
 把 `<skill>/scripts/jy.py` 简写成 `jy.py` 只为表格好读，实际执行要带完整路径。
 
@@ -98,7 +98,7 @@ cat conv.json | python <skill>/scripts/jy.py save --tags 复盘
 | 列表 / 搜索 / 读全文 | 直接读 `NOTE_HOME/notes/**/*.md` | 目录不存在 → 空列表 + 说明 |
 | 保存 | `POST /api/notes` | 服务不可用且给了 `jiyi_home` → 用 `python -m src.notes save` 离线写；都没有则报错并提示启动命令 |
 | 导出 | `GET /api/notes/export` | 导出依赖服务生成，失败只报错，不假装成功 |
-| 打开页面 | 打印 / 拉起 `{base_url}/files` | 无浏览器就只打印地址 |
+| 打开页面 | 打印 / 拉起 `{base_url}/notes` | 无浏览器就只打印地址 |
 
 为什么读不依赖服务：笔记就是普通 Markdown，服务只是索引与生成器。用户关掉服务也应该能翻自己的笔记。
 

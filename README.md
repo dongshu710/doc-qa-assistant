@@ -34,14 +34,14 @@
 **关于「实体按钮」**：WorkBuddy、Claude Desktop 这类客户端的工具栏不开放自定义按钮，
 插件也放不进去。所以入口分两边——
 
-- **人看的**：左侧常驻栏的「文件」（或直接打开 `http://127.0.0.1:8000/files`，可收藏）；
+- **人看的**：左侧常驻栏的「笔记」（或直接打开 `http://127.0.0.1:8000/notes`，可收藏）；
 - **智能体用的**：连接器（MCP，配置见 [docs/PLUGIN_PACKAGE.md](docs/PLUGIN_PACKAGE.md)），
   或上面那个技能包（让智能体直接调 `jy.py`，不必接 MCP）。
 
 | 问答（左栏 + 对话 + 输入框） | 知识库（文档上传） |
 |---|---|
 | ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
-| **文件（`/files`，可收藏的固定地址）** | **设置 → 存储（占用与清理）** |
+| **笔记（`/notes`，可收藏的固定地址）** | **设置 → 存储（占用与清理）** |
 | ![](docs/screenshots/files.png) | ![](docs/screenshots/settings.png) |
 
 首次启动会让你**建一个专用存储区**（目录不存在会自动创建 `notes/ threads/ index/`），
@@ -50,7 +50,7 @@
 界面与交互见 [docs/LAYOUT.md](docs/LAYOUT.md)；为什么长这样、跟同类开源项目学了什么，
 见 [docs/COMPARISON.md](docs/COMPARISON.md)（AnythingLLM / RAGFlow / Reor / Khoj / Mem0 / Logseq 逐个拆）。
 
-> 页面四页：问答 `/ask`、知识库 `/kb`、文件 `/files`（可收藏的固定地址）、汇报 `/report`。
+> 页面四页：问答 `/ask`、知识库 `/kb`、笔记 `/notes`（可收藏的固定地址）、汇报 `/report`。
 > `/report` 同时是展示页和管理台：在线时右侧滑出管理面板（文档、审批、灰度、诊断），
 > 离线副本只读并说明怎么连上服务；`?download=1` 导出的是同一套渲染结果。
 > 对话的整理与保存走 `src/notes`（CLI / HTTP / MCP），不占页面。
@@ -437,7 +437,7 @@ python -m src.server --port 8000
 | `/kb` | 知识库：多文件上传 / 搜索筛选 / 出题 / 删除 / 重建索引 | ⑦ |
 
 `/`、`/index.html`、`/insights`、`/dashboard` 一律 302 到 `/ask`——旧链接不会 404。
-页面有四个：`/ask` 问答、`/kb` 知识库、`/files` 文件、`/report` 汇报；
+页面有四个：`/ask` 问答、`/kb` 知识库、`/notes` 笔记、`/report` 汇报；
 `/report` 同时是管理台入口（在线时右侧滑出面板，离线副本只读）。对话内容的整理、保存与跨智能体流通走 `src/notes`，见 [4.13](#413-智能体笔记对话--个人笔记v110-起v112-补齐四条通道)。
 
 页面统一走 `src/theme.py` 的外壳与 `src/web/` 里的资源（样式 / 脚本 / 片段都是真文件，
@@ -630,12 +630,12 @@ python tests/eval_run.py --include-hard  # 再叠加难题集（诊断用）
 
 ## 4.5 界面与「文件」入口（v1.15.0）
 
-页面四页：`/ask` 问答、`/kb` 知识库、`/files` 文件、`/report` 汇报。已存内容不在设置抽屉里，入口固定两处：
+页面四页：`/ask` 问答、`/kb` 知识库、`/notes` 笔记、`/report` 汇报。已存内容不在设置抽屉里，入口固定两处：
 
 | 入口 | 位置 | 交互 |
 |---|---|---|
 | 导航栏「文件」 | 右上角，主题/设置左侧 | 点开右侧抽屉：左列文件、右列正文；`Esc`、点遮罩、× 都能收起 |
-| 直达地址 `/files` | `http://127.0.0.1:8000/files` | 独立页，可加书签、可被智能体直接打开 |
+| 直达地址 `/notes` | `http://127.0.0.1:8000/notes` | 独立页，可加书签、可被智能体直接打开；旧地址 `/files` 301 过来 |
 
 - 快捷键 `Ctrl/Cmd + Shift + F` 开合抽屉（焦点在输入框时不抢按键）。
 - 入口上的数字是篇数；**红点**表示「该备份了」，**点红点只消提醒，不打开抽屉**，

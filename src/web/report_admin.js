@@ -340,9 +340,44 @@
     }
   }
 
+  /* 反馈 → 用例 → 评测 这条线原来断成三截：点踩在答案卡片里、建用例在知识库行内、
+     跑评测在这里。三处都能用，但没人知道它们是一件事。这一组把它们接起来：
+     看到未命中 → 看检索明细 → 建为用例 → 下次跑评测自动带上。 */
+  async function loadFeedback() {
+    var box = $('agFeedback');
+    if (!box) return;
+    try {
+      var d = await api('/api/feedback/list?limit=20');
+      var items = d.items || [];
+      var cnt = $('agFeedbackCount');
+      if (cnt) cnt.textContent = items.length ? String(items.length) : '';
+      if (!items.length) {
+        box.innerHTML = '<p class="ag-empty">还没有反馈。问答页每条答案下面都有「有用 / 有问题」，'
+          + '点踩的记录会出现在这里，可以直接转成评测用例。</p>';
+        return;
+      }
+      box.innerHTML = items.map(function (f) {
+        var meta = fmtTime(f.ts) + ' · ' + (f.behavior || '-')
+          + (f.expected ? ' · 期望：' + esc(f.expected) : '')
+          + (f.document ? ' · 缺文档：' + esc(f.document) : '')
+          + (f.comment ? ' · ' + esc(f.comment) : '');
+        return '<div class="ag-fail"><b>' + esc(f.query || '（无问题）') + '</b><i>' + meta + '</i>'
+          + '<div class="ag-row">'
+          + '<button data-act="caseFromFb" data-trace="' + esc(f.trace_id || '') + '"'
+          + (f.trace_id ? '' : ' disabled title="这条反馈没带 trace_id，无法定位原问题"') + '>建为用例</button>'
+          + (f.query ? '<a class="ag-link" target="_blank" rel="noopener" href="/debug?q='
+            + encodeURIComponent(f.query) + '">看检索明细</a>' : '')
+          + '</div></div>';
+      }).join('');
+    } catch (e) {
+      box.innerHTML = errBox(e);
+    }
+  }
+
   function loadAll() {
     loadContent();
     loadApproval();
+    loadFeedback();
     loadEval();
     loadOps();
     loadDiag();
@@ -350,7 +385,7 @@
 
   /* 离线时四个组不该各报一次错：那看起来像四个 bug，其实只有一个原因。 */
   function offlineHint() {
-    ['agContent', 'agApproval', 'agEval', 'agOps', 'agDiag'].forEach(function (id) {
+    ['agContent', 'agApproval', 'agFeedback', 'agEval', 'agOps', 'agDiag'].forEach(function (id) {
       var el = $(id);
       if (el) el.innerHTML = '<p class="ag-empty">离线副本只读；连接服务后这里会显示可操作的数据。</p>';
     });
@@ -411,6 +446,23 @@
 
   async function runAction(act, el) {
     if (act === 'runEval') { await runEval(el); return; }
+    if (act === 'caseFromFb') {
+      var trace = el.dataset.trace || '';
+      if (!trace) { toast('这条反馈没有 trace_id，定位不到原问题', true); return; }
+      try {
+        var made = await api('/api/cases/from_feedback', {
+          method: 'POST',
+          body: { trace_id: trace, behavior: 'no_answer', note: '由汇报页的未命中反馈生成' }
+        });
+        var cid = (made && made.case && made.case.id) || '';
+        toast('已生成用例 ' + cid);
+        receipt('建为用例', cid || '反馈 ' + trace.slice(0, 8),
+          '已加入反馈用例集，下次跑 L1 用例时一起执行');
+        await loadFeedback();
+        await loadEval();
+      } catch (e) { toast(e.message || String(e), true); }
+      return;
+    }
     if (!online) { toast('离线副本不能修改数据', true); return; }
     if (act === 'del') {
       if (!armConfirm(el, '删除')) return;

@@ -121,7 +121,7 @@
   // 列表项带 id 跳完整页：抽屉里不再渲染详情，避免第二套渲染器
   if($('filesList')) $('filesList').addEventListener('click',function(e){
     var b=e.target.closest('.file-item'); if(!b) return;
-    location.href='/files?id='+encodeURIComponent(b.getAttribute('data-id'));
+    location.href='/notes?id='+encodeURIComponent(b.getAttribute('data-id'));
   });
 
   // 首屏就把数量与备份状态读出来：入口上的角标不该等打开抽屉才出现

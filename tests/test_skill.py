@@ -123,7 +123,7 @@ def test_read(home: Path) -> None:
     check("找不到时退出码 2", code == 2, f"exit={code}")
 
     code, out, _ = run(str(JY), "--base-url", DEAD_BASE, "--home", str(home), "open", "--no-launch")
-    check("open 打印地址", code == 0 and out.strip().endswith("/files"), out.strip()[:60])
+    check("open 打印地址", code == 0 and out.strip().endswith("/notes"), out.strip()[:60])
 
 
 def test_write_degrades(home: Path) -> None:

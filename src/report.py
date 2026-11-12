@@ -1080,6 +1080,10 @@ def admin_panel() -> str:
         '<summary>审批 · 待发布变更<span class="ag-count" id="agApprovalCount"></span></summary>'
         '<div class="ag-body" id="agApproval">加载中…</div></details>'
 
+        '<details class="agroup" data-group="feedback">'
+        '<summary>反馈 · 未命中与点踩<span class="ag-count" id="agFeedbackCount"></span></summary>'
+        '<div class="ag-body" id="agFeedback">加载中…</div></details>'
+
         '<details class="agroup" data-group="eval">'
         '<summary>评测 · L1 用例<span class="ag-count" id="agEvalCount"></span></summary>'
         '<div class="ag-body" id="agEval">加载中…</div></details>'

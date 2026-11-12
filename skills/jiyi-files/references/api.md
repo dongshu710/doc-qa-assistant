@@ -8,7 +8,7 @@
 | 方法 | 路径 | 用途 | 关键参数 |
 |---|---|---|---|
 | GET | `/api/health` | 自检：确认服务在跑、拿版本号 | 无 |
-| GET | `/files` | 文件页（人看的入口） | 无 |
+| GET | `/notes` | 笔记页（人看的入口；旧地址 `/files` 301 过来） | 无 |
 | GET | `/api/notes` | 列表 | `limit`（≤200）、`tag`、`kind`、`status`、`since` |
 | GET | `/api/notes/{id}` | 读一篇 | 可选 `section` 只取某一段 |
 | POST | `/api/notes` | 存一段对话 | 见下节请求体 |

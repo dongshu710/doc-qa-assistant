@@ -163,6 +163,49 @@ def _paths_ops() -> dict:
 
 def _paths_kb() -> dict:
     return {
+        "/api/knowledge/raw": {
+            "get": {
+                "tags": ["知识库"],
+                "summary": "取上传时的原件（用于「打开第 N 页」对版式）",
+                "description": "只回传上传时留存的原件；PDF 允许内联打开，其余格式一律作为附件下载"
+                               "（HTML/EML 内联等于在本服务源上执行上传者的脚本）。",
+                "parameters": [{"name": "name", "in": "query", "required": True,
+                                "schema": {"type": "string"}}],
+                "responses": {"200": {"description": "文件字节流"},
+                              "400": _err("文件名不合法"),
+                              "404": _err("原件不存在")},
+            }
+        },
+        "/api/knowledge/chunks": {
+            "get": {
+                "tags": ["知识库"],
+                "summary": "单文档的分段清单（切分结果速览）",
+                "description": "按 chunk_index 升序返回序号、页码、字符数与正文片段；"
+                               "`text` 截断到 1200 字，读全文请走 `/api/source`。",
+                "parameters": [{"name": "name", "in": "query", "required": True,
+                                "schema": {"type": "string"},
+                                "description": "知识库里的文件名，例如 `01_理财产品要素说明.md`"}],
+                "responses": {"200": {"description": "分段清单与页数"},
+                              "400": _err("文件名不合法"),
+                              "404": _err("文档不存在或尚未建立索引")},
+            }
+        },
+        "/api/kb/seed": {
+            "post": {
+                "tags": ["知识库"],
+                "summary": "空库引导：一键导入内置演示文档",
+                "description": "从仓库自带的 `data/knowledge/` 复制对应模板文件，走正常入库与审批链路；"
+                               "同名文档会跳过，重复调用是幂等的。",
+                "requestBody": {"required": True, "content": {"application/json": {
+                    "schema": {"type": "object", "required": ["template"], "properties": {
+                        "template": {"type": "string",
+                                     "enum": ["policy", "product", "regulatory"],
+                                     "description": "制度办法 / 产品要素 / 监管摘录"}}}}}},
+                "responses": {"200": {"description": "已入库或已存在"},
+                              "400": _err("template 不合法"),
+                              "404": _err("找不到内置演示文档")},
+            }
+        },
         "/api/knowledge": {
             "get": {
                 "tags": ["知识库"], "summary": "文档列表与块数",

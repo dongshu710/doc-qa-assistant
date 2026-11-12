@@ -81,4 +81,15 @@
   q.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { e.preventDefault(); search(); }
   });
+
+  /* 从别处跳进来时带 ?q=：汇报页的「看检索明细」、以后任何「这条为什么没答上」
+     的入口都用同一条约定。带参数就直接跑一次——跳过来还要再点一下，等于没跳。 */
+  var params = new URLSearchParams(location.search);
+  var preset = (params.get('q') || '').trim();
+  if (preset) {
+    q.value = preset;
+    search();
+  } else {
+    q.focus();
+  }
 })();

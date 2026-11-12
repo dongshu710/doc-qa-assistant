@@ -87,11 +87,14 @@ function thinkingHTML(text){
 function pill(text,cls){
   return '<span class="pill'+(cls?' '+cls:'')+'">'+esc(text)+'</span>';
 }
-/* 轻量 Markdown：只处理 **加粗** 与 [n] 引用，其余按纯文本保留换行 */
+/* 轻量 Markdown：只处理 **加粗** 与 [n] 引用，其余按纯文本保留换行。
+   [n] 做成按钮而不是纯数字：读者看到「按《办法》第十条 [2]」时，最想做的事是
+   点一下看原文第 2 条到底是什么，而不是滚到答案底部再找一遍。 */
 function fmtAnswer(t){
   var s=esc(t);
   s=s.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-  s=s.replace(/\[(\d+)\]/g,'<span class="cite-n">$1</span>');
+  s=s.replace(/\[(\d+)\]/g,
+    '<button type="button" class="cite-n" data-ref="$1" title="查看第 $1 条引用的原文">$1</button>');
   return s;
 }
 function round(v,digits){
@@ -138,7 +141,7 @@ function similarHTML(items){
     +items.map(function(t){ return '<button type="button" class="sim-q">'+esc(t)+'</button>'; }).join('')
     +'</div></div>';
 }
-function answerHTML(d){
+function answerHTML(d,q){
   var local=d.path==='keyword';
   var head=d.behavior==='no_answer'?'未找到答案':(d.behavior==='refuse'?'拒答':(d.behavior==='ask_clarify'?'需要澄清':(local?'本地直出':'回答')));
   // 正常作答时不加标题：用户已经知道这是回答，「回答/作答」两个标签只是噪音。
@@ -148,7 +151,7 @@ function answerHTML(d){
     label='<span class="pill '+BEHAVIOR[d.behavior][1]+'">'+BEHAVIOR[d.behavior][0]+'</span>';
   }
   if(d.turn>1) label+='<span class="pill">第 '+d.turn+' 轮</span>';
-  var h='<div class="ans-card">'+(label?'<div class="ans-label">'+label+'</div>':'')+'<div class="ans-label-sr" hidden>'+head+'</div>';
+  var h='<div class="ans-card" data-q="'+esc(q||d.query||'')+'">'+(label?'<div class="ans-label">'+label+'</div>':'')+'<div class="ans-label-sr" hidden>'+head+'</div>';
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
       +d.keyword_terms.map(function(t){ return '<span class="kw-term">'+esc(t)+'</span>'; }).join('')+'</div>';
@@ -156,7 +159,8 @@ function answerHTML(d){
   h+='<div class="answer">'+fmtAnswer(d.answer)+'</div>';
   if(d.citations&&d.citations.length){
     h+='<div class="refs">'+d.citations.map(function(c){
-      return '<button type="button" class="ref" data-doc="'+esc(c.doc_id||'')+'" data-chunk="'+(c.chunk_index==null?'':c.chunk_index)+'"'
+      return '<button type="button" class="ref" data-ref="'+(c.ref==null?'':c.ref)+'" data-doc="'+esc(c.doc_id||'')+'" data-chunk="'+(c.chunk_index==null?'':c.chunk_index)+'"'
+        +' data-page="'+(c.page==null?'':c.page)+'"'
         +' data-snippet="'+esc(c.snippet||'')+'" title="查看原文"><b>'+esc(c.ref)+'</b>'+esc(c.title)+' · '+esc(c.section)+(c.page?' · 第'+esc(c.page)+'页':'')+'</button>';
     }).join('')+'</div>';
   }
@@ -177,36 +181,103 @@ function answerHTML(d){
 function bindSource(){
   var drawer=document.getElementById('srcDrawer'), mask=document.getElementById('srcMask');
   var titleEl=document.getElementById('srcTitle'), subEl=document.getElementById('srcSub');
-  var textEl=document.getElementById('srcText');
+  var textEl=document.getElementById('srcText'), altEl=document.getElementById('srcAlt');
   function close(){
     drawer.classList.remove('open');
     drawer.hidden=true; mask.hidden=true; textEl.textContent='';
+    if(altEl){ altEl.hidden=true; altEl.innerHTML=''; }
   }
-  async function open(btn){
-    var doc=btn.dataset.doc, chunk=btn.dataset.chunk, snippet=btn.dataset.snippet||'';
-    if(!doc||chunk===''){ toast('这条引用缺少原文定位',true); return; }
-    mask.hidden=false; drawer.hidden=false;
-    requestAnimationFrame(function(){ drawer.classList.add('open'); });
+  /* 只在真的可能留存过原件时才给链接：数据里没有原件却放个链接，点开就是 404，
+     那比不给更让人困惑。PDF 用浏览器原生阅读器的 #page= 锚点，不引 pdf.js。 */
+  function pageLink(doc,page){
+    if(!page) return '';
+    if(!/\.pdf$/i.test(String(doc)) && String(doc).indexOf('.')>=0) return '';
+    var file=/\.pdf$/i.test(String(doc))?String(doc):(String(doc)+'.pdf');
+    return '<a class="src-page" target="_blank" rel="noopener" href="/api/knowledge/raw?name='
+      +encodeURIComponent(file)+'#page='+encodeURIComponent(page)+'">打开第 '+esc(page)+' 页</a>';
+  }
+  async function show(doc,chunk,snippet,page){
     titleEl.textContent='读取原文…'; subEl.textContent=''; textEl.textContent='';
     try{
       var r=await fetch('/api/source?doc='+encodeURIComponent(doc)+'&chunk='+encodeURIComponent(chunk));
       var d=await r.json();
       if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
       titleEl.textContent=d.title||doc;
-      subEl.textContent=(d.section||'')+(d.page?' · 第 '+d.page+' 页':'')+' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
+      var line=(d.section||'')+(d.page?' · 第 '+d.page+' 页':'')
+        +' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
+      subEl.innerHTML=esc(line)+(pageLink(doc,d.page||page)?' '+pageLink(doc,d.page||page):'');
       var safe=esc(d.text||'');
-      var needle=esc(snippet);
+      var needle=esc(snippet||'');
       if(needle && safe.indexOf(needle)>=0){ safe=safe.replace(needle,'<mark>'+needle+'</mark>'); }
       textEl.innerHTML=safe;
     }catch(e){
       titleEl.textContent='读取失败'; textEl.textContent=String(e.message||e);
     }
   }
+  /* 「检索到但未采用」：答案里只出现被选中的几条，被阈值挡掉的块从来不露面。
+     它们恰恰是判断「该调阈值还是该改切分」的唯一证据，所以按原问题把同文档的
+     候选再查一遍（多召回 12 倍），把 kept=false 的贴出来。 */
+  async function loadAlt(doc,q){
+    if(!altEl) return;
+    altEl.hidden=true; altEl.innerHTML='';
+    if(!q||!doc) return;
+    altEl.hidden=false;
+    altEl.innerHTML='<div class="alt-h">正在比对这份文档里被挡掉的候选…</div>';
+    try{
+      var r=await fetch('/api/search/debug',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({query:q,doc:doc})});
+      var d=await r.json();
+      if(!r.ok) throw new Error(d.message||d.error||('HTTP '+r.status));
+      var dropped=(d.candidates||[]).filter(function(c){ return c.kept===false; });
+      if(!dropped.length){
+        altEl.innerHTML='<div class="alt-h">这份文档在本次检索里没有被阈值挡掉的块'
+          +(d.doc_chunks_total?('，共 '+d.doc_chunks_total+' 块'):'')+'</div>';
+        return;
+      }
+      altEl.innerHTML='<div class="alt-h">检索到但未采用 '+dropped.length+' 块 · 阈值 '
+        +esc(d.min_score)+'</div><div class="alt-list">'
+        +dropped.map(function(c){
+          return '<button type="button" class="alt-row" data-doc="'+esc(c.doc_id)+'"'
+            +' data-chunk="'+c.chunk_index+'" data-page="'+(c.page==null?'':c.page)+'">'
+            +'<span class="alt-sc">'+esc(Math.round(c.score*1000)/1000)+'</span>'
+            +'<span class="alt-sec">'+esc(c.section||'')+'</span>'
+            +'<span class="alt-ch">'+c.chars+' 字</span></button>';
+        }).join('')+'</div>';
+    }catch(e){
+      altEl.innerHTML='<div class="alt-h">候选比对失败：'+esc(e.message||e)+'</div>';
+    }
+  }
+  async function open(btn){
+    var doc=btn.dataset.doc, chunk=btn.dataset.chunk, snippet=btn.dataset.snippet||'';
+    if(!doc||chunk===''){ toast('这条引用缺少原文定位',true); return; }
+    var card=btn.closest('.ans-card');
+    var q=card?(card.dataset.q||''):'';
+    mask.hidden=false; drawer.hidden=false;
+    requestAnimationFrame(function(){ drawer.classList.add('open'); });
+    show(doc,chunk,snippet,btn.dataset.page||'');
+    loadAlt(doc,q);
+  }
+  if(altEl){
+    altEl.addEventListener('click',function(ev){
+      var row=ev.target.closest('.alt-row'); if(!row) return;
+      show(row.dataset.doc,row.dataset.chunk,'',row.dataset.page||'');
+    });
+  }
   document.getElementById('srcClose').onclick=close;
   mask.onclick=close;
   return {open:open, close:close};
 }
 var sourceView=bindSource();
+/* 正文里的 [n] 角标：在同一个答案卡片里找 data-ref 相同的引用卡片，复用它的定位
+   信息。找不到就如实提示——编号对不上多半是答案引用了不存在的条目，
+   这正是引用覆盖率为 0 时要暴露的问题，不该静默。 */
+list.addEventListener('click',function(ev){
+  var c=ev.target.closest('.cite-n'); if(!c) return;
+  var card=c.closest('.ans-card'); if(!card) return;
+  var ref=card.querySelector('.ref[data-ref="'+c.dataset.ref+'"]');
+  if(ref){ sourceView.open(ref); return; }
+  toast('第 '+c.dataset.ref+' 条引用没有对应来源',true);
+});
 
 var NL=String.fromCharCode(10);
 function copyText(text,okMsg){
@@ -264,7 +335,7 @@ function renderThread(){
     if(!x||!x.d) return;
     addUser(x.q);
     var body=addBot();
-    body.innerHTML=answerHTML(x.d);
+    body.innerHTML=answerHTML(x.d,x.q);
     if(x.d.behavior==='answer'){ bindFeedback(body,x.d,x.q); }
     else if(x.d.behavior==='no_answer'){ bindMissFeedback(body,x.d,x.q); }
   });
@@ -434,7 +505,7 @@ async function ask(){
   }
   function finish(data){
     if(data.session_id){ SESSION_ID=data.session_id; saveSessionId(SESSION_ID); }
-    body.innerHTML=answerHTML(data);
+    body.innerHTML=answerHTML(data,query);
     if(data.behavior==='answer'){ bindFeedback(body,data,query); }
     else if(data.behavior==='no_answer'){ bindMissFeedback(body,data,query); }
     rememberTurn(query,data);

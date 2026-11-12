@@ -190,7 +190,8 @@ class RAGPipeline:
         return self.retriever.search(query, want,
                                      focus_query=focus or query), {}
 
-    def debug_search(self, query: str, top_k: int | None = None) -> dict:
+    def debug_search(self, query: str, top_k: int | None = None,
+                     doc: str | None = None) -> dict:
         """检索调试：把候选、分数、被阈值挡掉的、以及当前配置一次摊开。
 
         为什么需要它：答错时最大的时间浪费是分不清「没检索到」还是「切坏了」。
@@ -201,11 +202,19 @@ class RAGPipeline:
         多召回 `top_k * 3` 是刻意的：默认只取 4 条时，阈值附近的候选根本不在
         视野里，看到的是「全都没被挡」，得不出结论。
         上限 40 条：再多就变成刷屏，调试界面没人会翻。
+
+        `doc` 只留这份文档的候选（知识库行内的「用本文档测一次」）。指定文档时
+        召回倍数要放大：跨文档的候选会被过滤掉，倍数不够就永远看不到本文档里
+        排在第 40 名之后的低分块，「这份文档到底能不能答这个问题」就无从判断。
         """
         started = time.monotonic()
         want = max(1, min(20, int(top_k or self.settings.top_k)))
         threshold = float(getattr(self.settings, "min_score", 0) or 0)
-        hits, meta = self._retrieve(query, top_k=min(40, want * 3))
+        doc_key = (doc or "").strip() or None
+        recall = 40 if not doc_key else 120
+        hits, meta = self._retrieve(query, top_k=min(recall, want * (3 if not doc_key else 12)))
+        if doc_key:
+            hits = [(chunk, score) for chunk, score in hits if chunk.doc_id == doc_key]
         candidates: list[dict] = []
         for ref, (chunk, score) in enumerate(hits, 1):
             candidates.append({
@@ -229,6 +238,10 @@ class RAGPipeline:
             "detail": self.retrieval_detail,
             "min_score": threshold,
             "top_k": want,
+            # 指定文档时把过滤条件回显：前端要拿它区分「这份文档没候选」与「全库都没候选」
+            "doc": doc_key,
+            "doc_chunks_total": (sum(1 for c in self.chunks if c.doc_id == doc_key)
+                                 if doc_key else None),
             "recalled": len(candidates),
             "kept": sum(1 for item in candidates if item["kept"]),
             "chunks_total": len(self.chunks),
@@ -236,6 +249,40 @@ class RAGPipeline:
             "degraded": bool(meta.get("error")),
             "degrade_reason": str(meta.get("error") or "")[:300],
             "candidates": candidates,
+        }
+
+    def doc_chunks(self, doc_id: str, *, text_limit: int = 1200) -> dict | None:
+        """一份文档的全部分段，按 chunk_index 排序。
+
+        为什么不在前端自己拼：分段是「切分结果」的唯一可见形态，用户要判断的是
+        「这块切得对不对」——那就得看到序号、页码、字数与正文开头，缺一样都判断不了。
+        一次返回全部（而不是逐条拉）：50 块的文档逐条请求要 50 个来回，
+        而调试台本来就是「一眼看完」的场景。
+        `text` 截断到 text_limit：抽屉里是速览，真要读全文走 /api/source。
+        """
+        rows = [c for c in self.chunks if c.doc_id == doc_id]
+        if not rows:
+            return None
+        rows.sort(key=lambda c: c.chunk_index)
+        items = []
+        for c in rows:
+            body = c.text or ""
+            items.append({
+                "chunk_index": c.chunk_index,
+                "page": getattr(c, "page", None),
+                "section": c.section,
+                "chars": len(body),
+                "truncated": len(body) > text_limit,
+                "text": body[:text_limit],
+            })
+        pages = sorted({c.page for c in rows if getattr(c, "page", None)})
+        return {
+            "doc_id": doc_id,
+            "title": rows[0].title,
+            "total": len(items),
+            "pages": pages,
+            "page_count": len(pages),
+            "items": items,
         }
 
     def _search(self, query: str, result: dict):

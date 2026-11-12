@@ -52,8 +52,11 @@ PLUGIN_FILES = ("src/__init__.py", "src/version.py", "src/appconfig.py", "VERSIO
 # 运行时产物与本地环境不进包
 EXCLUDE_DIR_NAMES = {"__pycache__", ".venv", "venv", "logs", "dist", ".git", ".github",
                      "screenshots", "kb", "index"}
+# app.json 是设置面板在运行时写的：里面有模型接口地址、密钥和存储区路径。
+# 它已经在 .gitignore 里，但打包走的是目录遍历，不放行就会把**开发者本机的密钥
+# 和存储路径**一起发到 Release 上；装包的人首启还会看到一堆别人的配置。
 EXCLUDE_FILE_NAMES = {"report_doc_cases.json", "eval_cases_docs.jsonl", ".DS_Store",
-                      "Thumbs.db", "e2e-server.log"}
+                      "Thumbs.db", "e2e-server.log", "app.json", "app.test.json"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
 
 
@@ -118,6 +121,19 @@ def iter_skill_payload() -> list[Path]:
     return files
 
 
+def _assert_no_secrets(payload: list[Path]) -> None:
+    """发布包里绝不允许出现运行时配置文件。
+
+    只靠 EXCLUDE_FILE_NAMES 是「改一行就复发」的约束：以后谁往 data/ 里加一个新的
+    `*.local.json`，没人会想起来同步这个集合。所以在写 zip 之前再按名字扫一遍，
+    命中就直接失败——发出去不可撤销，宁可构建中断。
+    """
+    banned = {"app.json", "app.test.json", ".env", ".env.local", ".gh_token"}
+    hits = [p for p in payload if p.name in banned or p.suffix in {".pem", ".key"}]
+    if hits:
+        raise ValueError("发布包里混入了运行时配置：" + "、".join(str(p.relative_to(ROOT)) for p in hits))
+
+
 def write_zip(out: Path, root_name: str, payload: list[Path],
               readme_from_docs: bool = False, base: Path = ROOT) -> Path:
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
@@ -153,6 +169,7 @@ def build() -> list[Path]:
     lines: list[str] = []
     for job in jobs:
         out, root_name, payload = job["out"], job["root"], job["files"]
+        _assert_no_secrets(payload)
         write_zip(out, root_name, payload, job["readme"], job["base"])
         digest = hashlib.sha256(out.read_bytes()).hexdigest()
         lines.append(f"{digest}  {out.name}")
@@ -168,7 +185,7 @@ def build() -> list[Path]:
 def main() -> int:
     try:
         build()
-    except (OSError, FileNotFoundError) as exc:
+    except (OSError, FileNotFoundError, ValueError) as exc:
         print(f"构建失败：{exc}", file=sys.stderr)
         return 1
     return 0

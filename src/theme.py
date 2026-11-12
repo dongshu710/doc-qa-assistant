@@ -129,8 +129,8 @@ def nav(active: str = "", links: bool = True) -> str:
         '<div class="sb-wrap">'
         f'<button class="sb-item{" active" if active == "files" else ""}" id="filesBtn" type="button" aria-haspopup="dialog" '
         'aria-controls="filesPanel" aria-expanded="false" aria-keyshortcuts="Control+Shift+F" '
-        'title="已存文件 · Ctrl+Shift+F">'
-        + icon("folder", 17) + '<span class="sb-label">文件</span>'
+        'title="笔记与附件 · Ctrl+Shift+F">'
+        + icon("folder", 17) + '<span class="sb-label">笔记</span>'
         '<span class="nf-count" id="filesCount" hidden>0</span></button>'
         '<button class="files-dot" id="filesDot" type="button" aria-label="消除备份提醒" '
         'title="点一下消除提醒" hidden></button>'
@@ -196,5 +196,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
     )
 
 
-# 独立文件页：`/files` 直接用，不必先打开抽屉
-FILES_PAGE = shell("files", f"文件 · {BRAND}", FILES_PAGE_HTML, FILES_PAGE_JS)
+# 独立笔记页：`/notes` 直接用，不必先打开抽屉
+# 第一个参数仍是 "files"：它决定 page-files / stage-files 这套 CSS 类名，
+# 改它要连带改样式。对外地址与标题才是「笔记」。
+FILES_PAGE = shell("files", f"笔记 · {BRAND}", FILES_PAGE_HTML, FILES_PAGE_JS)

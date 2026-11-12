@@ -36,16 +36,29 @@ try:
 
     pages = {}
     for page, needle in (("/ask", "今天想记住什么"), ("/kb", "拖拽或点击上传"),
-                         ("/files", "pf-grid"), ("/report", 'id="rpAdmin"')):
+                         ("/notes", "pf-grid"), ("/report", 'id="rpAdmin"')):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             pages[page] = resp.read().decode("utf-8")
         assert needle in pages[page], page
         assert 'href="/insights"' not in pages[page], "导航里不该再出现已下线的页面"
-    # /files 是「加不进客户端工具栏」时的固定地址，必须自己也能开出来
-    assert "<title>文件 ·" in pages["/files"], "文件页标题没带上品牌名"
-    assert 'id="setPanel"' in pages["/files"], "文件页也要有设置抽屉骨架"
-    assert 'id="filesDot"' in pages["/files"], "文件页导航上要有红点按钮"
-    print("pages OK（问答 / 知识库 / 文件 / 汇报）")
+    # /notes 是「加不进客户端工具栏」时的固定地址，必须自己也能开出来。
+    # 1.37.0 从 /files 改名提级：内容是笔记与附件，不叫「文件」。
+    assert "<title>笔记 ·" in pages["/notes"], "笔记页标题没带上品牌名"
+    assert 'id="setPanel"' in pages["/notes"], "笔记页也要有设置抽屉骨架"
+    assert 'id="filesDot"' in pages["/notes"], "笔记页导航上要有红点按钮"
+    # 旧地址必须 301 到新地址：收藏夹与外链不失效。urllib 默认跟随跳转，
+    # 这里要手动拦一次才看得到 Location。
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            return None
+    try:
+        urllib.request.build_opener(_NoRedirect).open(
+            f"http://127.0.0.1:{port}/files", timeout=10)
+        raise AssertionError("/files 应当 301 到 /notes")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 301, exc.code
+        assert exc.headers.get("Location") == "/notes", exc.headers.get("Location")
+    print("pages OK（问答 / 知识库 / 笔记 / 汇报）")
 
     # 下载分支：同一路径加 ?download=1，必须是附件，且不套应用外壳（离线副本不装侧栏）。
     # 这条分支以前完全没测过——`?download=0` 也返回附件的旧写法就是靠它才发现的。
@@ -59,12 +72,12 @@ try:
         assert not (resp.headers.get("Content-Disposition") or ""), "download=0 不该返回附件"
     print("report download OK")
 
-    # 笔记入口：问答页能发起保存，完整管理在 /files；知识库只剩文档一个分区。
-    # 1.29.0 起 /kb 的「笔记」tab 已移除（与 /files 能力完全重复），
+    # 笔记入口：问答页能发起保存，完整管理在 /notes；知识库只剩文档一个分区。
+    # 1.29.0 起 /kb 的「笔记」tab 已移除（与 /notes 能力完全重复），
     # 这里同时盯住「文档面板没被别的面板套住」与「笔记面板不会偷偷回来」。
     assert 'id="noteDialog"' in pages["/ask"] and "存为笔记" in pages["/ask"]
     assert 'id="panelNotes"' not in pages["/kb"], "知识库不该再有笔记面板"
-    assert 'id="pfList"' in pages["/files"] and 'id="pfNew"' in pages["/files"]
+    assert 'id="pfList"' in pages["/notes"] and 'id="pfNew"' in pages["/notes"]
 
     class PanelFinder(HTMLParser):
         def __init__(self):

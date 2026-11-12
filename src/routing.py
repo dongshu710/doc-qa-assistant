@@ -71,7 +71,9 @@ RULES: tuple[tuple[str, str], ...] = (
 # 加一个页面要改两处，漏一处的表现是「收藏夹里的地址突然 404」。
 PAGE_ROUTES: dict[str, str] = {
     "/ask": "ask",
-    "/files": "files",      # 能被收藏、能被智能体直接打开的固定地址
+    # 笔记与附件。1.37.0 起从 /files 改名提级：内容是「我存过的记忆」，
+    # 叫「文件」会让人以为是上传区，而它其实是这个项目最不一样的资产。
+    "/notes": "files",
     "/kb": "kb",
     # 汇报页：既是展示页，也是管理台入口。内容随数据变，所以由 handler 实时渲染
     # （`?download=1` 走同一个路径返回附件，不新增 API 端点）。
@@ -81,6 +83,10 @@ PAGE_ROUTES: dict[str, str] = {
 }
 # 旧入口：只做跳转，收藏夹里的老地址不至于 404
 PAGE_ALIASES: tuple[str, ...] = ("/", "/index.html", "/insights", "/dashboard")
+
+# 改名后的旧地址 → 新地址。单独一张表而不是塞进 PAGE_ALIASES：
+# 那张表是「所有旧入口都回落到问答页」的语义，这里要的是**精确对应**的跳转。
+PAGE_MOVED: dict[str, str] = {"/files": "/notes"}
 
 
 def _matches(path: str, prefix: str) -> bool:
