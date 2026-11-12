@@ -132,10 +132,10 @@ try {
   });
   page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`));
 
-  // ---------- /files：唯一完整入口 ----------
-  await page.goto(`${base}/files`, { waitUntil: 'networkidle' });
+  // ---------- /notes：唯一完整入口（1.37.0 从 /files 改名） ----------
+  await page.goto(`${base}/notes`, { waitUntil: 'networkidle' });
   await page.waitForSelector('.file-item', { timeout: 15000 });
-  check('/files 列出笔记', (await page.locator('.file-item').count()) === 1);
+  check('/notes 列出笔记', (await page.locator('.file-item').count()) === 1);
   check('列表带标题', (await page.textContent('.file-item b')).includes('出口退税'));
 
   await page.click('.file-item');

@@ -266,11 +266,11 @@ try {
   check('列表里有文件', (await page.locator('.file-item').count()) >= 1);
   check('提醒点回到入口上', await page.isVisible('#filesDot'));
 
-  // 抽屉里的条目 1.29.0 起只做导航：详情只在一处渲染（/files），
+  // 抽屉里的条目 1.29.0 起只做导航：详情只在一处渲染（1.37.0 从 /files 改名 /notes），
   // 不再维护第二套渲染器。所以这里验的是「跳过去并定位到那一条」。
   await page.locator('.file-item').first().click();
-  await page.waitForURL(/\/files\?id=/, { timeout: 8000 }).catch(() => {});
-  check('点条目跳到完整页并带 id', /\/files\?id=/.test(page.url()), page.url());
+  await page.waitForURL(/\/notes\?id=/, { timeout: 8000 }).catch(() => {});
+  check('点条目跳到完整页并带 id', /\/notes\?id=/.test(page.url()), page.url());
   await page.waitForSelector('.pf-grid', { timeout: 8000 }).catch(() => {});
   await page.waitForFunction(
     () => {
@@ -319,7 +319,7 @@ try {
     }, null, { timeout: 6000 },
   ).catch(() => {});
   const pfBody = (await page.locator('#pfDetail').textContent()) || '';
-  check('/files 默认展开第一篇', pfBody.length > 12, pfBody.slice(0, 40));
+  check('/notes 默认展开第一篇', pfBody.length > 12, pfBody.slice(0, 40));
 
   // 导出按钮在完整页（1.29.0 从抽屉挪过来），连备份时间一起验：
   // 只验「有下载事件」不够，导出没记账就等于没备份。
@@ -329,7 +329,7 @@ try {
     page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
     page.click('#pfExport'),
   ]);
-  check('/files 导出触发下载', download !== null,
+  check('/notes 导出触发下载', download !== null,
         download ? download.suggestedFilename() : '无下载事件');
   await page.waitForTimeout(900);
   const exportAfter = await page.evaluate(
