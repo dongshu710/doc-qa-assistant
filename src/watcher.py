@@ -117,5 +117,17 @@ class KnowledgeWatcher(threading.Thread):
         while not self._stop.wait(self.interval):
             self.poll_once()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 2.0) -> None:
+        """置停止位，并**等线程真的退出**。
+
+        只 `set()` 不等的话，`stop()` 返回时线程可能刚被唤醒、还没跑完最后一轮：
+        进程退出与测试断言都会看到「已经停了但线程还活着」。CI 上就是这样偶发红的
+        （本地快、CI 慢，只在 CI 出现），比真 bug 更费时间——因为重跑就绿。
+
+        从监听线程自己调用（`on_change` 里关服务）时不能 join 自己，会死锁。
+        """
         self._stop.set()
+        if threading.current_thread() is self:
+            return
+        if self.is_alive():
+            self.join(timeout)
