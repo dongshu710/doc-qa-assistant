@@ -1,6 +1,8 @@
 
 function $(id){ return document.getElementById(id); }
 var KB={files:[],total_chunks:0}, FILTER='all', SORT='name', Q='', BUSY=false;
+/* 在途删除：连点同一个「删除」不该发第二次 */
+var DELETING={};
 /* 选中集合挂在全局：列表重绘（筛选、排序、刷新）后勾选不能丢。
    用对象而不是 DOM 状态，是因为每次 render 都会整体重写 tbody。 */
 var SEL={};
@@ -109,9 +111,47 @@ function openKbModal(title,html){
   $('kbModalTitle').textContent=title;
   $('kbModalBody').innerHTML=html;
   $('kbMask').hidden=false; $('kbModal').hidden=false;
+  markOpen($('kbMask')); openOverlay('kbModal');
 }
 function closeKbModal(){
+  closeOverlay('kbModal');
   $('kbMask').hidden=true; $('kbModal').hidden=true; $('kbModalBody').innerHTML='';
+  // 弹层里可能挂着一次询问：关掉它必须让 await 的调用方拿到「取消」，
+  // 否则那次 await 永远挂着，后面的代码（比如刷新列表）再也不会执行。
+  if(ASK){ var a=ASK; ASK=null; a.resolve(null); }
+}
+/* 行内询问：替代 window.prompt。
+   prompt 是浏览器原生对话框，样式跟整站无关、移动端会被拦、而且在某些
+   客户端的内嵌浏览器里直接返回 null，功能看起来「点了没反应」。 */
+var ASK=null;
+function askText(title,label,def,placeholder,maxlen){
+  return new Promise(function(resolve){
+    ASK={resolve:resolve};
+    openKbModal(title,
+      '<div class="ask-box"><label class="ask-label">'+esc(label)+'</label>'
+      +'<input class="ask-input" id="askInput" value="'+esc(def||'')+'" placeholder="'+esc(placeholder||'')+'"'
+      +(maxlen?' maxlength="'+maxlen+'"':'')+'>'
+      +(maxlen?'<div class="ask-hint">最多 '+maxlen+' 字</div>':'')
+      +'<div class="ask-row"><button class="btn ghost sm" id="askNo" type="button">取消</button>'
+      +'<button class="btn sm" id="askYes" type="button">确定</button></div></div>');
+    var inp=$('askInput');
+    setTimeout(function(){ try{ inp.focus(); inp.select(); }catch(e){} },30);
+    /* 用一次性结算：双击「确定」（或确定后又点了取消）不能让 resolve 跑两次，
+       第二次会静默丢结果，看起来像「点了没反应」。 */
+    var done=function(v){
+      if(!ASK) return;
+      var a=ASK; ASK=null;
+      closeOverlay('kbModal');
+      $('kbMask').hidden=true; $('kbModal').hidden=true; $('kbModalBody').innerHTML='';
+      a.resolve(v);
+    };
+    $('askYes').onclick=function(){ done(inp.value); };
+    $('askNo').onclick=function(){ done(null); };
+    inp.onkeydown=function(e){
+      if(e.key==='Enter'){ e.preventDefault(); done(inp.value); }
+      else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); done(null); }
+    };
+  });
 }
 function diffHtml(text){
   var nl=String.fromCharCode(10);
@@ -167,7 +207,10 @@ async function showDiff(changeId){
 async function decide(changeId,kind){
   var body={change_id:changeId};
   if(kind==='reject'){
-    var reason=window.prompt('驳回原因（可选）','')||'';
+    /* 服务端只存前 200 字：不设上限的话，写 2000 字会静默丢掉 1800 字，
+       而界面照样说「已驳回」，用户以为原因记全了。 */
+    var reason=await askText('驳回 '+changeId,'驳回原因（可选）','','写一句原因，会留在变更记录里',200);
+    if(reason===null) return;   // 取消：什么都不做，别把「点了取消」当成「空原因驳回」
     body.reason=reason;
   }
   setMsg(kind==='approve'?'正在通过 '+changeId+'…':'正在驳回 '+changeId+'…');
@@ -325,9 +368,10 @@ async function uploadFiles(files){
 /* ---------- 分段抽屉 ----------
    分段是「切分结果」的唯一可见形态：用户要判断的是「这块切得对不对」，
    所以序号、页码、字数、正文开头缺一样都不行。整页跳转太重，抽屉刚好。 */
-var CK={name:'', items:[]};
+var CK={name:'', items:[], shown:0, seq:0, PAGE:80};
 function ckOpen(){
   $('ckMask').hidden=false; $('ckDrawer').hidden=false;
+  markOpen($('ckMask')); openOverlay('ckDrawer');
   document.body.classList.add('no-scroll');
   requestAnimationFrame(function(){
     $('ckDrawer').classList.add('open');
@@ -335,13 +379,18 @@ function ckOpen(){
   });
 }
 function ckClose(){
+  closeOverlay('ckDrawer');
   document.body.classList.remove('no-scroll');
   $('ckDrawer').classList.remove('open');
   $('ckDrawer').hidden=true; $('ckMask').hidden=true;
+  // 关掉时把 seq 推一格：还在路上的请求回来也认不出自己，不会往空的抽屉里塞内容
+  CK.seq++; CK.items=[]; CK.shown=0;
+  $('ckList').innerHTML='';
   $('ckResult').hidden=true; $('ckResult').innerHTML='';
 }
 async function openChunks(name){
-  CK={name:name, items:[]};
+  var seq=++CK.seq;
+  CK.name=name; CK.items=[]; CK.shown=0;
   $('ckTitle').textContent=name;
   $('ckSub').textContent='读取分段…';
   $('ckList').innerHTML='<div class="ck-empty">读取中…</div>';
@@ -350,6 +399,9 @@ async function openChunks(name){
   try{
     var r=await fetch('/api/knowledge/chunks?name='+encodeURIComponent(name));
     var d=await r.json();
+    // 连点两份文档时，先发的请求可能后回：认领不了就整段丢掉，
+    // 否则会看到「标题是 B、列表是 A」这种对不上的抽屉。
+    if(seq!==CK.seq) return;
     if(!r.ok) throw new Error(d.error||('HTTP '+r.status));
     CK.items=d.items||[];
     var avg=0;
@@ -357,26 +409,88 @@ async function openChunks(name){
       var sum=0; CK.items.forEach(function(x){ sum+=x.chars; }); avg=Math.round(sum/CK.items.length);
     }
     $('ckSub').textContent=CK.items.length+' 块 · '+(d.page_count?d.page_count+' 页 · ':'')+'平均 '+avg+' 字/块'
-      +(d.truncated?'':'');
+      +(d.truncated?'（正文已截断）':'');
     if(!CK.items.length){ $('ckList').innerHTML='<div class="ck-empty">这份文档没有可显示的分段</div>'; return; }
-    $('ckList').innerHTML=CK.items.map(function(x){
-      return '<div class="ck-item"><button type="button" class="ck-row" data-i="'+x.chunk_index+'">'
-        +'<span class="ck-no">#'+(x.chunk_index+1)+'</span>'
-        +'<span class="ck-meta">'+(x.page?'第 '+x.page+' 页 · ':'')+x.chars+' 字</span>'
-        +'<span class="ck-sec">'+esc(x.section||'')+'</span></button>'
-        +'<pre class="ck-text" hidden>'+esc(x.text)+(x.truncated?'\n…（已截断，完整原文点引用查看）':'')+'</pre></div>';
-    }).join('');
+    $('ckList').innerHTML='';
+    ckMore();
   }catch(e){
+    if(seq!==CK.seq) return;
     $('ckSub').textContent='读取失败';
     $('ckList').innerHTML='<div class="ck-empty">'+esc(e.message||e)
       +'<br>文档刚上传时索引可能还在重建，等几秒再试。</div>';
   }
 }
+/* 懒渲染：一份 500 块的文档，原先把 500 个 <pre>（每段 1200 字）一次性塞进
+   DOM，抽屉会卡住近一秒，而且用户一屏只看得到七八条。这里先铺 80 条行，
+   正文等点开那一条才创建，滚到底再补下一批。 */
+function ckMore(){
+  var list=$('ckList'), end=Math.min(CK.items.length, CK.shown+CK.PAGE), html='';
+  for(var i=CK.shown;i<end;i++){
+    var x=CK.items[i];
+    html+='<div class="ck-item"><button type="button" class="ck-row" data-k="'+i+'">'
+      +'<span class="ck-no">#'+(x.chunk_index+1)+'</span>'
+      +'<span class="ck-meta">'+(x.page?'第 '+x.page+' 页 · ':'')+x.chars+' 字</span>'
+      +'<span class="ck-sec">'+esc(x.section||'')+'</span></button></div>';
+  }
+  CK.shown=end;
+  var more=$('ckMore'); if(more) more.remove();
+  list.insertAdjacentHTML('beforeend',html);
+  if(CK.shown<CK.items.length){
+    list.insertAdjacentHTML('beforeend','<button type="button" class="ck-more" id="ckMore">继续加载（还有 '
+      +(CK.items.length-CK.shown)+' 块）</button>');
+  }
+}
+
+/* ---------- 全部版本 ----------
+   版本 pill 以前是纯文本：看到「版本 v0007」却不知道这数字从哪来、之前有什么。
+   这里只读展示：哪一版当前生效、几份文档、多大、什么时候、怎么来的。
+   整库回退刻意不做——它会把后来所有审批过的变更一起撤掉，不该是一次误点
+   就能做到的事；要退某一份文档，用行内「历史」。
+   连点两次 pill 时，后发的请求赢了就行：清单是只读的，多一次请求没有副作用。 */
+var VER={items:{}};
+function verKind(k){
+  // 后端只写 bootstrap / change / rollback_doc 三种，其余是给将来的导入留位
+  return ({bootstrap:'初始',change:'审批变更',rollback_doc:'文档回滚',
+           initial:'初始',rollback:'文档回滚',import:'导入',seed:'模板导入'})[k]||(k||'—');
+}
+async function openVersions(){
+  if(!KB.version){ toast('当前是单目录模式，没有版本历史',true); return; }
+  openKbModal('全部版本','<div class="kw-load">读取中…</div>');
+  try{
+    var r=await fetch('/api/kb/versions');
+    var d=await r.json();
+    if(!r.ok||d.error){ $('kbModalBody').innerHTML='<div class="kw-empty">'+esc(d.error||('HTTP '+r.status))+'</div>'; return; }
+    var items=(d.items||[]).slice().reverse();
+    VER.items={};
+    if(!items.length){ $('kbModalBody').innerHTML='<div class="kw-empty">还没有任何版本</div>'; return; }
+    $('kbModalBody').innerHTML=items.map(function(v){
+      var cur=v.version===d.active;
+      VER.items[v.version]=(v.docs||[]).map(function(x){ return x.name; });
+      var bytes=(v.docs||[]).reduce(function(a,x){ return a+(x.size||0); },0);
+      return '<div class="hist-item'+(cur?' cur':'')+'">'
+        +'<b class="mono">'+esc(v.version)+'</b>'
+        +(cur?'<span class="pill brand">当前</span>':'')
+        +'<span class="pill">'+esc(verKind(v.kind))+'</span>'
+        +'<span class="ts">'+esc(String(v.created_at||'').replace('T',' ').slice(0,16))+'</span>'
+        +'<span class="muted">'+(v.docs||[]).length+' 份 · '+fmtBytes(bytes)+'</span>'
+        +'<span style="margin-left:auto"><button class="btn ghost sm ver-docs" type="button" data-v="'
+        +esc(v.version)+'">看文档</button></span></div>'
+        +'<div class="ver-docs-list" data-for="'+esc(v.version)+'" hidden></div>';
+    }).join('')
+    +'<p class="ver-note">要退某一份文档，用表格行内的「历史」；整库回退会连带撤掉后来审批过的变更，所以这里不提供。</p>';
+  }catch(e){
+    $('kbModalBody').innerHTML='<div class="kw-empty">读取失败：'+esc(e.message||e)+'</div>';
+  }
+}
 /* 「用这份文档测一次」：不是全库检索，而是把 doc 交给检索调试，
    这样「这份文档能不能答这个问题」才有确定答案。 */
+var CK_RUN=false;
 async function runDocTest(){
   var q=($('ckQ').value||'').trim();
   if(!q){ toast('先写一个要试的问题',true); return; }
+  if(CK_RUN) return;   // 连点会并发三次检索，结果互相覆盖，看起来像「跳来跳去」
+  CK_RUN=true;
+  var runBtn=$('ckRun'); if(runBtn) runBtn.disabled=true;
   var box=$('ckResult');
   box.hidden=false; box.innerHTML='<div class="ck-empty">检索中…</div>';
   try{
@@ -394,6 +508,9 @@ async function runDocTest(){
       +(rows||'<div class="ck-empty">这份文档里没有相关分段——要么切分没切到，要么文档确实没写这件事</div>');
   }catch(e){
     box.innerHTML='<div class="ck-empty">检索失败：'+esc(e.message||e)+'</div>';
+  }finally{
+    CK_RUN=false;
+    if(runBtn) runBtn.disabled=false;
   }
 }
 
@@ -422,12 +539,16 @@ async function seedTemplate(tpl,btn){
    批量删除逐份调用单删接口：一次失败不会连坐，进度和失败原因都能说清。
    整体回滚在这里反而是错的——已删的文档在版本库里仍可找回。 */
 async function batchDelete(){
+  // 在途时再点一次会用「被上一次删空的 SEL」重跑一遍，于是删了 N 份却报「已删除 0 份」
+  if(BUSY) return;
   var names=Object.keys(SEL);
   if(!names.length) return;
   if(!confirm('确认删除选中的 '+names.length+' 份文档？索引会重新构建，删掉的仍可在「版本」里找回。\n\n'
     +names.slice(0,8).join('\n')+(names.length>8?'\n…':''))) return;
   var ok=0, pend=0, fail=[];
   BUSY=true;
+  var btns=[$('kbBatchDel'),$('kbBatchClear')].filter(Boolean);
+  btns.forEach(function(b){ b.disabled=true; });
   for(var i=0;i<names.length;i++){
     setMsg('删除中 '+(i+1)+'/'+names.length+'：'+names[i]);
     try{
@@ -442,12 +563,14 @@ async function batchDelete(){
   BUSY=false;
   if(pend){
     // 审批模式下「已删除」不成立：文档还在库里，只是排进了待审队列
+    btns.forEach(function(b){ b.disabled=false; });
     setMsg('已提交 '+pend+' 份待审批'+(ok?('，已删除 '+ok+' 份'):'')
       +(fail.length?('，失败 '+fail.length+' 份（'+fail[0]+'）'):'')+'；审批通过后才会真正删除',
       fail.length?'err':'warn');
     await loadKb();
     return;
   }
+  btns.forEach(function(b){ b.disabled=false; });
   setMsg('已删除 '+ok+' 份'+(fail.length?('，失败 '+fail.length+' 份（'+fail[0]+'）'):''),fail.length?'err':'ok');
   updateBatch();
   await settleIndex(true,'已删除 '+ok+' 份');
@@ -491,7 +614,11 @@ $('kbBody').onclick=async function(ev){
   if(h){ await openHistory(h.dataset.name); return; }
   var g=ev.target.closest('.gen');
   if(g){
-    var n=parseInt(window.prompt('为「'+g.dataset.name+'」生成几条评测用例？（1-8）','3'),10)||3;
+    var want=await askText('出题 · '+g.dataset.name,'生成几条评测用例（1-8）','3','1-8');
+    if(want===null) return;
+    // parseInt('1.5') 会静默截成 1：用户以为生成了 1.5 条，实际只拿到 1 条
+    if(!/^[1-8]$/.test(want.trim())){ toast('数量要是 1-8 之间的整数',true); return; }
+    var n=parseInt(want,10);
     setMsg('正在为「'+g.dataset.name+'」出题…');
     try{
       var r=await (await fetch('/api/cases/from_doc',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -503,7 +630,12 @@ $('kbBody').onclick=async function(ev){
   }
   var b=ev.target.closest('.del');
   if(!b) return;
+  // 连点两次「删除」会发两次请求：第二次拿到的是「文档不存在」，界面就变成
+  // 「删除失败」——第一次明明成功了。这里按文件名加锁，在途期间不再发。
+  if(DELETING[b.dataset.name]) return;
   if(!confirm('确认删除「'+b.dataset.name+'」？索引会立即重建，对应文档用例将在下次运行时跳过。')) return;
+  DELETING[b.dataset.name]=true;
+  b.disabled=true;
   try{
     var d=await (await fetch('/api/knowledge/delete',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:b.dataset.name})})).json();
@@ -519,6 +651,10 @@ $('kbBody').onclick=async function(ev){
     }
     else{ setMsg('删除失败：'+(d.error||''),'err'); }
   }catch(e){ setMsg('删除失败：'+(e.message||e),'err'); }
+  finally{
+    delete DELETING[b.dataset.name];
+    if(b.isConnected) b.disabled=false;
+  }
 };
 
 $('apprRefresh').onclick=loadApprovals;
@@ -534,14 +670,43 @@ $('kbSeed').onclick=function(ev){
   seedTemplate(b.dataset.tpl,b);
 };
 $('ckClose').onclick=ckClose;
-$('ckMask').onclick=ckClose;
+$('ckMask').onclick=function(){ if(!tooSoon($('ckMask'))) ckClose(); };
 $('ckRun').onclick=runDocTest;
 $('ckQ').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); runDocTest(); } });
 $('ckList').onclick=function(ev){
+  if(ev.target.closest('#ckMore')){ ckMore(); return; }
   var row=ev.target.closest('.ck-row'); if(!row) return;
-  var pre=row.nextElementSibling;
-  if(pre) pre.hidden=!pre.hidden;
+  var item=row.parentNode;
+  var pre=item.querySelector('.ck-text');
+  if(!pre){
+    // 正文按需创建：这是懒渲染的关键一步，否则省下的只是首屏时间
+    var x=CK.items[Number(row.dataset.k)];
+    if(!x) return;
+    pre=document.createElement('pre');
+    pre.className='ck-text';
+    pre.textContent=(x.text||'')+(x.truncated?'\n…（已截断，完整原文点引用查看）':'');
+    item.appendChild(pre);
+    return;
+  }
+  pre.hidden=!pre.hidden;
 };
+$('ckList').addEventListener('scroll',function(){
+  var box=$('ckList');
+  if(box.scrollTop+box.clientHeight>=box.scrollHeight-60) ckMore();
+});
+$('kbVersion').onclick=openVersions;
+$('kbModalBody').addEventListener('click',function(ev){
+  var b=ev.target.closest('.ver-docs'); if(!b) return;
+  var v=b.getAttribute('data-v');
+  var box=$('kbModalBody').querySelector('[data-for="'+v+'"]');
+  if(!box) return;
+  if(!box.hidden){ box.hidden=true; box.innerHTML=''; b.textContent='看文档'; return; }
+  var names=VER.items[v]||[];
+  box.innerHTML=names.length
+    ? names.map(function(n){ return '<div class="vd-row">'+esc(n)+'</div>'; }).join('')
+    : '<div class="vd-row">这一版没有文档</div>';
+  box.hidden=false; b.textContent='收起';
+});
 $('adminSave').onclick=function(){
   var v=($('adminToken').value||'').trim();
   try{
@@ -555,12 +720,14 @@ $('apprList').onclick=function(ev){
   var r=ev.target.closest('.appr-no'); if(r){ decide(r.dataset.id,'reject'); }
 };
 $('kbModalClose').onclick=closeKbModal;
-$('kbMask').onclick=closeKbModal;
-/* Esc 逐层关：抽屉开着时先关抽屉，别把下面的弹窗一起关掉 */
+/* 遮罩有 300ms 冷静期：双击「版本」「分段」时，第二下不该把刚打开的层关掉 */
+$('kbMask').onclick=function(){ if(!tooSoon($('kbMask'))) closeKbModal(); };
+/* Esc 逐层关：按打开顺序压栈，只关最上面那层。
+   设置面板与版本弹层同时开着时，一次 Esc 只该关掉后开的那个。 */
 document.addEventListener('keydown',function(e){
   if(e.key!=='Escape') return;
-  if(!$('ckDrawer').hidden){ ckClose(); return; }
-  closeKbModal();
+  if(isTopOverlay('ckDrawer')){ ckClose(); return; }
+  if(isTopOverlay('kbModal')) closeKbModal();
 });
 
 $('reload').onclick=async function(){

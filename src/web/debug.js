@@ -56,7 +56,8 @@
 
   async function search() {
     var text = (q.value || '').trim();
-    if (!text) { q.focus(); return; }
+    // 空查询以前只是把焦点还给输入框：看起来像「点了没反应」
+    if (!text) { toast('先写一个要调试的问题', true); q.focus(); return; }
     run.disabled = true;
     run.textContent = '检索中';
     try {

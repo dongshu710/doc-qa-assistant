@@ -56,6 +56,8 @@
 .chips button.on{background:var(--brand-soft);color:var(--brand-600);font-weight:600;}
 .kb-sort{padding:6px 8px;border:1px solid var(--line-2);border-radius:8px;font-size:12px;font-family:inherit;
   color:var(--muted);background:var(--surface);outline:none;cursor:pointer;}
+.kb-sort:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+.ask-hint{font-size:11px;color:var(--faint);margin-top:5px;}
 .kb-foot{font-size:12px;color:var(--faint);margin-top:10px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;}
 
 .fname{display:flex;align-items:center;gap:9px;min-width:0;}
@@ -203,3 +205,28 @@
 /* 审批队列提示：清单来自已发布版本，待审批的新文档不会出现在表里 */
 .kb-pending{margin:0 0 10px;padding:7px 10px;border-radius:8px;background:var(--warn-soft);
   color:var(--warn);font-size:12px;line-height:1.6;}
+
+/* 版本 pill 现在可点：普通 pill 是纯展示，加指针与悬停边才能看出能按 */
+.pill-btn{cursor:pointer;font-family:inherit;transition:border-color .14s,color .14s;}
+.pill-btn:hover{border-color:var(--brand);color:var(--brand);}
+.pill-btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
+
+/* 版本清单 */
+.hist-item.cur b.mono{color:var(--brand-600);}
+.ver-docs-list{border-bottom:1px solid var(--line);padding:0 0 8px;}
+.ver-docs-list .vd-row{font-size:12px;color:var(--muted);padding:3px 0 3px 10px;
+  border-left:2px solid var(--line);line-height:1.7;word-break:break-all;}
+.ver-note{margin:12px 0 2px;font-size:11.5px;color:var(--faint);line-height:1.7;}
+
+/* 分段懒渲染的「继续加载」 */
+.ck-more{width:100%;margin:8px 0 4px;padding:7px 0;border:1px dashed var(--line-2);
+  border-radius:8px;background:none;font-family:inherit;font-size:12px;color:var(--muted);cursor:pointer;}
+.ck-more:hover{border-color:var(--brand);color:var(--brand);}
+
+/* 行内询问弹层（替代 window.prompt） */
+.ask-box{padding:2px 0 4px;}
+.ask-label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:7px;line-height:1.7;}
+.ask-input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--line);
+  border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:13px;}
+.ask-input:focus{outline:none;border-color:var(--brand);}
+.ask-row{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;}

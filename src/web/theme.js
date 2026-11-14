@@ -41,6 +41,7 @@
   var mask=null, panel=null;
   function close(){
     if(!panel) return;
+    closeOverlay('kbd');
     panel.hidden=true; if(mask) mask.hidden=true;
   }
   function build(){
@@ -63,6 +64,7 @@
     var open=!panel.hidden;
     if(open){ close(); return; }
     panel.hidden=false; mask.hidden=false;
+    openOverlay('kbd');
   }
   document.addEventListener('keydown',function(e){
     var tag=(document.activeElement&&document.activeElement.tagName)||'';
@@ -70,6 +72,6 @@
     // 在输入框里打问号是正常打字，不能弹窗
     if(e.key==='?'&&!typing&&!e.ctrlKey&&!e.metaKey){ e.preventDefault(); toggle(); return; }
     if(e.key==='F1'){ e.preventDefault(); toggle(); return; }
-    if(e.key==='Escape'&&panel&&!panel.hidden){ close(); }
+    if(e.key==='Escape'&&panel&&!panel.hidden&&isTopOverlay('kbd')){ close(); }
   });
 })();

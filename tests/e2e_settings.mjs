@@ -122,9 +122,11 @@ try {
   // ---- 接口 ----
   check('接口地址已回显默认值', (await page.inputValue('#setBase')).includes('http') ||
         (await page.getAttribute('#setBase', 'placeholder')) !== null);
+  check('没有保存按钮（改完即生效）', (await page.locator('#setSave').count()) === 0);
+  // 1.39 起没有保存按钮：离开输入框即写盘，这里用 Tab 触发 blur
   await page.fill('#setBase', 'https://api.example.com/v1');
   await page.fill('#setModel', 'demo-model');
-  await page.click('#setSave');
+  await page.keyboard.press('Tab');
   await page.waitForTimeout(1500);
   const saveNote = (await page.locator('#setApiNote').textContent()) || '';
   check('保存接口配置有成功反馈', saveNote.includes('已保存'),
@@ -164,7 +166,8 @@ try {
 
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'rag-notes-'));
   await page.fill('#setHome', target);
-  await page.click('#setHomeSave');
+  // 目录也是即时生效：填完 Tab 一下就走切换，不再有「应用」按钮
+  await page.keyboard.press('Tab');
   // 路径现在只显示在一个地方（#stHome），不再用提示行回显，避免同一句话出现两遍
   await page.waitForFunction(
     (t) => (document.getElementById('stHome')?.textContent || '').includes(t.slice(-8)),
@@ -377,7 +380,9 @@ try {
   check('配置损坏时给出提示', true);
 
   await page.click('[data-tab="api"]');
-  await page.click('#setSave');
+  // 改一个值再失焦：即时保存会先备份坏掉的配置
+  await page.fill('#setBase', 'https://api.example.com/v1');
+  await page.keyboard.press('Tab');
   await page.waitForFunction(
     () => (document.getElementById('setCfgWarn')?.textContent || '').includes('已备份'),
     null, { timeout: 8000 },

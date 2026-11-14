@@ -182,7 +182,9 @@ try {
   const apiText = (await page.locator('#apiState').textContent()) || '';
   check('接口分区给出当前状态', apiText.includes('未接入模型'), apiText.slice(0, 40));
   check('接口步骤写了三步', (await page.locator('.api-steps li').count()) === 3);
-  check('保存按钮写明会启用', (await page.locator('#setSave').textContent())?.includes('启用'));
+  // 1.39 起四种保存模型统一为即时：接口/存储/对话都不再有保存按钮
+  check('接口分区没有保存按钮', (await page.locator('#setSave').count()) === 0);
+  check('存储分区没有应用按钮', (await page.locator('#setHomeSave').count()) === 0);
 
   await page.click('[data-tab="store"]');
   await page.waitForTimeout(400);

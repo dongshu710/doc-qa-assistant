@@ -120,6 +120,9 @@ main{flex:1 0 auto;}
 .side-search input::placeholder{color:var(--faint);}
 .side-search input:hover{background:var(--hover);}
 .side-search input:focus{outline:none;background:var(--surface);border-color:var(--line-2);}
+/* 全局 :focus-visible 被上面这条 :focus 压掉了：补一条同特异性的可见焦点，
+   键盘用户至少能看到自己在哪 */
+.side-search input:focus-visible{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
 .side-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:2px 0 6px;}
 .side-scroll::-webkit-scrollbar{width:6px;}
 .side-scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:3px;}

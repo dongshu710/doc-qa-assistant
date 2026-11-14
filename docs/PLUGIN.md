@@ -22,10 +22,10 @@
 
 | 控件 | 元素 | 作用 | 交互与生效 |
 |---|---|---|---|
-| 接口地址 | `input#setBase` | OpenAI 兼容端点，填到 `/v1` 层 | 需点「保存」；空值或非 http(s) 会被 400 并红字说明 |
+| 接口地址 | `input#setBase` | OpenAI 兼容端点，填到 `/v1` 层 | 离开输入框即保存；空值会还原并红字说明，非 http(s) 由服务端 400 |
 | 模型 | `input#setModel` | 模型名 | 同上 |
 | 密钥 | `input#setKey`（`type=password`） | API Key | 只回显掩码（`sk-abc******mnop`），留空表示不改；原文不可回读 |
-| 保存 | `button#setSave` | 落 `data/app.json` | 点击后同一响应里回显新的「当前生效」，不需要重启 |
+| 保存 | 无按钮 | 落 `data/app.json` | 1.39 起统一为即时保存：blur / Enter / 关面板都会写盘，同一响应里回显新的「当前生效」，不需要重启 |
 | 测试连接 | `button#setTest` | 真发一次 `max_tokens=1` 请求 | 15 秒超时；401 / 403 / 404 / 429 / 连不上分别给不同文案 |
 
 ### 存储
@@ -35,7 +35,7 @@
 | 默认位置 / 自定义 | 2 个 `button[data-home]`（分段） | 切换模式 | 选「自定义」才显示目录输入框与「选择…」 |
 | 目录 | `input#setHome` | 手填或粘贴绝对路径 | 自动去两端引号（中英文）、去空白、展开 `~` |
 | 选择… | `button#setPick` | 弹系统原生目录对话框 | Windows WinForms / macOS osascript / Linux zenity；180 秒超时；**选完自动应用** |
-| 应用 | `button#setHomeSave` | 手填路径时提交 | 先试写校验，再重建笔记服务 |
+| 生效 | 无按钮 | 填完离开输入框即提交 | 先试写校验，再重建笔记服务；清空输入框不会复位（复位用「用默认位置」） |
 | 打开文件夹 | `button#setOpen` | 拉起资源管理器 / Finder | 只读操作，不改配置 |
 | 复制过来 / 不用 | `button#setMigrateGo` / `#setMigrateNo` | 旧位置还有笔记时的迁移提示 | 只复制不移动，同名跳过；不点则保持原样 |
 

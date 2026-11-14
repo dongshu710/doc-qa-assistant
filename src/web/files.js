@@ -70,6 +70,7 @@
 
   function open(){
     if(window.__closeSide) window.__closeSide();
+    openOverlay('notesDrawer');
     panel.hidden=false; mask.hidden=false;
     if($('filesBtn')) $('filesBtn').setAttribute('aria-expanded','true');
     document.body.classList.add('set-open');
@@ -80,6 +81,7 @@
     if(first) first.focus();
   }
   function close(){
+    closeOverlay('notesDrawer');
     panel.classList.remove('on');
     panel.hidden=true; mask.hidden=true;
     if($('filesBtn')) $('filesBtn').setAttribute('aria-expanded','false');
@@ -98,7 +100,7 @@
   if($('filesClose')) $('filesClose').addEventListener('click',close);
   mask.addEventListener('click',close);
   document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'&&!panel.hidden) close();
+    if(e.key==='Escape'&&!panel.hidden&&isTopOverlay('notesDrawer')) close();
   });
 
   // 红点：点它只消提醒，不打开抽屉——「我知道了」和「我要看」是两个意图

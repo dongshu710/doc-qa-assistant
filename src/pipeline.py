@@ -104,7 +104,10 @@ class RAGPipeline:
         self._rebuild["chunks"] = len(self.chunks)
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.project_root = root
-        self.log_path = os.path.join(root, "logs", "trace.jsonl")
+        # 日志目录可被 LOG_DIR 覆盖：测试与临时实例不该把 trace/feedback 写进仓库，
+        # 否则「跑一遍测试」就会在项目里留下与代码无关的脏数据。
+        log_dir = os.environ.get("LOG_DIR") or os.path.join(root, "logs")
+        self.log_path = os.path.join(log_dir, "trace.jsonl")
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
         self._retrieval_error: str | None = None
         self.retriever = self._make_retriever(self.chunks)

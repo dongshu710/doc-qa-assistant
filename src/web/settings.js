@@ -37,20 +37,32 @@
     // 移动端上侧栏可能正开着：它 z-index 更高，不收起会把弹窗整个挡住
     if(window.__closeSide) window.__closeSide();
     panel.hidden=false; if(mask) mask.hidden=false;
+    if(markOpen) markOpen(mask);
+    openOverlay('settings');
     document.body.classList.add('set-open');
     if(!state.loaded) load();
     var first=$('setBase');
     if(first) setTimeout(function(){ try{ first.focus(); }catch(e){} },60);
   }
   function closePanel(){
+    // 先落盘再隐藏：Esc 关面板时输入框的 blur 不一定先到，
+    // 不然「填完直接按 Esc」会丢掉这一笔改动。
+    if(apiSave && apiSave.dirty) flushApi();
+    var wrap=$('setHomeWrap');
+    if(wrap && !wrap.hidden) flushHome();
+    closeOverlay('settings');
     panel.hidden=true; if(mask) mask.hidden=true;
     document.body.classList.remove('set-open');
   }
   if(gear) gear.addEventListener('click',openPanel);
   var closeBtn=$('setClose'); if(closeBtn) closeBtn.addEventListener('click',closePanel);
-  if(mask) mask.addEventListener('click',closePanel);
+  if(mask) mask.addEventListener('click',function(){
+    // 连点齿轮时，第二下落在刚出现的遮罩上：不设冷静期就会「打开又立刻关上」
+    if(window.tooSoon&&tooSoon(mask)) return;
+    closePanel();
+  });
   document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'&&!panel.hidden) closePanel();
+    if(e.key==='Escape'&&!panel.hidden&&isTopOverlay('settings')) closePanel();
   });
 
   function selectTab(name){
@@ -60,6 +72,18 @@
       p.classList.toggle('on',p.getAttribute('data-pane')===name);
     });
   }
+  /* 焦点陷阱：面板是模态的，Tab 到最后一个控件后应该回到第一个，
+     否则焦点会跑到背后的页面上，键盘用户看着高亮消失、不知道自己在哪。 */
+  panel.addEventListener('keydown',function(e){
+    if(e.key!=='Tab') return;
+    var items=[].slice.call(panel.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]):not([type=hidden]), select, textarea, summary'
+    )).filter(function(el){ return el.offsetParent!==null; });
+    if(!items.length) return;
+    var first=items[0], last=items[items.length-1];
+    if(e.shiftKey&&document.activeElement===first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey&&document.activeElement===last){ e.preventDefault(); first.focus(); }
+  });
   if(tabs) tabs.addEventListener('click',function(e){
     var btn=e.target.closest('button[data-tab]'); if(!btn) return;
     selectTab(btn.getAttribute('data-tab'));
@@ -107,8 +131,21 @@
       $('setCfgWarn').textContent=cfgWarn;
     }
     // 输入框填「配置值」，没配过就填当前生效值：否则空表单点保存会被校验拦下（配置写坏时直接死锁）
-    if($('setBase')){ $('setBase').value=d.llm.base_url||d.llm.effective_base_url||''; $('setBase').placeholder=d.llm.base_url_default||''; }
-    if($('setModel')){ $('setModel').value=d.llm.model||d.llm.effective_model||''; $('setModel').placeholder=d.llm.model_default||''; }
+    /* 即时保存会在你打字的中途回写表单：正在编辑且已有内容的框不能被覆盖，
+       否则「保存上一笔」会把这一笔顶掉。空框照旧回填（首次加载靠的就是它）。 */
+    function fill(id,v){
+      var el=$(id); if(!el) return;
+      if(document.activeElement===el && el.value) return;
+      /* dataset.dirty = 「用户改过、但这次回写还没确认它」。
+         少了这一条会丢字：A 框失焦触发保存，用户在 B 框继续打字，
+         保存回来把 B 框回写成旧值，接着的保存就「没有变化」可提交了。 */
+      if(el.dataset.dirty==='1') return;
+      el.value=v;
+    }
+    fill('setBase', d.llm.base_url||d.llm.effective_base_url||'');
+    if($('setBase')) $('setBase').placeholder=d.llm.base_url_default||'';
+    fill('setModel', d.llm.model||d.llm.effective_model||'');
+    if($('setModel')) $('setModel').placeholder=d.llm.model_default||'';
     if($('setKey')){
       $('setKey').value='';
       $('setKey').placeholder=d.llm.api_key_set
@@ -241,19 +278,85 @@
     });
   }
 
-  if($('setSave')) $('setSave').addEventListener('click',function(){
-    var body={llm:{base_url:$('setBase').value.trim(),model:$('setModel').value.trim()}};
-    var key=$('setKey').value.trim();
-    if(key) body.llm.api_key=key;
+  /* 保存模型统一为「即时」。
+     改之前这个面板有四套模型：接口要按「保存并启用」、存储要按「应用」、
+     对话开关是选了就生效、安装分区又是另一个按钮。用户改完一项不知道要不要点，
+     结果是不敢改。现在：文本框离开焦点（或按 Enter）就写盘，开关/下拉选了就写盘，
+     全程没有保存按钮。安装分区的「写入配置」是往别人家的配置文件里写，属于动作，
+     不属于保存，仍然单独一步 + 确认。 */
+  var apiSave={dirty:false, saving:false, queued:false};
+
+  function apiValues(){
+    return {
+      base:($('setBase')?$('setBase').value:'').trim(),
+      model:($('setModel')?$('setModel').value:'').trim(),
+      key:($('setKey')?$('setKey').value:'').trim()
+    };
+  }
+  function apiChanged(){
+    var v=apiValues(), cur=(state.view&&state.view.llm)||{};
+    if(v.key) return true;
+    return v.base!==(cur.base_url||'') || v.model!==(cur.model||'');
+  }
+  function restoreApi(){
+    var cur=(state.view&&state.view.llm)||{};
+    ['setBase','setModel','setKey'].forEach(function(id){
+      var el=$(id); if(el) delete el.dataset.dirty;
+    });
+    if($('setBase')) $('setBase').value=cur.base_url||cur.effective_base_url||'';
+    if($('setModel')) $('setModel').value=cur.model||cur.effective_model||'';
+    if($('setKey')) $('setKey').value='';
+  }
+  function flushApi(){
+    if(apiSave.saving){ apiSave.queued=true; return; }
+    var v=apiValues();
+    // 清空输入框不等于「清掉配置」：地址和模型是必填项，空着就还原并说清楚。
+    // 静默 400 会让人以为改坏了。
+    if(!v.base||!v.model){
+      if(apiSave.dirty){ restoreApi(); note('setApiNote','接口地址与模型不能为空，已恢复原值',true); }
+      apiSave.dirty=false;
+      return;
+    }
+    /* 300 字够放下任何正常端点；更长的多半是粘错了整段配置，
+       存进去会让之后每次请求都拿它去解析，错误还很难看出来。 */
+    if(v.base.length>300){
+      restoreApi();
+      note('setApiNote','接口地址过长（'+v.base.length+' 字），已恢复原值',true);
+      apiSave.dirty=false;
+      return;
+    }
+    if(!apiChanged()){ apiSave.dirty=false; return; }
+    var body={llm:{base_url:v.base, model:v.model}};
+    if(v.key) body.llm.api_key=v.key;
+    apiSave.saving=true; apiSave.dirty=false;
     note('setApiNote','保存中…',false);
     api('POST','/api/settings',body).then(function(d){
+      apiSave.saving=false;
       if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'保存失败',true); return; }
       applyView(d);
+      // 提交出去的字段若与框里一致，就说明这次编辑已被服务端确认，清掉未确认标记
+      if($('setBase') && $('setBase').value.trim()===body.llm.base_url) delete $('setBase').dataset.dirty;
+      if($('setModel') && $('setModel').value.trim()===body.llm.model) delete $('setModel').dataset.dirty;
       note('setApiNote','已保存，下一次提问就用新配置',false);
+      if(apiSave.queued){ apiSave.queued=false; apiSave.dirty=true; flushApi(); }
+    },function(){
+      apiSave.saving=false;
+      note('setApiNote','保存失败：连不上本地服务',true);
+    });
+  }
+  ['setBase','setModel','setKey'].forEach(function(id){
+    var el=$(id); if(!el) return;
+    el.addEventListener('input',function(){ apiSave.dirty=true; el.dataset.dirty='1'; });
+    el.addEventListener('blur',flushApi);
+    el.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){ e.preventDefault(); el.blur(); }
     });
   });
 
   if($('setTest')) $('setTest').addEventListener('click',function(){
+    var btn=this, label=btn.textContent;
+    // 连点三次会真发三次探测请求（每次都等 15 秒），没有意义
+    btn.disabled=true; btn.textContent='测试中…';
     note('setApiNote','测试中（最多等 15 秒）…',false);
     api('POST','/api/settings/test',{
       base_url:$('setBase').value.trim(),
@@ -262,7 +365,7 @@
     }).then(function(d){
       if(!d||!d.ok){ note('setApiNote',(d&&d.message)||'测试失败',true); return; }
       note('setApiNote','连接正常，往返 '+d.latency_ms+' ms',false);
-    });
+    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
   });
 
   // 检查更新：只读一次 GitHub 的 latest Release，不下载、不落盘、不改配置。
@@ -312,11 +415,25 @@
     });
   }
 
-  if($('setHomeSave')) $('setHomeSave').addEventListener('click',function(){
-    var home=$('setHome').value.trim();
-    if(!home){ note('setHomeNote','先填一个目录，或用「用默认位置」',true); return; }
-    applyHome(home);
-  });
+  /* 目录同样是即时：填完离开输入框就切，切失败会保留原位置并把原因写出来。 */
+  var homeSaving=false;
+  function flushHome(){
+    if(homeSaving) return;
+    var v=($('setHome')?$('setHome').value:'').trim();
+    // 清空不提交：那通常是「正在重打一遍路径」，不是「回到默认位置」
+    if(!v) return;
+    var cur=((state.view&&state.view.notes&&state.view.notes.home_effective)||'').trim();
+    if(v===cur) return;
+    homeSaving=true;
+    applyHome(v).then(function(){ homeSaving=false; },function(){ homeSaving=false; });
+  }
+  if($('setHome')){
+    $('setHome').addEventListener('input',function(){ homeSaving=false; });
+    $('setHome').addEventListener('blur',flushHome);
+    $('setHome').addEventListener('keydown',function(e){
+      if(e.key==='Enter'){ e.preventDefault(); this.blur(); }
+    });
+  }
 
   if($('setPick')) $('setPick').addEventListener('click',function(){
     var btn=this, label=btn.textContent;
@@ -368,9 +485,13 @@
     });
   });
 
+  var chatSeq=0;
   if($('setStoreChat')) $('setStoreChat').addEventListener('change',function(){
-    var on=this.checked;
+    var on=this.checked, seq=++chatSeq;
     api('POST','/api/settings',{notes:{store_chat:on}}).then(function(d){
+      // 连点开关时请求会并行：只有最后一次的结果能改界面，
+      // 否则先发的响应回来会把开关拨回上一次的值，看着像「点了没反应」。
+      if(seq!==chatSeq) return;
       if(!d||!d.ok){
         $('setStoreChat').checked=!on;
         note('setChatNote',(d&&d.message)||'保存失败',true);

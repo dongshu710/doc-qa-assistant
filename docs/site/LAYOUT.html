@@ -41,7 +41,7 @@ font-size:12.5px;color:var(--muted)}
 .side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
 .main{padding:22px 18px 60px}
 }
-</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.38.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-19-0">界面与交互方案（v1.19.0）</h1>
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.39.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-19-0">界面与交互方案（v1.19.0）</h1>
 <p>参照 DeepSeek 网页版的三段式结构重排全部页面：<strong>左侧常驻栏 / 中间对话流 / 底部输入</strong>。 目标不是「做得像」，而是让第一次打开的人不需要读说明就知道从哪开始、东西存在哪、接口在哪配。</p>
 <p>!<a href="screenshots/ask.png">问答页</a></p>
 <h2 id="一-结构对照">一、结构对照</h2>
@@ -67,18 +67,22 @@ font-size:12.5px;color:var(--muted)}
 <p>三页共用外壳，只有正文不同：</p>
 <ul>
 <li><code>/ask</code>：对话页。空态是「问候 + 4 个示例问题」，首条提问后示例让位给对话流。</li>
-<li><code>/kb</code>：知识库。标题 + 文档表（勾选、批量删除、状态只标异常）+ 行内「分段」抽屉；页头有「检索调试」入口。（v1.29 起笔记分区已并入 <code>/notes</code>，知识库只留只读语料）</li>
+<li><code>/kb</code>：知识库。标题 + 文档表（勾选、批量删除、状态只标异常）+ 行内「分段」抽屉（先铺 80 条，滚到底再补，正文点开才渲染）；页头「版本 vNNNN」可点，列出全部版本与各自文档；页头还有「检索调试」入口。（v1.29 起笔记分区已并入 <code>/notes</code>，知识库只留只读语料）</li>
 <li><code>/notes</code>：笔记页，笔记的唯一完整入口。左列文件（可搜索）、右侧正文与附件；侧栏「笔记」按钮只给最近 5 篇，点任意一条跳到这里。旧地址 <code>/files</code> 301 过来。</li>
 </ul>
 <p>三页都有「连接智能体」（<code>#agentBtn</code>）：应用给人用，智能体走 MCP，两条路读的是同一批 Markdown。面板里直接给出可复制的 <code>mcpServers</code> 配置、接出的工具数量和笔记目录， 把「智能体也能读这些笔记」从文档里的一句话变成点得到的按钮。</p>
 <p>移动端（≤900px）侧栏变成抽屉：<code>#sideOpen</code> 滑出，点遮罩或按 <code>Esc</code> 收起； 设置与文件抽屉的层级高于侧栏，打开时会自动收起侧栏，不会被挡在后面。</p>
+<h3 id="版本清单与分段抽屉">版本清单与分段抽屉</h3>
+<p>版本清单只读：哪一版当前生效、几份文档、多大、什么时候、怎么来的，点「看文档」展开该版文件名。 整库回退刻意不做——那会连带撤掉后来所有审批过的变更，退单份文档用表格行内的「历史」。</p>
+<p>分段抽屉回答的是「这份文档切得好不好」：序号、页码、字数、正文按需展开。它同时是 「这份文档能不能答这个问题」的入口，底部可以直接拿一个真实问题只在这份文档里检索。</p>
 <h2 id="三-api-接入的交互流程">三、API 接入的交互流程</h2>
 <p>配置入口在「设置 → 接口」（输入框里的「离线抽取」标签也直达这里）。</p>
 <ol>
 <li><strong>看结论</strong>：顶部状态块先回答「现在能不能用」——未接入 / 已接入某个模型，并说明未接入时走离线抽取。</li>
 <li><strong>填三项</strong>：接口地址（填到 <code>/v1</code> 这一层）、模型名、密钥。密钥只写进本机 <code>data/app.json</code>，界面只回显掩码。</li>
 <li><strong>测一次</strong>：<code>POST /api/settings/test</code> 真打一次最小请求，成功返回往返毫秒数；401 / 404 / 429 分别给出不同提示，不重试（重试只会让等待翻倍）。</li>
-<li><strong>保存并启用</strong>：写盘后立刻生效，下一次提问就用新配置。</li>
+<li><strong>即时保存</strong>：离开输入框（或按 Enter）就写盘并立刻生效，没有保存按钮；</li>
+<p>按 Esc 关面板也会把没提交的改动落下。</p>
 </ol>
 <p>失败路径都有明确文案：地址格式不对在保存前就拦；连不上会说明是网络还是超时； 页面上同时给了 DeepSeek 密钥获取地址，避免用户卡在「密钥从哪来」。</p>
 <h2 id="四-存储空间-怎么算-怎么改-怎么清">四、存储空间：怎么算、怎么改、怎么清</h2>

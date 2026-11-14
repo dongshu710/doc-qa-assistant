@@ -41,8 +41,10 @@
 | 问答（左栏 + 对话 + 输入框） | 知识库（文档上传） |
 |---|---|
 | ![](docs/screenshots/ask.png) | ![](docs/screenshots/kb.png) |
-| **笔记（`/notes`，可收藏的固定地址）** | **设置 → 存储（占用与清理）** |
+| **笔记（`/notes`，可收藏的固定地址）** | **设置 → 接口（改完即生效，无保存按钮）** |
 | ![](docs/screenshots/files.png) | ![](docs/screenshots/settings.png) |
+| **知识库 → 版本（点页头的「版本 vNNNN」）** | **知识库 → 分段（行内「分段」，看切分结果）** |
+| ![](docs/screenshots/kb-version.png) | ![](docs/screenshots/kb-chunks.png) |
 
 首次启动会让你**建一个专用存储区**（目录不存在会自动创建 `notes/ threads/ index/`），
 之后不论换浏览器、换端口、重装应用，记忆都还在那个目录里。

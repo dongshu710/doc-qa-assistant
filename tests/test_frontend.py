@@ -122,6 +122,7 @@ def test_wiring() -> None:
     base_css = (ROOT / "src" / "web" / "base.css").read_text(encoding="utf-8")
     report_py = (ROOT / "src" / "report.py").read_text(encoding="utf-8")
     admin_js = (ROOT / "src" / "web" / "report_admin.js").read_text(encoding="utf-8")
+    util_js = (ROOT / "src" / "web" / "util.js").read_text(encoding="utf-8")
 
     checks = [
         ("引用角标 → 抽屉里的候选区", 'id="srcAlt"' in ask and "srcAlt" in ask_js),
@@ -136,9 +137,36 @@ def test_wiring() -> None:
                             and "batchDelete" in kb_js),
         ("汇报页反馈分组", 'id="agFeedback"' in report_py and "loadFeedback" in admin_js),
         ("快捷键弹层有样式", "kbd-modal" in theme_js and ".kbd-modal" in base_css),
+        # 1.39：版本药丸可点、分段懒渲染、弹层式询问、浮层栈
+        ("版本药丸是按钮", 'id="kbVersion"' in kb and "class=\"pill pill-btn\"" in kb
+                          and "openVersions" in kb_js),
+        ("分段懒渲染", "function ckMore" in kb_js and "data-k=" in kb_js),
+        ("询问用行内弹层", "function askText" in kb_js and "ask-input" in kb_js),
+        ("浮层栈", all(n in util_js for n in ("openOverlay", "closeOverlay", "isTopOverlay"))),
     ]
     for name, ok in checks:
         check(f"接线：{name}", ok)
+
+
+def test_forbidden() -> None:
+    """反面清单：1.39 起统一掉的几种写法，不许回潮。
+
+    - `window.prompt/confirm` 里 prompt 一律不用：原生对话框在某些内嵌浏览器直接返回
+      null，功能表现为「点了没反应」，且样式与整站无关。
+    - 设置面板不再有保存按钮：四种保存模型统一成「改完即生效」，
+      再出现 setSave 就说明有人把旧交互抄回来了。
+    """
+    web = ROOT / "src" / "web"
+    prompt_hits = []
+    for path in sorted(web.glob("*.js")):
+        if "window.prompt(" in path.read_text(encoding="utf-8"):
+            prompt_hits.append(path.name)
+    check("没有 window.prompt", not prompt_hits, ", ".join(prompt_hits))
+
+    settings = (web / "settings.html").read_text(encoding="utf-8")
+    check("设置没有保存按钮", 'id="setSave"' not in settings and 'id="setHomeSave"' not in settings)
+    settings_js = (web / "settings.js").read_text(encoding="utf-8")
+    check("设置是失焦即存", "flushApi" in settings_js and "flushHome" in settings_js)
 
 
 def main() -> int:
@@ -146,6 +174,7 @@ def main() -> int:
     test_pages()
     test_python_thin()
     test_wiring()
+    test_forbidden()
     test_node_check()
     print(f"\n{PASS} 通过 / {FAIL} 失败")
     return 1 if FAIL else 0

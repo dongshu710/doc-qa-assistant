@@ -202,6 +202,7 @@ function bindSource(){
   var textEl=document.getElementById('srcText'), altEl=document.getElementById('srcAlt');
   var lastFocus=null, CUR={doc:'',chunk:'0'};
   function close(){
+    if(window.closeOverlay) closeOverlay('srcDrawer');
     drawer.classList.remove('open');
     drawer.hidden=true; mask.hidden=true; textEl.textContent='';
     document.body.classList.remove('no-scroll');
@@ -285,6 +286,8 @@ function bindSource(){
     var q=card?(card.dataset.q||''):'';
     lastFocus=btn;
     mask.hidden=false; drawer.hidden=false;
+    if(window.markOpen) markOpen(mask);
+    if(window.openOverlay) openOverlay('srcDrawer');
     document.body.classList.add('no-scroll');
     requestAnimationFrame(function(){ drawer.classList.add('open'); });
     var closer=document.getElementById('srcClose');
@@ -305,7 +308,8 @@ function bindSource(){
     show(CUR.doc,String(next),'');
   });
   document.getElementById('srcClose').onclick=close;
-  mask.onclick=close;
+  /* 双击角标时第二下会落在遮罩上：给 300ms 冷静期，别让抽屉开出即关 */
+  mask.onclick=function(){ if(!window.tooSoon||!tooSoon(mask)) close(); };
   return {open:open, close:close};
 }
 var sourceView=bindSource();
@@ -476,7 +480,12 @@ function bindFeedback(body,d,query){
   var saveBtn=fb.querySelector('.fb-save');
   if(saveBtn){ saveBtn.onclick=function(){ openNoteDialog(query||d.query||'', d); }; }
 
+  /* 一次点击就锁：慢响应下连点三次会写三条同 trace 的记录，
+     评审时看起来像三个人给了同一个反馈。 */
+  var sent=false;
   async function send(useful,comment){
+    if(sent) return;
+    sent=true;
     try{
       await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({trace_id:d.trace_id,useful:useful,comment:comment||''})});
@@ -486,9 +495,11 @@ function bindFeedback(body,d,query){
     }catch(e){ toast('反馈失败：'+e,true); }
   }
   fb.querySelector('.fb-up').onclick=function(){
+    if(sent) return;
     this.classList.add('on'); send(true,'');
   };
   fb.querySelector('.fb-down').onclick=function(){
+    if(sent) return;
     this.classList.add('on'); fb.querySelector('.fb-note').classList.add('open'); fb.querySelector('.fb-note input').focus();
   };
   fb.querySelector('.fb-send').onclick=function(){
@@ -511,6 +522,8 @@ function bindFeedback(body,d,query){
 var ICON_SEND='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>';
 var ICON_STOP='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
 var controller=null;
+/* 本次生成开始的时间：刚发出去的头 600ms 内，点击按钮不算「停止」 */
+var startedAt=0;
 function setBusy(on){
   busy=on;
   sendBtn.classList.toggle('stop',on);
@@ -556,9 +569,11 @@ async function ask(opts){
   opts=opts||{};
   var query=qEl.value.trim();
   if(!query){ qEl.focus(); return; }
-  if(busy) return;
+  // 生成中再按 Enter / 再点发送：说一句「正在生成」，别静默吞掉输入
+  if(busy){ toast('正在生成，先点停止或等它说完',true); return; }
   setBusy(true);
   controller=new AbortController();
+  startedAt=Date.now();
   if(heroEl) heroEl.hidden=true;
 
   if(!opts.noUser) addUser(query);
@@ -655,14 +670,21 @@ async function ask(opts){
 }
 
 sendBtn.onclick=function(){
-  if(busy && controller){ controller.abort(); return; }
+  if(busy && controller){
+    /* 双击发送的手速在 90-150ms：第二下会被当成「停止」，把刚发出的问题掐掉，
+       界面上就是「点了发送，直接显示已停止生成」。头 600ms 内忽略停止意图。 */
+    if(Date.now()-startedAt<600) return;
+    controller.abort(); return;
+  }
   ask();
 };
 qEl.addEventListener('input',autoGrow);
 qEl.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); ask(); }
 });
-document.addEventListener('keydown',function(e){ if(e.key==='Escape') sourceView.close(); });
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'&&isTopOverlay('srcDrawer')) sourceView.close();
+});
 document.getElementById('clear').onclick=function(){
   if(!list.querySelector('.msg')){ return; }
   var old=SESSION_ID;
@@ -697,6 +719,7 @@ list.addEventListener('click',function(e){
    先拿 commit=false 预览，人看着改标题/类型，再决定落盘。 */
 var ND={payload:null,ready:false};
 function closeNoteDialog(){
+  if(window.closeOverlay) closeOverlay('noteDialog');
   document.getElementById('noteMask').hidden=true;
   document.getElementById('noteDialog').hidden=true;
   ND.payload=null; ND.ready=false;
@@ -708,6 +731,7 @@ async function openNoteDialog(query,d){
     hint:{title:(query||'').slice(0,60)}
   };
   ND.ready=false;
+  if(window.openOverlay) openOverlay('noteDialog');
   document.getElementById('noteMask').hidden=false;
   document.getElementById('noteDialog').hidden=false;
   document.getElementById('ndTitle').value=query||'';
@@ -757,7 +781,9 @@ document.getElementById('noteDlgClose').onclick=closeNoteDialog;
 document.getElementById('ndCancel').onclick=closeNoteDialog;
 document.getElementById('noteMask').onclick=closeNoteDialog;
 document.getElementById('ndSave').onclick=saveNoteDialog;
-document.addEventListener('keydown',function(e){ if(e.key==='Escape') closeNoteDialog(); });
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape'&&isTopOverlay('noteDialog')) closeNoteDialog();
+});
 
 /* ---------- 顶栏、工具条与会话切换 ---------- */
 function bindChips(){

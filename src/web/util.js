@@ -73,3 +73,28 @@ function saveBlob(content, filename, mime){
     setTimeout(function(){ URL.revokeObjectURL(url); },1000);
   }catch(e){ toast('导出失败：'+((e&&e.message)||e), true); }
 }
+
+/* 双击与手抖连点的止损：第一次点击打开浮层，第二次点击正好落在刚出现的
+   遮罩上，于是浮层被自己关掉——用户看到的是「点了没反应」。
+   统一给遮罩一个 300ms 冷静期：这段时间内的遮罩点击不算「关闭意图」。
+   关闭按钮与 Esc 不受影响，想关随时能关。 */
+function markOpen(el){ if(el) el.setAttribute('data-opened', String(Date.now())); }
+function tooSoon(el, ms){
+  var t=Number((el&&el.getAttribute('data-opened'))||0);
+  return Date.now()-t < (ms||300);
+}
+
+/* 浮层层级表：Esc 只关「最上面那层」。
+   以前每个浮层各自监听 Esc 各关各的：设置面板 + 版本弹层同时开着时，
+   一次 Esc 会两层一起消失。压栈顺序按打开时间，与用户心智一致。 */
+var __ovStack=[];
+function openOverlay(id){
+  __ovStack=__ovStack.filter(function(x){ return x!==id; });
+  __ovStack.push(id);
+}
+function closeOverlay(id){
+  __ovStack=__ovStack.filter(function(x){ return x!==id; });
+}
+function isTopOverlay(id){
+  return __ovStack.length>0 && __ovStack[__ovStack.length-1]===id;
+}

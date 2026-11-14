@@ -222,13 +222,21 @@
       +'<button class="btn ghost sm" type="button" data-cancel>取消</button>'
       +'<button class="btn sm" type="button" data-ok>创建</button></div></div>';
     document.body.appendChild(wrap);
+    // 双击「新建笔记」时第二下落在刚出现的遮罩上，会把弹层立刻关掉
+    markOpen(wrap); openOverlay('newNote');
     var title=wrap.querySelector('#pfNewTitle'), body=wrap.querySelector('#pfNewBody');
     var msg=wrap.querySelector('.pf-msg'), okBtn=wrap.querySelector('[data-ok]');
     title.focus();
-    function close(){ wrap.remove(); }
+    function close(){ closeOverlay('newNote'); document.removeEventListener('keydown',onEsc); wrap.remove(); }
     wrap.querySelector('[data-cancel]').onclick=close;
-    wrap.addEventListener('click',function(e){ if(e.target===wrap) close(); });
-    wrap.addEventListener('keydown',function(e){ if(e.key==='Escape') close(); });
+    wrap.addEventListener('click',function(e){ if(e.target===wrap && !tooSoon(wrap)) close(); });
+    /* Esc 挂在 document 上，不挂在 wrap 上：点过遮罩之后焦点落在 body，
+       keydown 不再经过 wrap，挂在里面就会「点了外面之后 Esc 失效」。 */
+    var onEsc=function(e){
+      if(e.key!=='Escape'||!isTopOverlay('newNote')) return;
+      e.stopPropagation(); document.removeEventListener('keydown',onEsc); close();
+    };
+    document.addEventListener('keydown',onEsc);
     okBtn.onclick=function(){
       var t=title.value.trim();
       if(!t){ msg.textContent='标题不能为空'; title.focus(); return; }
