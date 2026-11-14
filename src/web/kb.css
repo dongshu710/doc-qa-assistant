@@ -33,21 +33,21 @@
 
 .kb-list{padding:16px;}
 .kb-list table{table-layout:fixed;}
-/* 列序：1 勾选 / 2 文件 / 3 知识块 / 4 关键词 / 5 大小 / 6 更新时间 / 7 操作 */
+/* 列序：1 勾选 / 2 文件 / 3 知识块 / 4 大小 / 5 更新时间 / 6 操作
+   关键词列 1.38 已删（列被隐藏但整条链路还在，属死代码），列数从 7 变 6，
+   下面所有 nth-child 都必须跟着改——错一位就会把「操作」列整列藏掉。 */
 .kb-list th:nth-child(1){width:30px;}
 .kb-list th:nth-child(2){width:auto;}
 .kb-list th:nth-child(3){width:58px;}
-/* 关键词数量属于「有也行没有也行」的元数据，占一列只会挤压文件名；直接不显示 */
-.kb-list th:nth-child(4),.kb-list td:nth-child(4){display:none;}
-.kb-list th:nth-child(5){width:60px;}
-.kb-list th:nth-child(6){width:142px;}
-.kb-list th:nth-child(7){width:196px;}
+.kb-list th:nth-child(4){width:60px;}
+.kb-list th:nth-child(5){width:142px;}
+.kb-list th:nth-child(6){width:180px;}
 .kb-list td{white-space:nowrap;}
 .kb-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
 .search{position:relative;flex:1;min-width:150px;}
 .search svg{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--faint);}
 .search input{width:100%;padding:7px 10px 7px 29px;border:1px solid var(--line-2);border-radius:8px;
-  font-size:12px;font-family:inherit;outline:none;background:var(--surface);color:var(--text);}
+  font-size:12px;font-family:inherit;background:var(--surface);color:var(--text);}
 .search input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,111,94,.10);}
 .chips{display:flex;gap:2px;}
 .chips button{border:none;background:none;padding:5px 8px;border-radius:7px;font-size:12px;font-family:inherit;
@@ -124,18 +124,20 @@
   .kb-toolbar .search{flex-basis:100%;}
   .chips{order:2;width:auto;flex:1;}
   .kb-sort{order:3;margin-left:auto;}
-  .kb-list th:nth-child(5), .kb-list td:nth-child(5),
-  .kb-list th:nth-child(6), .kb-list td:nth-child(6){display:none;}
-  .kb-list th:nth-child(3){width:54px;}
-  .kb-list th:nth-child(7){width:186px;}
+  /* 手机上 390px 宽：操作列 186 + 知识块 54 + 勾选 30 会把文件名挤没。
+     这里只留「文件 + 操作」，操作收成 96px，文件名才有地方换行显示。 */
+  .kb-list th:nth-child(3), .kb-list td:nth-child(3),
+  .kb-list th:nth-child(4), .kb-list td:nth-child(4),
+  .kb-list th:nth-child(5), .kb-list td:nth-child(5){display:none;}
+  .kb-list th:nth-child(6){width:108px;}
+  /* 手机上只留「分段 / 删除」：历史与出题要翻版本、要出题量，都不适合窄屏，
+     四个按钮挤在 108px 里会竖成一列，把每行撑到三倍高。 */
+  .kb-list .row-actions{flex-wrap:nowrap;gap:4px;justify-content:flex-end;}
+  .kb-list .row-actions .hist,.kb-list .row-actions .gen{display:none;}
+  .kb-list .row-actions .btn{padding:3px 5px;font-size:11px;}
+  .kb-list td{white-space:normal;}
 }
 
-
-@media (max-width:860px){
-  .kb-layout{grid-template-columns:1fr;}
-  .kb-side{position:static;}
-
-}
 
 /* ---------- 勾选与状态 ---------- */
 .kb-list .sel{text-align:center;padding-left:6px !important;padding-right:0 !important;}
@@ -197,3 +199,7 @@
 .ck-h-tag{font-size:11px;color:var(--faint);flex:none;}
 .ck-hit.off .ck-h-tag{color:var(--warn);}
 .ck-empty{color:var(--faint);font-size:12px;line-height:1.8;padding:6px 0;}
+
+/* 审批队列提示：清单来自已发布版本，待审批的新文档不会出现在表里 */
+.kb-pending{margin:0 0 10px;padding:7px 10px;border-radius:8px;background:var(--warn-soft);
+  color:var(--warn);font-size:12px;line-height:1.6;}

@@ -41,7 +41,20 @@ var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级�
 var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['未找到','warn'],refuse:['拒答','bad']};
 var ART='{{_ASK_ART}}';
 
-function scrollBottom(){ list.scrollTop=list.scrollHeight; }
+/* 滚到底：宽屏滚的是 .chat-list，窄屏（≤900px）它的 overflow 是 visible，
+   真正在滚的是文档本身。写死 list.scrollTop 会让窄屏「发问了但页面不动」。
+   near 判断是刻意的：用户往上翻看引用时不该被拽回底部。 */
+function scrollBottom(force){
+  var near;
+  if(list.scrollHeight>list.clientHeight+4){
+    near=list.scrollHeight-list.scrollTop-list.clientHeight<140;
+    if(force||near) list.scrollTop=list.scrollHeight;
+    return;
+  }
+  var doc=document.scrollingElement||document.documentElement;
+  near=doc.scrollHeight-(window.pageYOffset||doc.scrollTop)-window.innerHeight<160;
+  if(force||near) window.scrollTo(0,doc.scrollHeight);
+}
 function autoGrow(){ qEl.style.height='auto'; qEl.style.height=Math.min(qEl.scrollHeight,124)+'px'; }
 
 var heroEl=document.getElementById('hero'), exLoaded=false;
@@ -104,26 +117,11 @@ function round(v,digits){
 }
 /* 元信息：这条答案出自哪版文档、引了几条、覆盖多少、检索分多少。
    没有这些，用户只能“相信”答案；有了这些，能判断该不该信。 */
+/* 元信息只留「该不该信」相关的：引用几条、覆盖多少、哪版知识库、有没有降级。
+   耗时 / 模式 / 检索分是排查用的，默认不出现——它们是数字，不是结论。 */
 function footHTML(d){
   var html='<div class="ans-foot">';
-  var ms=(d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms';
-  if(d.behavior!=='answer'){
-    if(d.behavior==='no_answer'&&d.gate_score!=null){
-      html+=pill('最高分 '+round(d.gate_score,3)+' / 阈值 '+round(d.min_score,2),'warn');
-    }
-    if(d.kb_version){ html+=pill('知识库 '+d.kb_version); }
-    return html+pill(ms)+'</div>';
-  }
-  if(d.path==='keyword'){
-    html+=pill('本地直出 · 未调用模型','ok')+pill(ms);
-  }else{
-    if(LLM_READY===false){ html+=pill('离线抽取','warn'); }
-    else { html+='<span class="pill brand">'+esc(d.channel||'-')+' / '+esc(d.model||'-')+'</span>'; }
-    html+=pill('模式 '+(MODE[d.mode]||d.mode||'-'))+pill(ms);
-    if(d.retrieval_score!=null){ html+=pill('检索分 '+round(d.retrieval_score,3)); }
-  }
-  /* 置信度低不是"出错了"，是"这条未必是你要问的对象"——单独一个黄标，
-     让用户在看答案之前就知道要核对原文。正文里也有同样的提示语，双保险。 */
+  var dbg=/[?&]debug=1/.test(location.search||'');
   if(d.confidence==='low'){ html+=pill('置信度低 · 请核对原文','warn'); }
   if(d.citations&&d.citations.length){ html+=pill('引用 '+d.citations.length+' 条'); }
   if(d.citation_coverage!=null&&d.citation_coverage<0.999){
@@ -133,6 +131,14 @@ function footHTML(d){
   if(d.degraded){ html+=pill('降级','warn'); }
   if(d.degrade_reason==='budget_exceeded'){ html+=pill('预算上限','warn'); }
   if(d.citation_exempt_reason){ html+=pill('引用豁免'); }
+  if(dbg){
+    html+=pill((d.latency_ms==null?'-':Math.round(d.latency_ms))+' ms');
+    html+=pill('模式 '+(MODE[d.mode]||d.mode||'-'));
+    if(d.retrieval_score!=null){ html+=pill('检索分 '+round(d.retrieval_score,3)); }
+    if(d.behavior==='no_answer'&&d.gate_score!=null){
+      html+=pill('最高分 '+round(d.gate_score,3)+' / 阈值 '+round(d.min_score,2),'warn');
+    }
+  }
   return html+'</div>';
 }
 function similarHTML(items){
@@ -152,6 +158,18 @@ function answerHTML(d,q){
   }
   if(d.turn>1) label+='<span class="pill">第 '+d.turn+' 轮</span>';
   var h='<div class="ans-card" data-q="'+esc(q||d.query||'')+'">'+(label?'<div class="ans-label">'+label+'</div>':'')+'<div class="ans-label-sr" hidden>'+head+'</div>';
+  /* 未命中时最该看到的是「那我能问什么」——相似问题必须在正文后面立刻出现，
+     排在引用卡与折叠面板之后等于没有。 */
+  if(d.behavior==='no_answer') h+=similarHTML(d.similar_questions);
+  /* 来源前置：长答案里引用卡会排到几屏之后，用户只能盲信。
+     这里在正文上方给一行「来源 N 份 · M 条」，点了滚到引用卡。 */
+  if(d.citations&&d.citations.length){
+    var docs={};
+    d.citations.forEach(function(c){ if(c.doc_id) docs[c.doc_id]=1; });
+    var dn=Object.keys(docs).length||d.citations.length;
+    h+='<div class="src-chip"><button type="button" class="src-jump">'
+      +'来源 '+dn+' 份 · '+d.citations.length+' 条</button></div>';
+  }
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
       +d.keyword_terms.map(function(t){ return '<span class="kw-term">'+esc(t)+'</span>'; }).join('')+'</div>';
@@ -171,10 +189,10 @@ function answerHTML(d,q){
       +d.retrieved.map(function(x,i){
         var sc=(x.score==null)?'-':(Math.round(x.score*1000)/1000);
         return '<div class="src-row"><span class="rank">'+String(i+1).padStart(2,'0')+'</span>'
-          +'<span>'+esc(x.title)+' · '+esc(x.section)+'</span><span class="sc">score '+sc+'</span></div>';
+          +'<span>'+esc(x.title)+' · '+esc(x.section)+'</span></div>';
       }).join('')+'</div></details>';
   }
-  h+=similarHTML(d.similar_questions);
+  if(d.behavior!=='no_answer') h+=similarHTML(d.similar_questions);
   h+=footHTML(d)+'</div>';
   return h;
 }
@@ -182,10 +200,15 @@ function bindSource(){
   var drawer=document.getElementById('srcDrawer'), mask=document.getElementById('srcMask');
   var titleEl=document.getElementById('srcTitle'), subEl=document.getElementById('srcSub');
   var textEl=document.getElementById('srcText'), altEl=document.getElementById('srcAlt');
+  var lastFocus=null, CUR={doc:'',chunk:'0'};
   function close(){
     drawer.classList.remove('open');
     drawer.hidden=true; mask.hidden=true; textEl.textContent='';
+    document.body.classList.remove('no-scroll');
     if(altEl){ altEl.hidden=true; altEl.innerHTML=''; }
+    // 关掉后回到触发它的那条引用：否则键盘用户会被扔回页面顶部
+    if(lastFocus&&lastFocus.focus){ try{ lastFocus.focus(); }catch(e){} }
+    lastFocus=null;
   }
   /* 只在真的可能留存过原件时才给链接：数据里没有原件却放个链接，点开就是 404，
      那比不给更让人困惑。PDF 用浏览器原生阅读器的 #page= 锚点，不引 pdf.js。 */
@@ -206,6 +229,14 @@ function bindSource(){
       var line=(d.section||'')+(d.page?' · 第 '+d.page+' 页':'')
         +' · 第 '+(d.chunk_index+1)+'/'+d.doc_chunks+' 块'+(d.version?' · '+d.version:'');
       subEl.innerHTML=esc(line)+(pageLink(doc,d.page||page)?' '+pageLink(doc,d.page||page):'');
+      /* 「第 3/18 块」以前只是文本：想看下一块只能关掉重找。这里给两个步进按钮。 */
+      var total=Number(d.doc_chunks||0), idx=Number(d.chunk_index||0);
+      CUR={doc:doc,chunk:String(idx)};
+      if(total>1){
+        subEl.insertAdjacentHTML('beforeend','<span class="src-nav">'
+          +'<button type="button" class="src-step" data-go="-1"'+(idx<=0?' disabled':'')+'>上一块</button>'
+          +'<button type="button" class="src-step" data-go="1"'+(idx>=total-1?' disabled':'')+'>下一块</button></span>');
+      }
       var safe=esc(d.text||'');
       var needle=esc(snippet||'');
       if(needle && safe.indexOf(needle)>=0){ safe=safe.replace(needle,'<mark>'+needle+'</mark>'); }
@@ -252,8 +283,12 @@ function bindSource(){
     if(!doc||chunk===''){ toast('这条引用缺少原文定位',true); return; }
     var card=btn.closest('.ans-card');
     var q=card?(card.dataset.q||''):'';
+    lastFocus=btn;
     mask.hidden=false; drawer.hidden=false;
+    document.body.classList.add('no-scroll');
     requestAnimationFrame(function(){ drawer.classList.add('open'); });
+    var closer=document.getElementById('srcClose');
+    if(closer) closer.focus();
     show(doc,chunk,snippet,btn.dataset.page||'');
     loadAlt(doc,q);
   }
@@ -263,6 +298,12 @@ function bindSource(){
       show(row.dataset.doc,row.dataset.chunk,'',row.dataset.page||'');
     });
   }
+  subEl.addEventListener('click',function(ev){
+    var b=ev.target.closest('[data-go]'); if(!b||!CUR.doc) return;
+    var next=Number(CUR.chunk)+Number(b.dataset.go);
+    if(next<0) return;
+    show(CUR.doc,String(next),'');
+  });
   document.getElementById('srcClose').onclick=close;
   mask.onclick=close;
   return {open:open, close:close};
@@ -382,8 +423,8 @@ function exportMarkdown(){
 function bindMissFeedback(body,d,query){
   var card=body.querySelector('.ans-card'); if(!card) return;
   var fb=document.createElement('div'); fb.className='fb';
-  fb.innerHTML='<span class="fb-q">没找到需要的答案？</span>'
-    +'<button type="button" class="fb-miss">补充线索</button>'
+  fb.innerHTML='<button type="button" class="fb-miss">补充线索</button>'
+    +'<button type="button" class="fb-again">换个问法</button>'
     +'<button type="button" class="fb-copy">复制问题</button>'
     +'<div class="fb-note"><input class="exp" placeholder="应该怎么答？（可留空）">'
     +'<input class="doc" placeholder="哪份文档有答案？（可留空）">'
@@ -396,6 +437,12 @@ function bindMissFeedback(body,d,query){
     fb.querySelector('.exp').focus();
   };
   fb.querySelector('.fb-copy').onclick=function(){ copyText(query||d.query||'','问题已复制'); };
+  var again=fb.querySelector('.fb-again');
+  if(again) again.onclick=function(){
+    // 把原问题填回输入框并选中：改两个字比重打一遍快得多
+    qEl.value=query||d.query||''; autoGrow(); qEl.focus();
+    try{ qEl.setSelectionRange(0,qEl.value.length); }catch(e){}
+  };
   fb.querySelector('.exp').onkeydown=function(e){ if(e.key==='Enter'){ e.preventDefault(); fb.querySelector('.fb-send').click(); } };
   fb.querySelector('.fb-send').onclick=async function(){
     var expected=fb.querySelector('.exp').value.trim();
@@ -419,12 +466,12 @@ function bindFeedback(body,d,query){
   // 关掉「储存对话内容」时按钮根本不出现：默认就不该有保存入口
   var noteBtn=(window.__storeChat===true)
     ? ('<button type="button" class="fb-save">'+ICON_NOTE+' 存为笔记</button>') : '';
-  fb.innerHTML='<span class="fb-q">这条回答对你有帮助吗？</span>'
-    +'<button type="button" class="fb-up">'+up+' 有用</button>'
+  fb.innerHTML='<button type="button" class="fb-up">'+up+' 有用</button>'
     +'<button type="button" class="fb-down">'+down+' 有问题</button>'
     +'<button type="button" class="fb-copy">复制</button>'
+    +'<button type="button" class="fb-regen">重新生成</button>'
     +noteBtn
-    +'<div class="fb-note"><input placeholder="哪里不对？可留空，用于 badcase 复盘"><button type="button" class="btn sm fb-send">提交</button></div>';
+    +'<div class="fb-note"><input placeholder="哪里不对？（可留空）"><button type="button" class="btn sm fb-send">提交</button></div>';
   body.querySelector('.ans-card').appendChild(fb);
   var saveBtn=fb.querySelector('.fb-save');
   if(saveBtn){ saveBtn.onclick=function(){ openNoteDialog(query||d.query||'', d); }; }
@@ -434,7 +481,7 @@ function bindFeedback(body,d,query){
       await fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({trace_id:d.trace_id,useful:useful,comment:comment||''})});
       fb.innerHTML='<span class="fb-done"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m20 6-11 11-5-5"/></svg>'
-        +'已记录，可在评测看板一键转成用例</span>';
+        +'已记录</span>';
       toast(useful?'已记录：有用':'已记录：有问题，感谢复盘');
     }catch(e){ toast('反馈失败：'+e,true); }
   }
@@ -451,6 +498,14 @@ function bindFeedback(body,d,query){
     if(e.key==='Enter'){ e.preventDefault(); fb.querySelector('.fb-send').click(); }
   };
   fb.querySelector('.fb-copy').onclick=function(){ copyText(d.answer,'答案已复制'); };
+  var regen=fb.querySelector('.fb-regen');
+  if(regen) regen.onclick=function(){
+    var q=(body.querySelector('.ans-card')||{}).getAttribute
+      ? body.querySelector('.ans-card').getAttribute('data-q') : (d.query||'');
+    if(!q) return;
+    body.innerHTML=''; qEl.value=q; autoGrow();
+    ask({body:body,noUser:true});
+  };
 }
 
 var ICON_SEND='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13"/><path d="m12 5 7 7-7 7"/></svg>';
@@ -481,7 +536,24 @@ async function readSSE(resp,onEvent){
   }
 }
 
-async function ask(){
+/* 失败要长得像失败：以前给一张 border:0 的卡片设置 border-color，
+   等于什么样式都没有，报错和答案看起来一模一样。 */
+function renderError(body,err,query){
+  var msg=String((err&&err.message)||err||'');
+  var friendly=/Failed to fetch|NetworkError|load failed|network/i.test(msg)
+    ? '连不上本地服务。确认它还在运行，然后重试。' : msg;
+  body.innerHTML='<div class="err-block"><div class="err-title">回答失败</div>'
+    +'<div class="err-body">'+esc(friendly)+'</div>'
+    +'<div class="err-foot"><button type="button" class="btn ghost sm" data-retry>重试</button>'
+    +'<button type="button" class="btn ghost sm" data-copyq>复制问题</button></div></div>';
+  var r=body.querySelector('[data-retry]');
+  if(r) r.onclick=function(){ body.innerHTML=''; qEl.value=query; autoGrow(); ask({body:body,noUser:true}); };
+  var c=body.querySelector('[data-copyq]');
+  if(c) c.onclick=function(){ copyText(query,'问题已复制'); };
+}
+
+async function ask(opts){
+  opts=opts||{};
   var query=qEl.value.trim();
   if(!query){ qEl.focus(); return; }
   if(busy) return;
@@ -489,17 +561,16 @@ async function ask(){
   controller=new AbortController();
   if(heroEl) heroEl.hidden=true;
 
-  addUser(query);
-  var body=addBot();
+  if(!opts.noUser) addUser(query);
+  var body=opts.body||addBot();
   body.innerHTML=thinkingHTML('正在检索知识库…');
-  scrollBottom();
+  scrollBottom(true);
   qEl.value=''; autoGrow();
 
   var answerEl=null, raw='';
   function ensureAnswer(){
     if(answerEl) return answerEl;
-    body.innerHTML='<div class="ans-card"><div class="ans-label"><span>回答中</span></div>'
-      +'<div class="answer streaming"></div></div>';
+    body.innerHTML='<div class="ans-card"><div class="answer streaming"></div></div>';
     answerEl=body.querySelector('.answer');
     return answerEl;
   }
@@ -509,6 +580,26 @@ async function ask(){
     if(data.behavior==='answer'){ bindFeedback(body,data,query); }
     else if(data.behavior==='no_answer'){ bindMissFeedback(body,data,query); }
     rememberTurn(query,data);
+  }
+  /* 半截答案：停止或断流时，已经吐出来的字比一句「失败」有用得多。
+     以前这里只追加一句「（已停止生成）」，既不落库也不可重试，刷新一次就全没了。 */
+  function finishPartial(note){
+    var text=(answerEl&&answerEl.textContent)||'';
+    if(!text.trim()){
+      body.innerHTML='<div class="ans-card"><div class="ans-label"><span class="pill warn">'+esc(note)+'</span></div>'
+        +'<div class="answer">这次没有生成任何内容。</div></div>';
+      return;
+    }
+    body.innerHTML='<div class="ans-card partial"><div class="answer">'+esc(text)+'</div></div>';
+    var card=body.querySelector('.ans-card');
+    if(card){
+      card.insertAdjacentHTML('beforeend','<div class="partial-bar"><span class="pill warn">'+esc(note)+'</span>'
+        +'<button type="button" class="btn ghost sm" data-regen>重新生成</button></div>');
+      card.querySelector('[data-regen]').onclick=function(){
+        body.innerHTML=''; qEl.value=query; autoGrow(); ask({body:body,noUser:true});
+      };
+    }
+    rememberTurn(query,{behavior:'answer',answer:text,partial:true});
   }
 
   var timer=setTimeout(function(){
@@ -550,16 +641,16 @@ async function ask(){
   }catch(err){
     clearTimeout(timer);
     if(err && err.name==='AbortError'){
-      if(answerEl){ answerEl.textContent += '\n\n（已停止生成）'; }
-      else { body.innerHTML='<div class="ans-card"><div class="answer">已停止生成。</div></div>'; }
+      finishPartial('已停止生成');
       toast('已停止生成');
+    }else if(answerEl&&answerEl.textContent.trim()){
+      finishPartial('连接中断，只收到部分内容');
     }else{
-      body.innerHTML='<div class="ans-card" style="border-color:#f6d3d0"><div class="ans-label"><span>请求失败</span></div>'
-        +'<div class="answer">'+esc(err.message||String(err))+'</div></div>';
+      renderError(body,err,query);
     }
   }finally{
     clearTimeout(timer);
-    setBusy(false); controller=null; qEl.focus(); scrollBottom();
+    setBusy(false); controller=null; qEl.focus(); scrollBottom(true);
   }
 }
 
@@ -588,6 +679,12 @@ var healthP=fetch('/api/health').then(function(r){return r.json();}).then(functi
 }).catch(function(){});
 
 list.addEventListener('click',function(e){
+  var jump=e.target.closest('.src-jump');
+  if(jump){
+    var card=jump.closest('.ans-card'), refs=card&&card.querySelector('.refs');
+    if(refs) refs.scrollIntoView({behavior:'smooth',block:'center'});
+    return;
+  }
   var ref=e.target.closest('.ref');
   if(ref){ sourceView.open(ref); return; }
   var b=e.target.closest('.sim-q');

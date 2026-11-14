@@ -26,7 +26,7 @@
       setBadge(d.count);
       var rows=d.items||[];
       if(!rows.length){
-        box.innerHTML='<p class="files-empty">还没有文件。在问答里点「存为笔记」，或到完整页新建一篇。</p>';
+        box.innerHTML='<p class="files-empty">还没有笔记。</p>';
         return;
       }
       box.innerHTML='';
@@ -106,7 +106,7 @@
     e.preventDefault(); e.stopPropagation();
     try{ localStorage.setItem(DOT_KEY, this.getAttribute('data-sig')||'none'); }catch(err){}
     this.hidden=true;
-    if(window.toast) window.toast('备份提醒已消除');
+    if(window.toast) window.toast('已忽略这次备份提醒；下次有新内容还会提醒');
   });
 
   // Ctrl/Cmd+Shift+F 开合最近文件；在输入框里不抢按键（那里常按组合键选词）

@@ -114,52 +114,13 @@
           }).join('') +
           '</tbody></table>';
       }
-      box.insertAdjacentHTML('beforeend', uploadForm());
-      var form = $('agUpload');
-      if (form) form.addEventListener('submit', onUpload);
+      // 新增文档只在知识库页做（那边有拖拽、多格式、进度与重试）。
+      // 管理台再放一个「粘贴 Markdown」等于第二套上传，两条路径的校验还不一样。
+      box.insertAdjacentHTML('beforeend',
+        '<p class="ag-hint">新增文档走 <a href="/kb" target="_blank" rel="noopener">知识库</a>；' +
+        '这里只管查看与删除。</p>');
     } catch (e) {
       box.innerHTML = errBox(e);
-    }
-  }
-
-  function uploadForm() {
-    return '<form class="ag-upload" id="agUpload">' +
-      '<input name="name" placeholder="新文档名，如 产品说明.md" maxlength="80" required>' +
-      '<textarea name="content" rows="4" placeholder="粘贴 Markdown 或纯文本；.md / .txt 直接入库"></textarea>' +
-      '<button type="submit">上传并入库</button>' +
-      '<p class="ag-hint">上传走 /api/knowledge/upload；PDF / DOCX 请走「文件」页的解析入口。</p>' +
-      '</form>';
-  }
-
-  async function onUpload(ev) {
-    ev.preventDefault();
-    var form = ev.currentTarget;
-    var name = (form.name.value || '').trim();
-    var content = form.content.value || '';
-    if (!name || !content.trim()) { toast('文件名与内容都要填', true); return; }
-    var btn = form.querySelector('button[type=submit]');
-    btn.disabled = true;
-    btn.textContent = '上传中…';
-    try {
-      var r = await api('/api/knowledge/upload', { method: 'POST', body: { name: name, content: content } });
-      toast(r.pending ? '已提交审批：' + name : '已入库：' + name);
-      // 上传响应里 `chunks` 恒为 null（入库是异步重建），块数在 `index.chunks`。
-      // 直接读 `r.chunks` 会写出「已入库 0 块」——一条看着像失败的假消息。
-      var idx = r.index || {};
-      var kbNow = (r.files == null ? '-' : r.files) + ' 份 / ' +
-        (idx.chunks == null ? '-' : idx.chunks) + ' 块';
-      receipt('上传文档', name, r.pending
-        ? '进入待审批 ' + (r.change_id || '') + '，尚未生效'
-        : '已入库 · 当前 ' + kbNow + ' · 展示区指标仍是旧快照');
-      form.reset();
-      await loadContent();
-      await loadApproval();
-      markStale();
-    } catch (e) {
-      toast(e.message || String(e), true);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '上传并入库';
     }
   }
 
@@ -481,6 +442,9 @@
     }
     if (act === 'approve' || act === 'reject') {
       var id = el.dataset.id;
+      // 通过即生成新版本并切索引，等于改线上语料：一次误点不该生效
+      if (act === 'approve' && !armConfirm(el, '通过并发布')) return;
+      el.disabled = true;
       try {
         var apr = await api('/api/kb/' + act, { method: 'POST', body: { change_id: id } });
         toast((act === 'approve' ? '已通过并发布：' : '已驳回：') + id);
@@ -492,9 +456,11 @@
         await loadContent();
         markStale();
       } catch (e) { toast(e.message || String(e), true); }
+      el.disabled = false;
       return;
     }
     if (act === 'rebuild') {
+      if (!armConfirm(el, '重建索引')) return;
       try {
         var r = await api('/api/reload', { method: 'POST', body: {} });
         toast(r.rebuilding ? '索引重建已排队' : '索引已重建');
@@ -519,7 +485,7 @@
     }
     if (act === 'auth') {
       var d = document.querySelector('.agroup[data-group="auth"]');
-      if (d) { d.open = true; d.scrollIntoView({ block: 'nearest' }); }
+      if (d) { d.open = true; }
     }
   }
 
@@ -657,5 +623,27 @@
     try {
       if (new URLSearchParams(location.search).get('admin') === '1') openPanel('');
     } catch (e) { /* 老浏览器没有 URLSearchParams 时静默跳过 */ }
+  });
+})();
+
+/* 下载按钮：必须走 fetch。
+   直接给 a[href] 的话浏览器导航带不上 X-API-Key，服务端按匿名处理并
+   静默返回脱敏副本（文档清单被清空、模型显示「已隐藏」）——用户以为拿到了完整版。 */
+(function () {
+  var btns = [].slice.call(document.querySelectorAll('[data-dl]'));
+  if (!btns.length || !window.fetch) return;
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var label = b.textContent;
+      b.disabled = true; b.textContent = '生成中…';
+      fetch('/report?download=1', { headers: reqHeaders(false) })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        })
+        .then(function (t) { saveBlob(t, 'report.html', 'text/html;charset=utf-8'); })
+        .catch(function (e) { toast('下载失败：' + ((e && e.message) || e), true); })
+        .finally(function () { b.disabled = false; b.textContent = label; });
+    });
   });
 })();

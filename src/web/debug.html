@@ -15,8 +15,8 @@
       <button class="btn" id="dbgRun" type="button">检索</button>
     </div>
     <p class="muted dbg-hint">
-      「未保留」= 检索到了但分数低于阈值（<span class="mono" id="dbgMinScore">-</span>），
-      会被当成「无法找到答案」。这一栏空着，才说明是该调切分而不是调阈值。
+      「低于门槛」= 检索到了但相似度不够（门槛 <span class="mono" id="dbgMinScore">-</span>），
+      会被当成「无法找到答案」。一条都没有，才说明该改切分而不是调门槛。
     </p>
   </section>
 

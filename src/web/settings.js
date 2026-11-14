@@ -157,7 +157,17 @@
     if($('setMcpPre')) $('setMcpPre').textContent=JSON.stringify(d.mcp||{},null,2);
     renderMcpClients(d.mcp_targets||[]);
     renderApiState(d.llm||{});
+    fillTools();
     renderStorage(d.storage||{});
+  }
+  /* 原来的「智能体」侧栏面板并入这里：它唯一多出来的信息就是接出了几个工具。
+     面板本身与这份 MCP 配置重复，删掉了。 */
+  function fillTools(){
+    var el=$('setTools'); if(!el) return;
+    fetch('/tools.json').then(function(r){ return r.json(); }).then(function(d){
+      var n=((d&&d.tools)||[]).length;
+      el.textContent=n?('已接出 '+n+' 个工具，智能体读写的是同一个笔记目录'):'暂未接出工具';
+    }).catch(function(){ el.textContent='工具清单读取失败'; });
   }
   function renderApiState(llm){
     var box=$('apiState'); if(!box) return;
@@ -185,14 +195,16 @@
     if(cost){
       // 数字后面写清「这次是扫出来的还是上面那次的」：用户抱怨过设置面板打开要等一下
       var ms=Number(st.took_ms||0);
-      cost.textContent=st.cached
-        ? '沿用 30 秒内的统计结果（笔记 '+((notes.files||0))+' 篇无变化）'
-        : '本次统计用时 '+ms+' ms';
-      cost.hidden=false;
+      // 缓存与否是实现细节：只在真扫了一遍时给耗时，缓存命中就不显示
+      cost.textContent='本次统计用时 '+ms+' ms';
+      cost.hidden=!!st.cached;
     }
   }
   if($('stClean')) $('stClean').addEventListener('click',function(){
     var btn=this, label=btn.textContent;
+    var keep=Number($('stKeep').value||0);
+    // 这条不可撤销：旧版本快照删掉就没了。先让人看清「保留几版」再动手。
+    if(!confirm('将删除知识库的旧版本快照，只保留最近 '+keep+' 版。\n\n删掉的版本无法恢复（当前文档不受影响）。继续？')) return;
     btn.disabled=true; btn.textContent='清理中…';
     note('stMsg','正在清理，索引会重建一次…','');
     api('POST','/api/settings/storage/clean',{keep:Number($('stKeep').value||0)}).then(function(d){

@@ -26,15 +26,18 @@
    Ctrl+B 哪都没写。发现不了的快捷键等于没有。这里按 ? 或 F1 摊开一张表，
    表里的每一条都必须真在代码里绑过，否则就是另一种形式的骗人。 */
 (function(){
-  var rows=[
-    ['Ctrl / Cmd + K','新对话'],
-    ['Ctrl / Cmd + B','收起或展开侧栏'],
-    ['Ctrl / Cmd + Shift + F','打开笔记与附件'],
-    ['Enter','发送（问答页）'],
-    ['Shift + Enter','输入框内换行'],
-    ['Esc','关闭当前浮层'],
-    ['? / F1','打开这张表']
-  ];
+  /* 只列这一页真正能用的：汇报页没有侧栏也没有输入框，
+     把 Ctrl+K 列上去等于教用户按一个没反应的键。 */
+  var rows=[];
+  if(document.getElementById('newChat')){
+    rows.push(['Ctrl / Cmd + K','新对话'],
+              ['Ctrl / Cmd + B','收起或展开侧栏'],
+              ['Ctrl / Cmd + Shift + F','打开笔记与附件']);
+  }
+  if(document.getElementById('q')){
+    rows.push(['Enter','发送'],['Shift + Enter','换行']);
+  }
+  rows.push(['Esc','关闭当前浮层'],['? / F1','打开这张表']);
   var mask=null, panel=null;
   function close(){
     if(!panel) return;

@@ -50,6 +50,8 @@ p{margin:0;line-height:1.75;}
 code{font-family:var(--mono);font-size:.9em;background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--text);}
 ::selection{background:var(--brand-soft);color:var(--ink);}
 :focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:8px;}
+/* 抽屉/弹层打开时锁住背景滚动：滚轮穿透会让人以为抽屉内容在乱跳 */
+body.no-scroll{overflow:hidden;}
 
 /* ============ 布局 ============ */
 .wrap{width:100%;max-width:1120px;margin:0 auto;padding:28px 22px 72px;}
@@ -384,7 +386,7 @@ tbody tr:hover td{background:var(--brand-tint);}
 .field label{display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px;}
 .field input,.field select,.field textarea{
   width:100%;padding:10px 12px;border:1px solid var(--line-2);border-radius:9px;font-size:13.5px;
-  font-family:inherit;color:var(--text);background:var(--surface);outline:none;transition:border .15s, box-shadow .15s;
+  font-family:inherit;color:var(--text);background:var(--surface);transition:border .15s, box-shadow .15s;
 }
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,111,94,.12);}
 .field .hint{font-size:12px;color:var(--faint);margin-top:5px;}
@@ -398,7 +400,7 @@ pre.cmd .c{color:#8a857c;}
 
 @media print{
   body{background:#fff;}
-  .nav,.site-foot,#toasts{display:none !important;}
+  .side,.mnav,.site-foot,#toasts{display:none !important;}
   .card,.kpi{box-shadow:none;break-inside:avoid;}
 }
 /* ============ 深色模式 ============

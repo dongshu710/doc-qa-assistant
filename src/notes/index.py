@@ -30,6 +30,8 @@ def entry_for(note, path: Path, home: Path) -> dict:
         "status": note.status,
         "created": note.created,
         "updated": note.updated or note.created,
+        # 来源要进索引：笔记页要标「这条是智能体写的」，不能为此回读每篇文件的 front matter
+        "source": dict(note.source or {}),
         "digest": note.digest,
         "summary": note.summary,
         "hash": note.hash,

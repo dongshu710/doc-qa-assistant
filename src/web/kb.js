@@ -12,7 +12,12 @@ function updateBatch(){
   bar.hidden=n===0;
   if(n) $('kbBatchCount').textContent='已选 '+n+' 份';
   var all=$('kbAll');
-  if(all) all.checked=!!n&&n===visibleFiles().length;
+  if(all){
+    var total=visibleFiles().length;
+    all.checked=!!n&&n===total;
+    // 选了 3 份时表头仍显示「未勾选」，用户会以为没选中再点一次 → 变成全选 → 误删
+    all.indeterminate=n>0&&n<total;
+  }
 }
 
 function typeOf(name){
@@ -41,7 +46,8 @@ function visibleFiles(){
 function statusOf(f){
   if(f.status==='no_index') return {cls:'no_index',text:'未索引',tip:'还没进检索索引：可能是索引正在重建，或这份文档没有可切分的正文'};
   if(f.status==='no_page') return {cls:'no_page',text:'无页码',tip:'PDF/PPTX 转出来没有页标，引用里点不到「第 N 页」；检索本身不受影响'};
-  return {cls:'ok',text:'正常',tip:'已建索引，页码可用'};
+  // 正常不给字：一屏全是「正常」等于没有信息，异常才值得占位置
+  return null;
 }
 
 function render(){
@@ -50,24 +56,30 @@ function render(){
     +(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
   $('kbVersion').textContent=KB.version?('版本 '+KB.version):'单目录模式';
   var list=visibleFiles();
-  $('kbFoot').textContent='显示 '+list.length+' / '+total+' 份';
-  $('kbHint').textContent=total?('合计 '+chunks+' 个知识块'):'';
+  // 只在筛选生效时才显示这一行，否则它会和页头的「N 份 · M 块」说同一件事
+  $('kbFoot').textContent=list.length===total?'':'筛选出 '+list.length+' / 共 '+total+' 份';
   if($('kbSeed')) $('kbSeed').hidden=total>0;
+  /* 开了审批时，刚上传的文档不会出现在清单里（清单来自已发布版本）。
+     不说这一句，用户会以为上传失败，反复重传。 */
+  var pend=KB.pending_changes||0;
+  if($('kbPending')){
+    $('kbPending').hidden=!pend;
+    $('kbPending').textContent=pend?('有 '+pend+' 份变更在审批队列，通过后才会进入检索。'):'';
+  }
   if(!list.length){
     $('kbBody').innerHTML=emptyRow(7,total?'没有匹配的文档':'还没有文档，先上传一份 .md / .pdf / .docx / .xlsx');
     updateBatch();
     return;
   }
   $('kbBody').innerHTML=list.map(function(f){
-    var t=typeOf(f.name), kws=f.keywords||[], kc=(f.keyword_count!=null?f.keyword_count:kws.length);
+    var t=typeOf(f.name);
     var st=statusOf(f);
     return '<tr data-name="'+esc(f.name)+'"><td class="sel"><input type="checkbox" class="pick" data-name="'+esc(f.name)+'"'
       +(SEL[f.name]?' checked':'')+' aria-label="选择 '+esc(f.name)+'"></td>'
       +'<td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
       +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span>'
-      +'<span class="fstat '+st.cls+'" title="'+esc(st.tip)+'">'+esc(st.text)+'</span></div></td>'
+      +(st?'<span class="fstat '+st.cls+'" title="'+esc(st.tip)+'">'+esc(st.text)+'</span>':'')+'</div></td>'
       +'<td class="num"><span class="pill">'+f.chunks+'</span></td>'
-      +'<td class="num"><button class="kw-btn" type="button" data-kw="'+esc(f.name)+'" title="'+(kws.length?esc(kws.join(' · ')):'暂无关键词')+'">'+(kc?kc:'—')+'</button></td>'
       +'<td class="num mono" style="font-size:12px;color:var(--muted)">'+fmtBytes(f.size)+'</td>'
       +'<td class="ts">'+esc(f.mtime||'—')+'</td>'
       +'<td><div class="row-actions">'
@@ -77,37 +89,14 @@ function render(){
       +'<button class="btn danger-ghost sm del" data-name="'+esc(f.name)+'">删除</button>'
       +'</div></td></tr>';
   }).join('');
-  renderKwMeta();
+  renderMeta();
   updateBatch();
 }
-function renderKwMeta(){
-  var kw=KB.keywords||{}, n=kw.terms||0;
+function renderMeta(){
   $('kbMeta').textContent=(KB.files||[]).length+' 份 · '+(KB.total_chunks||0)+' 块'
     +(KB.rebuilding?' · 索引重建中':'')
-    +(n?(' · 关键词 '+n):'')+(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
+    +(KB.pending_changes?(' · 待审批 '+KB.pending_changes):'');
 }
-function closeKw(){
-  var row=document.querySelector('.kw-row'); if(row) row.remove();
-}
-async function toggleKw(name,btn){
-  var open=document.querySelector('.kw-row');
-  if(open&&open.dataset.name===name){ open.remove(); return; }
-  if(open) open.remove();
-  var tr=document.createElement('tr'); tr.className='kw-row'; tr.dataset.name=name;
-  tr.innerHTML='<td colspan="7"><div class="kw-box"><span class="kw-load">读取关键词…</span></div></td>';
-  (btn.closest('tr')||btn.parentNode.parentNode).after(tr);
-  try{
-    var d=await (await fetch('/api/keywords?name='+encodeURIComponent(name))).json();
-    var terms=(d.terms||[]).filter(function(t){ return t.kind!=='heading'; });
-    var chips=terms.map(function(t){ return '<span class="kw-chip" title="'+esc(t.section)+'">'+esc(t.term)+'</span>'; }).join('');
-    tr.querySelector('.kw-box').innerHTML=(d.summary?'<div class="kw-sum">'+esc(d.summary)+'</div>':'')
-      +'<div class="kw-chips">'+(chips||'<span class="kw-empty">这份文档没有可直出的条目</span>')+'</div>';
-  }catch(e){
-    tr.querySelector('.kw-box').innerHTML='<span class="kw-empty">读取失败：'+esc(e.message||e)+'</span>';
-  }
-}
-
-
 /* ---------- 审批与文档历史 ---------- */
 var TOKEN_KEY='rag_admin_token';
 function adminToken(){ try{ return sessionStorage.getItem(TOKEN_KEY)||''; }catch(e){ return ''; } }
@@ -339,9 +328,14 @@ async function uploadFiles(files){
 var CK={name:'', items:[]};
 function ckOpen(){
   $('ckMask').hidden=false; $('ckDrawer').hidden=false;
-  requestAnimationFrame(function(){ $('ckDrawer').classList.add('open'); });
+  document.body.classList.add('no-scroll');
+  requestAnimationFrame(function(){
+    $('ckDrawer').classList.add('open');
+    try{ $('ckDrawer').focus(); }catch(e){}
+  });
 }
 function ckClose(){
+  document.body.classList.remove('no-scroll');
   $('ckDrawer').classList.remove('open');
   $('ckDrawer').hidden=true; $('ckMask').hidden=true;
   $('ckResult').hidden=true; $('ckResult').innerHTML='';
@@ -432,34 +426,32 @@ async function batchDelete(){
   if(!names.length) return;
   if(!confirm('确认删除选中的 '+names.length+' 份文档？索引会重新构建，删掉的仍可在「版本」里找回。\n\n'
     +names.slice(0,8).join('\n')+(names.length>8?'\n…':''))) return;
-  var ok=0, fail=[];
+  var ok=0, pend=0, fail=[];
   BUSY=true;
   for(var i=0;i<names.length;i++){
     setMsg('删除中 '+(i+1)+'/'+names.length+'：'+names[i]);
     try{
       var d=await (await fetch('/api/knowledge/delete',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({name:names[i]})})).json();
-      if(d.ok){ ok++; delete SEL[names[i]]; } else { fail.push(names[i]+'：'+(d.error||'失败')); }
+      if(d.ok){
+        if(d.pending){ pend++; delete SEL[names[i]]; }
+        else { ok++; delete SEL[names[i]]; }
+      } else { fail.push(names[i]+'：'+(d.error||'失败')); }
     }catch(e){ fail.push(names[i]+'：'+(e.message||e)); }
   }
   BUSY=false;
+  if(pend){
+    // 审批模式下「已删除」不成立：文档还在库里，只是排进了待审队列
+    setMsg('已提交 '+pend+' 份待审批'+(ok?('，已删除 '+ok+' 份'):'')
+      +(fail.length?('，失败 '+fail.length+' 份（'+fail[0]+'）'):'')+'；审批通过后才会真正删除',
+      fail.length?'err':'warn');
+    await loadKb();
+    return;
+  }
   setMsg('已删除 '+ok+' 份'+(fail.length?('，失败 '+fail.length+' 份（'+fail[0]+'）'):''),fail.length?'err':'ok');
   updateBatch();
   await settleIndex(true,'已删除 '+ok+' 份');
 }
-async function batchRebuild(){
-  if(!Object.keys(SEL).length) return;
-  var btn=$('kbBatchRebuild'); btn.disabled=true;
-  setMsg('正在按当前文档重建索引…');
-  try{
-    var r=await (await fetch('/api/reload',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).json();
-    if(r.ok){ await settleIndex(true,'已开始重建'); }
-    else{ setMsg('重建失败：'+r.error,'err'); }
-  }catch(e){ setMsg('重建失败：'+(e.message||e),'err'); }
-  btn.disabled=false;
-  clearSel();
-}
-
 /* ---------- 事件 ---------- */
 $('kbFile').onchange=function(){ var fs=[].slice.call(this.files||[]); this.value=''; uploadFiles(fs); };
 $('drop').onclick=function(e){ if(e.target.id!=='kbFile') $('kbFile').click(); };
@@ -495,8 +487,6 @@ $('kbBody').onclick=async function(ev){
   }
   var ck=ev.target.closest('.chk');
   if(ck){ await openChunks(ck.dataset.name); return; }
-  var kw=ev.target.closest('.kw-btn');
-  if(kw){ await toggleKw(kw.dataset.kw, kw); return; }
   var h=ev.target.closest('.hist');
   if(h){ await openHistory(h.dataset.name); return; }
   var g=ev.target.closest('.gen');
@@ -517,7 +507,16 @@ $('kbBody').onclick=async function(ev){
   try{
     var d=await (await fetch('/api/knowledge/delete',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:b.dataset.name})})).json();
-    if(d.ok){ setMsg('已删除 '+d.name,'ok'); toast('已删除：'+d.name); await settleIndex(d.rebuilding,'已删除'); }
+    if(d.ok){
+      if(d.pending){
+        // 开了审批时 delete 只是把变更放进队列，此时说「已删除」就是骗人
+        setMsg('已提交删除「'+d.name+'」，审批通过后才会生效','warn');
+        toast('已提交，等待审批');
+        await loadKb();
+        return;
+      }
+      setMsg('已删除 '+d.name,'ok'); toast('已删除：'+d.name); await settleIndex(d.rebuilding,'已删除');
+    }
     else{ setMsg('删除失败：'+(d.error||''),'err'); }
   }catch(e){ setMsg('删除失败：'+(e.message||e),'err'); }
 };
@@ -529,7 +528,6 @@ $('kbAll').onchange=function(){
   render();
 };
 $('kbBatchDel').onclick=batchDelete;
-$('kbBatchRebuild').onclick=batchRebuild;
 $('kbBatchClear').onclick=function(){ clearSel(); render(); };
 $('kbSeed').onclick=function(ev){
   var b=ev.target.closest('.seed-card'); if(!b) return;
@@ -558,7 +556,12 @@ $('apprList').onclick=function(ev){
 };
 $('kbModalClose').onclick=closeKbModal;
 $('kbMask').onclick=closeKbModal;
-document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ closeKbModal(); ckClose(); } });
+/* Esc 逐层关：抽屉开着时先关抽屉，别把下面的弹窗一起关掉 */
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Escape') return;
+  if(!$('ckDrawer').hidden){ ckClose(); return; }
+  closeKbModal();
+});
 
 $('reload').onclick=async function(){
   var btn=this; btn.disabled=true; setMsg('正在重建索引…');
@@ -581,12 +584,3 @@ $('reload').onclick=async function(){
 if(location.hash==='#notes'){ location.replace('/notes'); }
 
 loadKb();
-
-// 「接入配置」直接打开智能体面板：文档里写十遍不如点一下看到能粘的东西
-(function(){
-  var btn=document.getElementById('agOpen');
-  if(!btn) return;
-  btn.addEventListener('click',function(){
-    if(window.__openAgent) window.__openAgent();
-  });
-})();

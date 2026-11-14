@@ -27,3 +27,8 @@
 .dbg-sum { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
 .dbg-sum b { font-variant-numeric: tabular-nums; }
 .dbg-sum span { color: var(--muted); }
+
+/* 移动端：顶栏那个「打开侧栏」按钮是 fixed 的，页面自己要让出位置 */
+@media (max-width:640px){
+  .dbg-main{padding:46px 14px 56px;}
+}

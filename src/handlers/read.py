@@ -198,7 +198,11 @@ def make_read(deps):
                 data = report.collect(pipe)
                 if redacted:
                     data = report.redact(data)
-                html = report.render(data, standalone=as_file, redacted=redacted)
+                # 管理入口默认不渲染：汇报页的读者是业务方，不该看见「删除文档」
+                # 与灰度配置。需要时加 ?admin=1（可收藏），脱敏视图永远不给。
+                want_admin = (qs.get("admin") or [""])[0].lower() in ("1", "true", "yes")
+                html = report.render(data, standalone=as_file, redacted=redacted,
+                                     admin=want_admin and not redacted and not as_file)
             except Exception as exc:   # 未捕获异常会让客户端只看到连接重置
                 self._json({"ok": False, "error": "report_failed",
                             "message": self._error_text(exc, "汇报页渲染失败")}, 500)

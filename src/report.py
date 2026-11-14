@@ -36,15 +36,7 @@ REPORT_CSS = """
 .page-insights .main{height:auto;min-height:100vh;}
 .page-insights .stage{overflow:visible;}
 .rp-hero{position:relative;overflow:hidden;background:#1b1a17;color:#e6e0d4;border-radius:20px;padding:28px 32px 26px;margin-bottom:16px;
-  box-shadow:0 30px 70px -40px rgba(27,26,23,.75);}
-.rp-hero::before{content:"";position:absolute;inset:0;pointer-events:none;
-  background:radial-gradient(560px 300px at 6% 0%,rgba(47,111,94,.42),transparent 62%),
-             radial-gradient(520px 340px at 96% 10%,rgba(188,217,205,.26),transparent 66%);}
-.rp-hero::after{content:"";position:absolute;inset:0;
-  background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);
-  background-size:42px 42px;mask-image:radial-gradient(600px 320px at 20% 10%,#000,transparent 78%);
-  -webkit-mask-image:radial-gradient(600px 320px at 20% 10%,#000,transparent 78%);
-  pointer-events:none;}
+  }
 .rp-hero > *{position:relative;z-index:1;}
 .rp-hero .eyebrow{color:#bcd9cd;margin-bottom:12px;}
 .rp-hero .eyebrow::before{background:#82c0a9;}
@@ -74,7 +66,7 @@ REPORT_CSS = """
   .hs{flex:1;border-bottom:0;padding:7px 10px 0 0;}
   .hs .v{font-size:20px;}
 }
-.rp-hero a.btn{background:#fff;color:#12201b;box-shadow:0 10px 24px -16px rgba(0,0,0,.8);}
+.rp-hero a.btn{background:#fff;color:#12201b;}
 .rp-hero a.btn:hover{background:#e4efe9;}
 .rp-hero a.btn.ghost2{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.24);color:#e6e0d4;}
 .rp-hero a.btn.ghost2:hover{background:rgba(255,255,255,.14);}
@@ -114,7 +106,7 @@ REPORT_CSS = """
 .score.s5,.score.s4{background:var(--ok-soft);color:var(--ok);}
 .score.s3{background:var(--warn-soft);color:var(--warn);}
 .score.s2,.score.s1{background:var(--bad-soft);color:var(--bad);}
-.arch{background:linear-gradient(180deg,var(--surface-2),var(--surface));border:1px solid var(--line);border-radius:14px;padding:10px 8px;}
+.arch{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:10px 8px;}
 .rp-list{margin:0;padding-left:18px;line-height:1.95;font-size:12.8px;color:var(--text);}
 .rp-list li{margin-bottom:3px;}
 .rp-list li::marker{color:var(--faint);}
@@ -141,7 +133,7 @@ REPORT_CSS = """
 /* L3 语义质量 */
 .rp-l3{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;}
 .rp-scores{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
-.rp-score{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:linear-gradient(180deg,var(--surface),var(--surface-2));}
+.rp-score{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:var(--surface);}
 .rp-score .k{font-size:11.5px;color:var(--muted);}
 .rp-score .v{font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.035em;margin:3px 0 8px;line-height:1.1;font-variant-numeric:tabular-nums;}
 .rp-score .v small{font-size:11.5px;color:var(--faint);font-weight:500;letter-spacing:0;margin-left:2px;}
@@ -153,10 +145,10 @@ REPORT_CSS = """
 @media (max-width:860px){.rp-l3{grid-template-columns:1fr;gap:16px;}}
 
 /* 让汇报页的 6 个 KPI 排成整齐的 3 × 2 */
-.kpis.six{grid-template-columns:repeat(3,1fr);}
+.kpis.four{grid-template-columns:repeat(3,1fr);}
 /* 副标题是「口径」不是装饰：--faint 在米色底上约 3.4:1，读不清等于没写 */
 .kpi .sub{color:var(--muted);font-size:11.5px;line-height:1.55;margin-top:4px;}
-@media (max-width:900px){.kpis.six{grid-template-columns:repeat(2,1fr);}}
+@media (max-width:900px){.kpis.four{grid-template-columns:repeat(2,1fr);}}
 
 .rp-hero .live{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#8fd4ae;}
 .rp-hero .live i{width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.2);}
@@ -587,14 +579,15 @@ def kpi_subs(data: dict) -> list[str]:
             l1_sub += f" · 集已扩到 {total_cases} 条"
         elif stamp:
             l1_sub += f" · {stamp[5:10]} 报告"
+    hard_n = len((data.get("hard") or {}).get("cases") or [])
     return [
         f"{len(data['knowledge']['files'])} 份文档已切分索引",
         f"人工 {cases.get('curated', 0)} · 拒答 {cases.get('uncovered', 0)} · "
         f"反馈 {cases.get('feedback', 0)}",
-        l1_sub,
         f"裁判 {l3.get('judge_model') or '同源'} · 1-5 分" if l3 else "未运行",
-        f"answer 类均值 · {n} 条 trace" if n else "无 trace 记录",
-        "含关键词直出 · 不代表模型耗时" if n else "无 trace 记录",
+        f"{hard_n} 条带召回标签的难题" if hard_n else "未跑召回评测",
+        l1_sub,
+        f"近 {n} 条 trace" if n else "无 trace 记录",
     ]
 
 
@@ -690,15 +683,15 @@ def kpi_rows(data: dict) -> list[tuple[str, str]]:
     l1 = data["l1"]
     l3_avg = (data.get("l3") or {}).get("avg") or {}
     best = max(l1, key=lambda x: (x["pass_rate"] or 0)) if l1 else None
-    cov = metrics.get("avg_citation_coverage")
-    p95 = (metrics.get("latency_ms") or {}).get("p95")
+    vec = ((data.get("retrieval") or {}).get("configs") or {}).get("vector") or {}
+    r4 = vec.get("recall_at_4")
     return [
         ("知识库规模", f"{k['chunks']} 块 / {'—' if k.get('redacted') else len(k['files'])} 份"),
         ("评测用例", str(cases["total"])),
-        ("L1 通过率", f"{round((best['pass_rate'] or 0) * 100)}%" if best else "-"),
         ("L3 忠实度", str(l3_avg.get("faithfulness") or "-")),
-        ("引用覆盖率", f"{round(cov * 100)}%" if cov is not None else "-"),
-        ("P95 延迟（近 500 条）", f"{round(p95)}ms" if p95 else "-"),
+        ("召回@4", f"{round(r4 * 100)}%" if isinstance(r4, (int, float)) else "-"),
+        ("断言条数", f"{best['total']} 条" if best else "-"),
+        ("近期问答", f"{metrics.get('requests') or '-'} 次"),
     ]
 
 
@@ -961,28 +954,28 @@ def _block_edge(data: dict) -> str:
 
 
 def hero_stats(data: dict) -> list[tuple[str, str, str]]:
-    """首屏只放三个结论：够不够好、答得实不实、找不找得到。
+    """首屏三个结论，用业务能懂的词。
 
-    六个指标平铺在首屏等于没有重点。剩余三项留给下面「关键指标」区，
-    那里每张卡都带样本量与口径，是「想深究时再看」的第二层。
+    原来放的是 L1 通过率 / 忠实度 / Recall@4——三个都是评测术语，业务方看不出
+    「这系统回答得准不准」。这里换成「有没有出处 / 考题过没过 / 快不快」，
+    术语与样本量留在下面指标区，那里是「想深究再看」的第二层。
     """
+    metrics = data.get("metrics") or {}
     l1 = data.get("l1") or []
     best = max(l1, key=lambda x: (x["pass_rate"] or 0)) if l1 else None
-    l3 = (data.get("l3") or {}).get("avg") or {}
-    vec = ((data.get("retrieval") or {}).get("configs") or {}).get("vector") or {}
-    faith = l3.get("faithfulness")
-    r4 = vec.get("recall_at_4")
+    cov = metrics.get("avg_citation_coverage")
+    p95 = (metrics.get("latency_ms") or {}).get("p95")
     num = (int, float)
     return [
-        ("L1 通过率",
+        ("答案带出处",
+         f"{round(cov * 100)}%" if isinstance(cov, num) else "—",
+         "近期问答里含有效引用的比例" if isinstance(cov, num) else "还没有问答记录"),
+        ("考题通过率",
          f"{round((best['pass_rate'] or 0) * 100)}%" if best else "—",
-         f"{best['total']} 条确定性断言" if best else "尚无报告"),
-        ("忠实度",
-         f"{faith:.1f}" if isinstance(faith, num) else "—",
-         "裁判 1-5 分 · 同源评分" if isinstance(faith, num) else "未运行 L3"),
-        ("Recall@4",
-         f"{round(r4 * 100)}%" if isinstance(r4, num) else "—",
-         "带召回标签的难题" if isinstance(r4, num) else "未跑召回评测"),
+         f"{best['total']} 条断言" if best else "尚无报告"),
+        ("响应 P95",
+         f"{round(p95)} ms" if isinstance(p95, num) else "—",
+         "近 500 次问答" if isinstance(p95, num) else "还没有问答记录"),
     ]
 
 
@@ -1009,7 +1002,7 @@ def _number_sections(html: str) -> str:
     return re.sub(r'(<span class="n"(?![^>]*aria-hidden)[^>]*?)>\d{2}</span>', repl, html)
 
 
-def topbar(standalone: bool = False) -> str:
+def topbar(standalone: bool = False, admin: bool = False) -> str:
     """顶栏：品牌 + 在线状态 + 展示/管理入口。
 
     状态灯由前端探活决定（GET /api/health），不做构建期判断：
@@ -1018,7 +1011,7 @@ def topbar(standalone: bool = False) -> str:
     home = 'href="#"' if standalone else 'href="/ask"'
     links = "" if standalone else (
         '<a class="rp-tbtn" href="/ask">去问答</a>'
-        '<a class="rp-tbtn" href="/report?download=1" download>下载 HTML</a>'
+        '<button class="rp-tbtn" type="button" data-dl>下载 HTML</button>'
     )
     return (
         '<div class="rp-top">'
@@ -1029,9 +1022,9 @@ def topbar(standalone: bool = False) -> str:
         '<span class="spacer"></span>'
         + links +
         '<button class="rp-tbtn" id="rpPrint" type="button">打印</button>'
-        '<button class="rp-tbtn primary" id="rpAdminBtn" type="button" '
-        'aria-expanded="false" aria-controls="rpAdmin">管理</button>'
-        '</div>'
+        + (('<button class="rp-tbtn primary" id="rpAdminBtn" type="button" '
+            'aria-expanded="false" aria-controls="rpAdmin">管理</button>') if admin else '')
+        + '</div>'
     )
 
 
@@ -1100,7 +1093,8 @@ def admin_panel() -> str:
     )
 
 
-def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
+def render(data: dict, standalone: bool = False, redacted: bool = False,
+           admin: bool = False) -> str:
     """渲染汇报页。standalone=True 时隐藏「下载」按钮（导出文件本身）。
 
     每个区块单独一个函数（`_block_*`），这里只做组装——原来 363 行的函数里
@@ -1150,7 +1144,7 @@ def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
 
     actions = "" if standalone else (
         '<div class="actions"><a class="btn" href="/ask">去试真实问答</a>'
-        '<a class="btn ghost2" href="/report?download=1" download>下载独立 HTML</a></div>'
+        '<button class="btn ghost2" type="button" data-dl>下载独立 HTML</button></div>'
     )
 
     html = f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -1160,7 +1154,7 @@ def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
 <link rel="icon" href="data:,">
 <title>项目汇报 · {BRAND}</title><style>{BASE_CSS}{REPORT_CSS}</style></head>
 <body class="page-insights" data-standalone="{1 if standalone else 0}">
-{topbar(standalone)}
+{topbar(standalone, admin)}
 <div class="main"><div class="stage stage-insights">
 <main class="wrap">
 
@@ -1173,9 +1167,7 @@ def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
       检索不到时明确说「不知道」，并列出相似问题，而不是编一个。</p>
       <div class="badges">
         <span class="b solid">v{_esc(__version__)}</span>
-        <span class="b solid">端点 {_esc(data['channel'])} / {_esc(data['model'])}</span>
         <span class="b">知识库 {k['chunks']} 块{'' if k.get('redacted') else ' / ' + str(len(k['files'])) + ' 份'}</span>
-        <span class="b">核心零第三方依赖</span>
       </div>
       {actions}
     </div>
@@ -1186,71 +1178,29 @@ def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
 
 <nav class="rp-nav" id="rpNav">
   <a href="#s-kpi" class="active">关键指标</a>
-  <a href="#s-scope">能力</a>
   <a href="#s-arch">链路与闸门</a>
   <a href="#s-eval">评测结果</a>
   <a href="#s-edge">边界与失败</a>
   {('<a href="#s-ret">检索策略</a>' if ret_block else '')}
   {('<a href="#s-hard">难题集</a>' if hard_block else '')}
   <a href="#s-kb">知识库</a>
-  <a href="#s-limits">生产控制</a>
-  <a href="#s-run">怎么跑</a>
 </nav>
 
 <section class="sec card" id="s-kpi">
   <div class="sec-head"><span class="n">01</span><h2>关键指标</h2>
     <span class="note">实时聚合自 trace 与评测报告</span>
     <button class="adm" type="button" data-admin-jump="diag">管理</button></div>
-  <div class="kpis six">{kpis}</div>
+  <div class="kpis four">{kpis}</div>
   <p class="muted" style="font-size:12.5px;margin:10px 0 0;line-height:1.8">
     L1 = 确定性断言（行为 / 事实 / 安全）；L3 = 裁判模型按忠实度 / 相关性 / 完整性打分（1-5）。
     引用覆盖率 = 答案中有效 <code>[n]</code> 占全部标注的比例。
   </p>
 </section>
 
-<section class="sec three-col" id="s-scope">
-  <div class="card">
-    <div class="sec-head"><span class="n">00</span><h2>答得准</h2>
-      <span class="note">检索与生成</span></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>多格式入库。</b>支持 <code>.md</code> / <code>.txt</code> / <code>.pdf</code> / <code>.docx</code>，PDF 与 Word 在服务端转成 Markdown 后切分索引。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>关键词直出。</b>清单项、表格行、<code>标签：值</code> 精确命中时直接返回原文片段与出处，不调用模型；被四道闸门挡下或未命中才继续检索。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>召回 + 重排。</b>embedding 召回（FAISS 或 NumPy 索引）后按原问题词覆盖、长片段命中、BM25 与标题命中重排；没配模型时用字符 n-gram 向量兜底。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>多轮追问。</b>保留最近 3 轮上下文，「那 R2 呢」会补全成可检索的问题；独立问题不拼上一轮。</div></div>
-  </div>
-  <div class="card">
-    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">00</span><h2>答得可核</h2>
-      <span class="note">引用与拒答</span></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>引用可点开。</b>每条 <code>[n]</code> 带文档与知识块定位，点击打开原文抽屉并高亮命中行。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>引用校验。</b>答案必须包含有效 <code>[n]</code>；模型没给出处时先补引用，补不上则降级为抽取式答案，不会带着「无来源」的结论交付。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>不知道就说不知道。</b>置信度低于阈值时返回「无法找到答案」，同时给出最高分与阈值、列出相似问题，并收「应该怎么答 / 缺哪份文档」的反馈。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>脚注可复算。</b>答案末尾给出版本号、引用条数与覆盖率、检索分，读者可以拿这几个数回查。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>相似问题兜底。</b>未命中时列出知识库里最接近的几问，点一下换问题重试，比让人自己改写措辞更快。</div></div>
-  </div>
-  <div class="card">
-    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">00</span><h2>跑得住</h2>
-      <span class="note">工程与运维</span></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>三层评测。</b>L1 确定性断言、L3 语义评分、Recall@1/@4 与 MRR 召回评测；断言内核与线上走同一份代码。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>生产控制。</b>幂等键、按 IP 限流、审计日志、每日 token 上限、按比例灰度、配置回滚；多实例把限流/幂等/成本状态放 Redis 共享。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>可观测。</b>每次问答写 <code>logs/trace.jsonl</code>（16 MB 轮转、接口只读文件尾），<code>/metrics</code> 输出 Prometheus 指标，<code>/api/health</code> 返回检索与防护状态。</div></div>
-    <div class="axis"><span class="ic is">✓</span><div><b>核心零第三方依赖。</b>切分、BM25、PDF/DOCX 解析、HTTP 服务均用标准库；真向量检索时可选 NumPy / FAISS 加速。</div></div>
-  </div>
-</section>
-
 <section class="sec card" id="s-arch">
   <div class="sec-head"><span class="n">03</span><h2>链路与闸门</h2>
     <span class="note">每一层都有明确的失败动作</span></div>
   {ARCH_SVG}
-  <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>环节</th><th>策略</th><th>失败时怎么办</th></tr></thead><tbody>
-    <tr><td>接入</td><td>幂等键去重 · 按 IP 令牌桶限流（多实例走 Redis）· 按比例灰度到 CANARY_MODEL</td><td>重复请求回放首次结果；超限返回 <code>429</code> + <code>Retry-After</code></td></tr>
-    <tr><td>输入</td><td>归一化去零宽 / 控制字符；注入、越权、荐股关键词拦截</td><td>直接拒答，不进检索与生成</td></tr>
-    <tr><td>关键词</td><td>清单 / 表格 / 标签条目精确命中，最多 {cfg.get('keyword_top_n', 3)} 条；命中后过否定 / 极性 / 解释型意图 / 单文档四道闸门</td><td>直接返回原文片段，标 <code>path=keyword</code>、<code>api_called=false</code>；被闸门挡下或未命中则继续检索</td></tr>
-    <tr><td>检索</td><td>embedding 召回（可切 n-gram / BM25）+ 多信号重排，top_k={cfg['top_k']}；查询扩展可选</td><td>embedding 失败回退词法检索并标 <code>degraded</code></td></tr>
-    <tr><td>置信度</td><td>最高分低于 {cfg['min_score']} 视为未命中</td><td>返回「无法找到答案」+ 相似问题</td></tr>
-    <tr><td>会话</td><td>最近 3 轮、30 分钟过期；只有指代式追问才补全问题</td><td>独立问题不拼上文；会话过期后退化为单轮</td></tr>
-    <tr><td>生成</td><td>OpenAI 兼容 LLM，温度 0.1，SSE 流式；超时 {int(cfg['timeout'])}s，重试 {cfg['retries']} 次并尊重 Retry-After；每日 token 上限</td><td>上游截断或失败整体降级为抽取式并替换前端文本，把 error / <code>budget_exceeded</code> 透传到结果</td></tr>
-    <tr><td>引用</td><td>答案必须含有效 <code>[n]</code></td><td>无出处则降级为可追溯答案，标 <code>no_citation</code></td></tr>
-    <tr><td>记录</td><td>trace、审计、成本与 Prometheus 指标</td><td>写盘/采集失败不阻塞响应，但健康检查可见</td></tr>
-  </tbody></table></div>
 </section>
 
 <section class="sec card" id="s-eval">
@@ -1272,60 +1222,13 @@ def render(data: dict, standalone: bool = False, redacted: bool = False) -> str:
   {kb_note}
 </section>
 
-<section class="sec two-col" id="s-limits">
-  <div class="card">
-    <div class="sec-head"><span class="n">08</span><h2>生产控制</h2>
-      <button class="adm" type="button" data-admin-jump="ops">管理</button></div>
-    <div class="table-wrap"><table><thead><tr><th>能力</th><th>实现与配置</th></tr></thead><tbody>
-      <tr><td>幂等</td><td><code>Idempotency-Key</code> 复用首次结果，TTL <code>IDEMPOTENCY_TTL_S</code>（300s）</td></tr>
-      <tr><td>限流</td><td>按客户端 IP 令牌桶，<code>RATE_LIMIT_RPS</code> / <code>RATE_LIMIT_BURST</code>（5 / 10）</td></tr>
-      <tr><td>审计</td><td>写入 <code>logs/audit.jsonl</code>，<code>GET /api/audit</code> 读取</td></tr>
-      <tr><td>传输</td><td>gzip + 弱 ETag + 304；JSON 一律 no-store</td></tr>
-      <tr><td>成本上限</td><td>每日 token 预算 <code>DAILY_TOKEN_BUDGET</code>，超限跳过模型调用</td></tr>
-      <tr><td>灰度</td><td><code>CANARY_PERCENT</code> / <code>CANARY_MODEL</code>，<code>POST /api/admin/config</code> 调整</td></tr>
-      <tr><td>回滚</td><td><code>POST /api/admin/rollback</code> 恢复上一版配置</td></tr>
-    </tbody></table></div>
-    <p class="muted" style="font-size:11.5px;margin:9px 0 0;line-height:1.7">加上 trace / metrics 观测与 <code>/api/health</code> 健康检查，共八项。</p>
-  </div>
-  <div class="card">
-    <div class="sec-head"><span class="n" style="visibility:hidden" aria-hidden="true">00</span><h2>运行约束</h2></div>
-    <ul class="rp-list">
-      <li>未配置 <code>LLM_API_KEY</code> 时使用抽取式答案，检索、引用与评测链路仍可运行。</li>
-      <li>扫描件 PDF 未做 OCR，仅处理文本型 PDF。</li>
-      <li>默认绑定 <code>127.0.0.1</code>；对外部署需设置 <code>ADMIN_TOKEN</code>，并通过反向代理提供 HTTPS。</li>
-      <li>幂等缓存位于单进程内存，多实例部署需替换为 Redis。</li>
-      <li>L3 分数受裁判模型影响，用于版本间趋势对比。</li>
-    </ul>
-  </div>
-</section>
-
-<section class="sec card" id="s-run">
-  <div class="sec-head"><span class="n">09</span><h2>怎么跑起来</h2>
-    <span class="note">未配置 Key 时自动走离线抽取，全链路仍可跑通</span></div>
-<pre class="cmd"><span class="c"># 单次问答</span>
-python -m src.cli "稳盈系列的起购金额是多少"
-<span class="c"># 启动 Web：首页 / 问答 / 知识库 / 看板 / 汇报</span>
-python -m src.server --port 8000
-<span class="c"># L1 确定性断言 + L3 语义评分</span>
-python tests/eval_run.py
-python tests/eval_l3.py --report tests/report_llm.json
-<span class="c"># 灰度与回滚（需 ADMIN_TOKEN，未设置时仅本机可调用）</span>
-curl -X POST /api/admin/config -d '{{"canary_percent":10,"canary_model":"<model>"}}'
-curl -X POST /api/admin/rollback -d '{{}}'
-<span class="c"># 导出这份汇报（独立 HTML，无需服务）</span>
-python -m src.report --out dist/report.html</pre>
-  <p class="muted" style="font-size:12.5px;margin:10px 0 0">配置 <code>LLM_API_KEY</code> 即切换真实模型；Key 只走环境变量，源码零硬编码。</p>
-</section>
-
 <div class="foot">
-  该页面由项目自身数据生成，导出文件不依赖任何 API。<br>
-  评测口径：L1 通过率 = 确定性断言全通过的比例；忠实度 = 回答事实能否在检索资料中找到依据（1-5，裁判模型评分）。<br>
-  生成时间 {_esc(data['generated_at'])} · 端点 {_esc(data['channel'])} / {_esc(data['model'])}
+  生成时间 {_esc(data['generated_at'])} · 数据来自项目自身，导出文件不依赖任何 API
 </div>
 </main>
 {footer(links=not standalone)}
 </div></div>
-{admin_panel()}
+{admin_panel() if admin else ""}
 <div class="rp-stale" id="rpStale" hidden>
   <span>管理操作已生效，当前页面仍是旧快照</span>
   <button id="rpStaleBtn" type="button">刷新展示</button>

@@ -61,36 +61,39 @@ def test_kpi_table() -> None:
     rows = report.kpi_rows(sample())
     labels = [label for label, _ in rows]
     check("固定 6 行", len(rows) == 6, str(len(rows)))
-    check("标签与顺序固定", labels == ["知识库规模", "评测用例", "L1 通过率",
-                                       "L3 忠实度", "引用覆盖率", "P95 延迟（近 500 条）"],
+    # 1.38：L1 通过率 / 引用覆盖率 / P95 移到首屏（业务结论），
+    # 指标区只留明细，避免同一个数字在首屏和卡片里各说一遍。
+    check("标签与顺序固定", labels == ["知识库规模", "评测用例", "L3 忠实度",
+                                       "召回@4", "断言条数", "近期问答"],
           str(labels))
     values = dict(rows)
     check("知识库规模带份数", values["知识库规模"] == "120 块 / 2 份", values["知识库规模"])
-    check("L1 取最高的一轮", values["L1 通过率"] == "100%", values["L1 通过率"])
-    check("P95 取整带单位", values["P95 延迟（近 500 条）"] == "413ms",
-          values["P95 延迟（近 500 条）"])
+    check("断言条数带单位", values["断言条数"].endswith(" 条"), values["断言条数"])
 
     empty = sample()
     empty["l1"] = []
     empty["l3"] = None
     empty["metrics"] = {}
     rows = dict(report.kpi_rows(empty))
-    check("无 L1 时给占位符", rows["L1 通过率"] == "-", rows["L1 通过率"])
-    check("无引用覆盖率时给占位符", rows["引用覆盖率"] == "-", rows["引用覆盖率"])
+    check("无 L1 时给占位符", rows["断言条数"] == "-", rows["断言条数"])
+    hero = dict((k, v) for k, v, _s in report.hero_stats(empty))
+    check("首屏无数据时给破折号", hero["答案带出处"] == "—" and hero["响应 P95"] == "—", str(hero))
 
     # 没有样本量的通过率等于没有信息：副标题必须逐项给出条数与口径
     subs = report.kpi_subs(sample())
     check("每个 KPI 都有口径副标题", len(subs) == 6 and all(subs), str(subs))
-    check("L1 副标题带条数", subs[2].startswith("26 条"), subs[2])
+    # 「断言条数」是第 5 张卡（下标 4）：副标题与标签按位置一一对应，
+    # 改标签必须同步改这里，否则口径会安到别的卡上。
+    check("断言条数副标题带条数", subs[4].startswith("26 条"), subs[4])
     # 报告条数 ≠ 当前用例集时必须点明：否则「100%」会被读成覆盖了全集
     grown = sample()
     grown["cases"] = {"total": 36, "curated": 25, "uncovered": 10, "feedback": 1}
-    check("用例集扩容后副标题点明", "36" in report.kpi_subs(grown)[2],
-          report.kpi_subs(grown)[2])
+    check("用例集扩容后副标题点明", "36" in report.kpi_subs(grown)[4],
+          report.kpi_subs(grown)[4])
     check("用例集构成分项列出", "拒答 10" in report.kpi_subs(grown)[1],
           report.kpi_subs(grown)[1])
     empty_subs = report.kpi_subs(empty)
-    check("无数据时副标题不说谎", empty_subs[2] == "尚无 L1 报告", empty_subs[2])
+    check("无数据时副标题不说谎", empty_subs[4] == "尚无 L1 报告", empty_subs[4])
 
 
 def test_blocks() -> None:
@@ -110,7 +113,7 @@ def test_blocks() -> None:
 
 def test_render() -> None:
     print("整页渲染")
-    full = report.render(sample())
+    full = report.render(sample(), admin=True)
     check("含 KPI 区块", 'id="s-kpi"' in full)
     check("含检索策略区块", 'id="s-ret"' in full)
     check("含难题集区块", 'id="s-hard"' in full)
@@ -133,9 +136,15 @@ def test_render() -> None:
     # 首屏两栏 + 三个主指标：信息架构靠这条锁住，不然容易被改回「一大段自述」
     check("首屏是两栏", 'class="hero-grid"' in full and 'class="hero-stats"' in full)
     check("首屏只放三个主指标", full.count('class="hs"') == 3, str(full.count('class="hs"')))
-    check("能力区是三组", 'class="sec three-col"' in full and
-          full.count('id="s-scope"') == 1)
+    # 1.38 把「能力」「生产控制」「怎么跑」三块自证内容删了：业务方不读环境变量，
+    # 而这页要能被转发。删掉的东西不该悄悄回来。
+    check("不再有自证三块", 'id="s-scope"' not in full and 'id="s-limits"' not in full
+          and 'id="s-run"' not in full)
     check("有边界与失败区块", 'id="s-edge"' in full)
+
+    # 管理入口默认不渲染：读者是业务方，不该看见「删除文档」与灰度配置
+    public = report.render(sample())
+    check("默认不带管理入口", 'id="rpAdminBtn"' not in public and 'id="rpAdmin"' not in public)
 
     # 编号必须连续且不重复：插区块时手写数字撞过号（两个 05、没有 06）
     nums = [int(n) for n in re.findall(r'<span class="n">(\d{2})</span>', full)]

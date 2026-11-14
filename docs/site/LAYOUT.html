@@ -41,7 +41,7 @@ font-size:12.5px;color:var(--muted)}
 .side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
 .main{padding:22px 18px 60px}
 }
-</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.37.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-19-0">界面与交互方案（v1.19.0）</h1>
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.38.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-19-0">界面与交互方案（v1.19.0）</h1>
 <p>参照 DeepSeek 网页版的三段式结构重排全部页面：<strong>左侧常驻栏 / 中间对话流 / 底部输入</strong>。 目标不是「做得像」，而是让第一次打开的人不需要读说明就知道从哪开始、东西存在哪、接口在哪配。</p>
 <p>!<a href="screenshots/ask.png">问答页</a></p>
 <h2 id="一-结构对照">一、结构对照</h2>
@@ -67,7 +67,7 @@ font-size:12.5px;color:var(--muted)}
 <p>三页共用外壳，只有正文不同：</p>
 <ul>
 <li><code>/ask</code>：对话页。空态是「问候 + 4 个示例问题」，首条提问后示例让位给对话流。</li>
-<li><code>/kb</code>：知识库。标题 + 文档表（勾选、批量删除/重建、状态列）+ 行内「分段」抽屉；表格列宽按内容重排，隐藏「关键词」列。（v1.29 起笔记分区已并入 <code>/notes</code>，知识库只留只读语料）</li>
+<li><code>/kb</code>：知识库。标题 + 文档表（勾选、批量删除、状态只标异常）+ 行内「分段」抽屉；页头有「检索调试」入口。（v1.29 起笔记分区已并入 <code>/notes</code>，知识库只留只读语料）</li>
 <li><code>/notes</code>：笔记页，笔记的唯一完整入口。左列文件（可搜索）、右侧正文与附件；侧栏「笔记」按钮只给最近 5 篇，点任意一条跳到这里。旧地址 <code>/files</code> 301 过来。</li>
 </ul>
 <p>三页都有「连接智能体」（<code>#agentBtn</code>）：应用给人用，智能体走 MCP，两条路读的是同一批 Markdown。面板里直接给出可复制的 <code>mcpServers</code> 配置、接出的工具数量和笔记目录， 把「智能体也能读这些笔记」从文档里的一句话变成点得到的按钮。</p>
@@ -117,7 +117,7 @@ font-size:12.5px;color:var(--muted)}
 python tests/test_frontend.py       # 23 项：资源齐备、装配、Python 侧行数/体积护栏
 python tests/test_storage.py        # 37 项：目录统计、缓存命中与失效、版本清理、配置校验
 python tests/test_settings.py       # 71 项：面板结构、控件挂载
-PYTHON=&lt;python&gt; node tests/e2e_layout.mjs   # 41 项：侧栏、多会话、弹窗、存储、智能体、移动端</code></pre>
+PYTHON=&lt;python&gt; node tests/e2e_layout.mjs   # 侧栏、多会话、设置、存储、智能体入口（在设置里）、移动端</code></pre>
 <p><code>e2e_layout</code> 覆盖的关键行为：收起后能再展开、刷新后不重复建会话、切回旧会话正文还在、 搜索能过滤、删除后数量正确、设置是居中弹窗、存储数字有值、清理给出结果、移动端抽屉可开可关。</p>
 <h2 id="七点五-首次运行与存储区-v1-19-0">七点五、首次运行与存储区（v1.19.0）</h2>
 <p><strong>为什么要有这一步</strong>：内容一旦落在浏览器里，换设备就等于丢；而「存在哪」又决定了 能不能整目录备份、智能体读不读得到。所以第一次打开只做一件事——把存储区定下来。</p>

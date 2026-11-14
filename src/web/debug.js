@@ -15,13 +15,13 @@
   function pct(x) { return Math.max(0, Math.min(1, Number(x) || 0)) * 100; }
 
   function render(d) {
-    minScoreEl.textContent = String(d.min_score);
+    minScoreEl.textContent = Math.round(Number(d.min_score) * 100) + '%';
     summary.hidden = false;
     summary.innerHTML =
       '<div class="dbg-sum">'
       + '<span>召回 <b>' + d.recalled + '</b> 条</span>'
       + '<span>保留 <b>' + d.kept + '</b> 条</span>'
-      + '<span>阈值 <b class="mono">' + d.min_score + '</b></span>'
+      + '<span>门槛 <b class="mono">' + Math.round(Number(d.min_score) * 100) + '%</b></span>'
       + '<span>检索模式 <b>' + esc(d.retrieval || '-') + '</b></span>'
       + '<span>全库 <b>' + d.chunks_total + '</b> 块</span>'
       + '<span>耗时 <b>' + d.elapsed_ms + '</b> ms</span>'
@@ -45,7 +45,8 @@
         + '<b>' + esc(c.title || c.doc_id) + '</b>'
         + '<span class="dbg-meta">' + esc(c.section || '') + page
         + ' · 第 ' + (c.chunk_index + 1) + ' 块 · ' + c.chars + ' 字</span>'
-        + '<span class="dbg-score ' + cls + '">' + c.score + (c.kept ? '' : ' · 未保留') + '</span>'
+        + '<span class="dbg-score ' + cls + '">' + Math.round(Number(c.score) * 1000) / 10 + '%'
+        + (c.kept ? '' : ' · 低于门槛') + '</span>'
         + '</div>'
         + '<div class="dbg-bar"><i style="width:' + pct(c.score).toFixed(1) + '%"></i></div>'
         + '<div class="dbg-text">' + esc(c.text || '') + '</div>'

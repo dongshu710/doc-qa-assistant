@@ -36,7 +36,7 @@ try:
 
     pages = {}
     for page, needle in (("/ask", "今天想记住什么"), ("/kb", "拖拽或点击上传"),
-                         ("/notes", "pf-grid"), ("/report", 'id="rpAdmin"')):
+                         ("/notes", "pf-grid"), ("/report", "文档问答系统")):
         with urllib.request.urlopen(f"http://127.0.0.1:{port}{page}", timeout=10) as resp:
             pages[page] = resp.read().decode("utf-8")
         assert needle in pages[page], page
@@ -70,6 +70,14 @@ try:
     assert '<aside class="side"' not in dl, "下载版不该套会话侧栏"
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/report?download=0", timeout=10) as resp:
         assert not (resp.headers.get("Content-Disposition") or ""), "download=0 不该返回附件"
+    # 1.38 起汇报页默认是「业务视图」：管理入口与面板都不渲染，
+    # 否则转发给业务方时，对方会看见「删除文档」和灰度配置。
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/report?admin=1", timeout=10) as resp:
+        admin_page = resp.read().decode("utf-8")
+    assert 'id="rpAdminBtn"' not in pages["/report"], "默认视图不该有管理按钮"
+    assert 'id="rpAdmin"' not in pages["/report"], "默认视图不该有管理面板"
+    assert 'id="rpAdminBtn"' in admin_page, "?admin=1 要能打开管理入口"
+    print("report admin gate OK")
     print("report download OK")
 
     # 笔记入口：问答页能发起保存，完整管理在 /notes；知识库只剩文档一个分区。
@@ -192,7 +200,8 @@ try:
     print("no-answer feedback OK:", miss_fb_res)
 
     page = urllib.request.urlopen(f"http://127.0.0.1:{port}/ask", timeout=10).read().decode("utf-8")
-    for token in ("导出 Markdown", "没找到需要的答案", "知识库 '"):
+    # 1.38 删掉了自问自答的「没找到需要的答案？」，保留能点的那两个入口
+    for token in ("导出 Markdown", "补充线索", "知识库 '"):
         assert token in page, token
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/admin/config", timeout=10) as resp:

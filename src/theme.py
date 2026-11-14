@@ -83,10 +83,6 @@ FILES_JS = load("files.js")
 # 可直接被智能体打开的地址；抽屉那套仍留在两页里，用于不打断问答。
 FILES_PAGE_HTML = load("files_page.html")
 FILES_PAGE_JS = load("files_page.js")
-# 连接智能体：侧栏常驻按钮 + 一份可直接复制的 MCP 配置
-AGENT_CSS = load("agent.css")
-AGENT_HTML = load("agent.html")
-AGENT_JS = load("agent.js")
 # 首次运行：先把存储区建起来，后面的文档与会话才有地方落
 SETUP_CSS = load("setup.css")
 SETUP_HTML = load("setup.html")
@@ -108,10 +104,9 @@ def nav(active: str = "", links: bool = True) -> str:
         return (f'<a class="sb-item{on}" href="{href}" data-nav="{key}">'
                 f'{icon(glyph, 17)}<span class="sb-label">{label}</span></a>')
 
-    # 调试台只在「有导航」时出现（导出的离线页不放）：
-    # 它依赖 /api/search/debug，离线副本里没有服务可用。
-    nav_html = (nav_item("kb", "/kb", "知识库", "doc")
-                + nav_item("debug", "/debug", "调试", "search")) if links else ""
+    # 调试台不再占侧栏：它是排查工具，不是业务入口。入口收进知识库页头，
+    # 页面本身保留（收藏的书签不失效）。离线副本里没有服务，本来也不该有入口。
+    nav_html = nav_item("kb", "/kb", "知识库", "doc") if links else ""
     return (
         '<aside class="side" id="sideBar" aria-label="会话与导航">'
         '<div class="side-head">'
@@ -133,14 +128,8 @@ def nav(active: str = "", links: bool = True) -> str:
         + icon("folder", 17) + '<span class="sb-label">笔记</span>'
         '<span class="nf-count" id="filesCount" hidden>0</span></button>'
         '<button class="files-dot" id="filesDot" type="button" aria-label="消除备份提醒" '
-        'title="点一下消除提醒" hidden></button>'
+        'title="该备份了：点一下忽略这次提醒" hidden></button>'
         '</div>'
-        # 智能体：应用形式与智能体之间的接线口。点开是状态 + 一份可复制的 MCP 配置，
-        # 不是噱头按钮——没有它，用户不知道「智能体也能读这些笔记」。
-        '<button class="sb-item" id="agentBtn" type="button" aria-haspopup="dialog" '
-        'aria-controls="agentPanel" aria-expanded="false" title="连接智能体 · MCP">'
-        + icon("plug", 17) + '<span class="sb-label">智能体</span>'
-        '<span class="agent-led" id="agentLed" hidden></span></button>'
         + nav_html +
         '<button class="sb-item" id="setBtn" type="button">'
         + icon("gear", 17) + '<span class="sb-label">设置</span></button>'
@@ -174,7 +163,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{THEME_HEAD}"
         f'<meta name="color-scheme" content="light dark">'
         '<link rel="icon" href="data:,">'
-        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{AGENT_CSS}{SETUP_CSS}{css}</style></head>"
+        f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{SETUP_CSS}{css}</style></head>"
         f'<body class="page-{active}">'
         '<div class="app">'
         f"{nav(active)}"
@@ -183,14 +172,13 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         f"{icon('panel', 17)}</button>"
         f'<div class="stage stage-{active}">{body}</div>'
         "</div></div>"
-        f"{FILES_HTML}{AGENT_HTML}{SETTINGS_HTML}{SETUP_HTML}"
+        f"{FILES_HTML}{SETTINGS_HTML}{SETUP_HTML}"
         f'<div id="toasts"></div>'
         # 公共脚本先注入一次：侧栏与设置都要用 esc/toast，页面脚本不再各自复制一份
         f"<script>{JS_UTIL}</script>"
         f"<script>{SIDE_JS}</script>"
         f"<script>{script}</script>"
         f"<script>{FILES_JS}</script>"
-        f"<script>{AGENT_JS}</script>"
         f"<script>{SETTINGS_JS}</script><script>{SETUP_JS}</script>"
         f"<script>{THEME_JS}</script></body></html>"
     )

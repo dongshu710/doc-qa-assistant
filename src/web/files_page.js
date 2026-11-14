@@ -3,7 +3,7 @@
   var $=function(id){ return document.getElementById(id); };
   var list=$('pfList'); if(!list) return;
   var detail=$('pfDetail'), search=$('pfSearch');
-  var current='', timer=null;
+  var current='', timer=null, editorDirty=false, LIMIT=100;
 
   function api(path, method, body){
     var opt={method:method||'GET', headers:reqHeaders(!!body)};
@@ -15,14 +15,18 @@
     if(!rows.length){
       list.innerHTML='<p class="files-empty">'+(search&&search.value.trim()
         ? '没有匹配的笔记。'
-        : '还没有文件。在问答里点「存为笔记」，或在这里新建一篇。')+'</p>';
+        : '还没有笔记。点「新建笔记」，或在问答里存一条。')+'</p>';
       return;
     }
     list.innerHTML='';
     rows.forEach(function(it){
       var b=document.createElement('button');
       b.type='button'; b.className='file-item'; b.setAttribute('data-id',it.id);
-      b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b><span>'+esc(fmtTime(it.created))+'</span>';
+      b.setAttribute('role','option');
+      // 来源徽标：智能体写进来的笔记与人写的要在列表里区分开，否则会以为自己梦游写了一条
+      var agent=((it.source||{}).agent||'');
+      var tag=(agent&&!/^web/i.test(agent))?'<em class="src-tag">智能体</em>':'';
+      b.innerHTML='<b>'+esc(it.title||'(无标题)')+'</b>'+tag+'<span>'+esc(fmtTime(it.created))+'</span>';
       list.appendChild(b);
     });
   }
@@ -31,11 +35,17 @@
      在这里再写一遍本地过滤等于两套匹配规则，搜同一句话会给出不同结果。 */
   function load(openId){
     var q=(search&&search.value||'').trim();
-    api('/api/notes?limit=100'+(q?('&q='+encodeURIComponent(q)):'')).then(function(d){
+    api('/api/notes?limit='+LIMIT+(q?('&q='+encodeURIComponent(q)):'')).then(function(d){
       if(!d||!d.ok){ list.innerHTML='<p class="files-empty">'+esc((d&&d.message)||'读取失败')+'</p>'; return; }
       var rows=d.items||[];
       if($('pfTotal')) $('pfTotal').textContent=(q?'匹配 ':'共 ')+(d.count||rows.length)+' 篇';
       render(rows);
+      // 一次只取 100 篇：第 101 篇以前是「看不见也翻不到」，现在给个明确的出口
+      if($('pfMore')){
+        var left=(d.count||rows.length)-rows.length;
+        $('pfMore').hidden=left<=0;
+        $('pfMore').textContent='加载更多（还有 '+left+' 篇）';
+      }
       var want=openId||current;
       var target=want?list.querySelector('[data-id="'+want+'"]'):null;
       if(target){ select(target); return; }
@@ -64,6 +74,9 @@
   }
 
   function select(btn){
+    // 编辑区是不可回退的：切走就丢，保存只在点「保存」时发生
+    if(editorDirty&&!confirm('这篇还有未保存的改动，切走会丢掉。继续？')) return;
+    editorDirty=false;
     [].forEach.call(list.querySelectorAll('.file-item'),function(x){ x.classList.toggle('on',x===btn); });
     var id=btn.getAttribute('data-id'); current=id;
     detail.innerHTML='<p class="files-empty">读取中…</p>';
@@ -117,6 +130,8 @@
         return;
       }
       var f=arr[i];
+      // 服务端上限 8 MB，本地先拦一次：传了 6 MB 再失败是白等
+      if(f.size>8*1024*1024){ fail.push(f.name+'：超过 8 MB'); next(i+1); return; }
       readBase64(f)
         .then(function(b64){
           return api('/api/notes/'+encodeURIComponent(current)+'/assets','POST',{name:f.name,data:b64});
@@ -160,11 +175,13 @@
         +'<button class="btn sm" type="button" data-save>保存</button></div></div>';
       var area=detail.querySelector('.fe-area');
       area.value=d.content;
+      area.addEventListener('input',function(){ editorDirty=true; });
       area.scrollTop=0;
       try{ area.setSelectionRange(0,0); }catch(e){}
       var msg=detail.querySelector('.fe-msg');
       function say(t,bad){ msg.textContent=t||''; msg.className='fe-msg'+(bad?' err':''); }
       detail.querySelector('[data-cancel]').onclick=function(){
+        editorDirty=false;
         var item=list.querySelector('.file-item.on');
         if(item) select(item);
       };
@@ -180,6 +197,7 @@
             return;
           }
           if(!body.ok){ say(body.message||'保存失败',true); return; }
+          editorDirty=false;
           say('已保存 '+body.rev);
           toast('已保存到存储区');
           load(current);      // front matter 里的标题/标签可能改过，列表要跟着刷新
@@ -255,6 +273,21 @@
   }
 
   // ---- 事件 ----
+  if($('pfMore')) $('pfMore').onclick=function(){
+    LIMIT+=200; this.disabled=true; var b=this;
+    load(current);
+    setTimeout(function(){ b.disabled=false; },200);
+  };
+  // ↑↓ 在列表里移动焦点：键盘用户不该被逼着用鼠标
+  list.addEventListener('keydown',function(e){
+    if(e.key!=='ArrowDown'&&e.key!=='ArrowUp') return;
+    var items=[].slice.call(list.querySelectorAll('.file-item'));
+    if(!items.length) return;
+    e.preventDefault();
+    var i=items.indexOf(document.activeElement);
+    if(i<0){ items[0].focus(); return; }
+    (e.key==='ArrowDown'?items[Math.min(items.length-1,i+1)]:items[Math.max(0,i-1)]).focus();
+  });
   list.addEventListener('click',function(e){
     var b=e.target.closest('.file-item'); if(b) select(b);
   });

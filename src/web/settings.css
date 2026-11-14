@@ -110,3 +110,11 @@
 .set-migrate .set-note{color:var(--brand-600);}
 
 body.set-open{overflow:hidden;}
+
+/* 三步说明默认收起：第一次配置才需要，天天摆着只会把三个输入框往下推 */
+.set-more{margin:10px 0 12px;}
+.set-more summary{font-size:12px;color:var(--brand-600);cursor:pointer;list-style:none;padding:2px 0;}
+.set-more summary::-webkit-details-marker{display:none;}
+.set-more summary::before{content:"+ ";font-weight:600;}
+.set-more[open] summary::before{content:"− ";}
+.set-more .api-steps{margin-top:8px;}
