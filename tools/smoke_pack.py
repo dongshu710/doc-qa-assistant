@@ -77,11 +77,17 @@ def main() -> int:
             # `/report` 200 不代表管理面板能用：脚本是独立文件 `src/web/report_admin.js`，
             # 打包清单漏了它页面照样 200，只是「管理」按钮点下去毫无反应。
             # 用脚本里的独有标识确认它真的被内联进了导出页。
+            # 1.38 起 /report 默认是业务视图：管理按钮与面板不渲染，
+            # 只有 ?admin=1 才出现。两件事都要验，否则「入口消失」与「脚本没内联」会混为一谈。
             st, body = get(base + "/report")
+            public = body.decode("utf-8")
+            st, body = get(base + "/report?admin=1")
             html = body.decode("utf-8")
             wired = "rp_receipts" in html and 'id="rpAdminBtn"' in html
-            print(f"{'ok  ' if wired else 'FAIL'} /report 管理脚本已内联")
-            ok = ok and wired
+            print(f"{'ok  ' if wired else 'FAIL'} /report?admin=1 管理脚本已内联")
+            gated = 'id="rpAdminBtn"' not in public and 'id="rpAdmin"' not in public
+            print(f"{'ok  ' if gated else 'FAIL'} /report 默认不带管理入口")
+            ok = ok and wired and gated
 
             st, body = get(base + "/api/settings/setup")
             print(f"{'ok  ' if st == 200 else 'FAIL'} /api/settings/setup 200")
