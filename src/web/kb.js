@@ -76,8 +76,8 @@ function render(){
   $('kbBody').innerHTML=list.map(function(f){
     var t=typeOf(f.name);
     var st=statusOf(f);
-    return '<tr data-name="'+esc(f.name)+'"><td class="sel"><input type="checkbox" class="pick" data-name="'+esc(f.name)+'"'
-      +(SEL[f.name]?' checked':'')+' aria-label="选择 '+esc(f.name)+'"></td>'
+    return '<tr data-name="'+esc(f.name)+'"><td class="sel"><label class="ck"><input type="checkbox" class="pick" data-name="'+esc(f.name)+'"'
+      +(SEL[f.name]?' checked':'')+' aria-label="选择 '+esc(f.name)+'"><i></i></label></td>'
       +'<td><div class="fname"><span class="ftype '+esc(t.cls)+'">'+esc(t.ext)+'</span>'
       +'<span class="nm" title="'+esc(f.name)+'">'+esc(f.name)+'</span>'
       +(st?'<span class="fstat '+st.cls+'" title="'+esc(st.tip)+'">'+esc(st.text)+'</span>':'')+'</div></td>'
@@ -413,6 +413,10 @@ async function openChunks(name){
     if(!CK.items.length){ $('ckList').innerHTML='<div class="ck-empty">这份文档没有可显示的分段</div>'; return; }
     $('ckList').innerHTML='';
     ckMore();
+    // 第一块默认展开：抽屉有 772px 高，全折叠时一屏只有三行标题、什么也判断不了。
+    // 只展开第一块——再多的正文就不该在打开抽屉的那一刻进 DOM 了。
+    var first=$('ckList').querySelector('.ck-item');
+    if(first) ckFillText(first, 0);
   }catch(e){
     if(seq!==CK.seq) return;
     $('ckSub').textContent='读取失败';
@@ -427,10 +431,13 @@ function ckMore(){
   var list=$('ckList'), end=Math.min(CK.items.length, CK.shown+CK.PAGE), html='';
   for(var i=CK.shown;i<end;i++){
     var x=CK.items[i];
-    html+='<div class="ck-item"><button type="button" class="ck-row" data-k="'+i+'">'
+    html+='<div class="ck-item"><button type="button" class="ck-row" data-k="'+i+'" aria-expanded="false">'
       +'<span class="ck-no">#'+(x.chunk_index+1)+'</span>'
       +'<span class="ck-meta">'+(x.page?'第 '+x.page+' 页 · ':'')+x.chars+' 字</span>'
-      +'<span class="ck-sec">'+esc(x.section||'')+'</span></button></div>';
+      +'<span class="ck-sec">'+esc(x.section||'')+'</span></button>'
+      // 摘要截 240 字只为「一眼看出这块讲什么」；完整正文仍等展开才进 DOM
+      +(x.text?'<div class="ck-sum">'+esc(x.text.slice(0,240))+'</div>':'')
+      +'</div>';
   }
   CK.shown=end;
   var more=$('ckMore'); if(more) more.remove();
@@ -439,6 +446,16 @@ function ckMore(){
     list.insertAdjacentHTML('beforeend','<button type="button" class="ck-more" id="ckMore">继续加载（还有 '
       +(CK.items.length-CK.shown)+' 块）</button>');
   }
+}
+/* 正文按需创建：这是懒渲染的关键一步，否则省下的只是首屏时间 */
+function ckFillText(item, k){
+  var x=CK.items[k]; if(!x) return;
+  var pre=document.createElement('pre');
+  pre.className='ck-text';
+  pre.textContent=(x.text||'')+(x.truncated?'\n…（已截断，完整原文点引用查看）':'');
+  item.appendChild(pre);
+  item.classList.add('has-text');
+  var row=item.querySelector('.ck-row'); if(row) row.setAttribute('aria-expanded','true');
 }
 
 /* ---------- 全部版本 ----------
@@ -683,17 +700,10 @@ $('ckList').onclick=function(ev){
   var row=ev.target.closest('.ck-row'); if(!row) return;
   var item=row.parentNode;
   var pre=item.querySelector('.ck-text');
-  if(!pre){
-    // 正文按需创建：这是懒渲染的关键一步，否则省下的只是首屏时间
-    var x=CK.items[Number(row.dataset.k)];
-    if(!x) return;
-    pre=document.createElement('pre');
-    pre.className='ck-text';
-    pre.textContent=(x.text||'')+(x.truncated?'\n…（已截断，完整原文点引用查看）':'');
-    item.appendChild(pre);
-    return;
-  }
+  if(!pre){ ckFillText(item, Number(row.dataset.k)); return; }
   pre.hidden=!pre.hidden;
+  item.classList.toggle('has-text', !pre.hidden);
+  row.setAttribute('aria-expanded', pre.hidden?'false':'true');
 };
 $('ckList').addEventListener('scroll',function(){
   var box=$('ckList');

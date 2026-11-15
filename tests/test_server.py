@@ -4,7 +4,9 @@
 （未配置 LLM_API_KEY 时自动走离线抽取，配置后为真实模型。）
 """
 import json
+import os
 import sys
+import tempfile
 import threading
 import urllib.parse
 import urllib.request
@@ -17,6 +19,10 @@ sys.path.insert(0, str(ROOT))
 
 
 from src.server import create_server  # noqa: E402
+
+# 反馈用例会真写盘。v1.41.0 起它们落在「存储区/artifacts」，而这里没配 NOTE_HOME，
+# 不隔离就会写进用户真实的 agent-notes：跑一次测试，用户给自己攒的反馈旁边多一条。
+os.environ["ARTIFACTS_DIR"] = tempfile.mkdtemp(prefix="jy-server-artifacts-")
 
 httpd, pipe = create_server("127.0.0.1", 0, str(ROOT / "data" / "knowledge"))
 port = httpd.server_address[1]

@@ -81,7 +81,10 @@ def main() -> None:
         with urllib.request.urlopen(base + "/metrics", timeout=10) as resp:
             text = resp.read().decode("utf-8")
         assert "rag_keyword_hit_total" in text, text[-800:]
-        assert 'rag_keyword_rejected_total{reason="negated"}' in text, text[-800:]
+        # 标签顺序不是契约：v1.41.0 起每条指标都带 service/instance，
+        # 这里只断言「这个指标带着这个 reason 出现过」，不写死大括号里的全文。
+        assert "rag_keyword_rejected_total{" in text, text[-800:]
+        assert 'reason="negated"' in text, text[-800:]
 
         status, rebuilt, _ = post("/api/keywords/rebuild", {})
         assert status == 200 and rebuilt["ok"], rebuilt

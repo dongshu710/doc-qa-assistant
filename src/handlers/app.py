@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import atexit
 import os
 import pathlib
 import re
@@ -18,7 +19,7 @@ import sys
 import threading
 import time
 
-from .. import (appconfig, kbstore,
+from .. import (appconfig, artifacts, kbstore,
                 settings_ops)
 from .. import update as update_mod
 from ..auth import ApiKeyStore
@@ -147,15 +148,23 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
     tracer_error = ""
     try:
         tracer = make_exporter()
+        if tracer is not None:
+            # 队列满只涨内部计数 = 静默丢 trace；这里让丢弃进 /metrics
+            tracer.on_drop = lambda: metrics.inc("rag_otel_dropped_total")
     except ValueError as exc:
         # 端点配错要能被看见：静默忽略会让用户以为「已经接上了观测平台」
         tracer_error = str(exc)
 
+    # 运行时长出来的用例不进源码树：pip 安装后 tests/ 可能在 site-packages 里只读，
+    # 而用户清理仓库又会连带删掉自己攒的反馈——两种失败都不会报错（见 src/artifacts.py）。
+    service_home = str(note_ref["service"].store.home) if note_ref.get("service") else None
+    artifact_paths = artifacts.resolve(project_root, service_home)
+    artifacts.activate(artifact_paths)
     feedback_path = os.path.join(log_dir, "feedback.jsonl")
-    feedback_cases_path = os.path.join(project_root, "tests", "eval_cases_feedback.jsonl")
+    feedback_cases_path = artifact_paths["eval_cases_feedback.jsonl"]
     raw_dir = _raw_dir()
-    doc_cases_path = os.path.join(project_root, "tests", "eval_cases_docs.jsonl")
-    run_report_path = os.path.join(project_root, "tests", "report_doc_cases.json")
+    doc_cases_path = artifact_paths["eval_cases_docs.jsonl"]
+    run_report_path = artifact_paths["report_doc_cases.json"]
 
     def kb_dir() -> str:
         """活动版本目录；审批通过后只换这个指针，不在原目录上打补丁。"""
@@ -528,6 +537,11 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         do_HEAD = ReadRoutes.do_GET
 
     httpd = BoundedHTTPServer((host, port), Handler)
+    # 停机收尾：把节流中的成本计数落盘、断开 redis。
+    # 两条路径都挂上——`server_close()` 管正常停机与测试里的反复起停，
+    # `atexit` 管 KeyboardInterrupt / 异常退出没走到 close 的情况。
+    httpd.add_closer(guards.shutdown)
+    atexit.register(guards.shutdown)
 
     # 目录监听：外部改了知识库文件就自动重建索引。
     # 放在这里而不是每次请求里判断——请求路径上的检查等于「每次提问多一次 scandir」，

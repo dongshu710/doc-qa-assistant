@@ -67,6 +67,8 @@ class TraceExporter:
         self.dropped = 0
         self.failed = 0
         self.last_error = ""
+        # 队列满时调一次：让「丢了」这件事进 /metrics（原来只涨内部数字）
+        self.on_drop = None
         # 走不走系统代理：与客户端一致的教训——本机代理会把回环请求也劫走。
         self._opener = opener or urllib.request.build_opener(
             urllib.request.ProxyHandler({}))
@@ -96,6 +98,13 @@ class TraceExporter:
         except queue.Full:
             with self._lock:
                 self.dropped += 1
+            # 丢弃必须能被外部看见：只涨内部计数等于「丢了但没人知道」。
+            # 回调本身不能抛，否则会从问答线程里冒出去——调用方负责自己兜住。
+            if self.on_drop is not None:
+                try:
+                    self.on_drop()
+                except Exception:  # noqa: BLE001 —— 埋点失败不能影响业务
+                    pass
 
     def _span(self, name: str, start_ns: int, end_ns: int, attributes: dict) -> dict:
         attrs = [_attr(key, value) for key, value in list(attributes.items())[:MAX_ATTRIBUTES]]

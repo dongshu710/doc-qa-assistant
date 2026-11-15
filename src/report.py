@@ -17,6 +17,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from . import artifacts
 from .metrics import summarize
 from .theme import (BASE_CSS, BRAND, JS_UTIL, MARK, THEME_HEAD, THEME_JS, footer)
 from .version import __version__
@@ -407,6 +408,17 @@ def _stat_sig(path: Path) -> tuple:
         return (0, 0)
 
 
+def _resolve_file(name: str, tests_dir: Path) -> Path:
+    """运行时产物（用户点出来的用例）在数据目录，其余评测报告跟着代码走。
+
+    回退由 `artifacts.read_path` 负责：单测与离线导出没有组合根，仍读 tests/，
+    升级后第一次打开时迁移还没跑，也不会突然显示 0 条反馈。
+    """
+    if name in artifacts.RUNTIME_FILES:
+        return Path(artifacts.read_path(name, str(tests_dir.parent)))
+    return tests_dir / name
+
+
 def _collect_key(pipe, tests_dir: Path) -> tuple:
     """缓存键：知识库文件 + 评测报告 mtime/size + 检索配置。
 
@@ -430,7 +442,8 @@ def _collect_key(pipe, tests_dir: Path) -> tuple:
                        settings.keyword_top_n))
     return (
         str(Path(pipe.knowledge_dir).resolve()), len(pipe.chunks),
-        tuple(kb), tuple((name, _stat_sig(tests_dir / name)) for name in _CACHE_FILES),
+        tuple(kb),
+        tuple((name, _stat_sig(_resolve_file(name, tests_dir))) for name in _CACHE_FILES),
         config_sig,
     )
 
@@ -488,8 +501,9 @@ def _collect_uncached(pipe, project_root: Path, tests_dir: Path) -> dict:
 
     curated = len([l for l in (tests_dir / "eval_cases.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]) \
         if (tests_dir / "eval_cases.jsonl").exists() else 0
-    fb_cases = len([l for l in (tests_dir / "eval_cases_feedback.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]) \
-        if (tests_dir / "eval_cases_feedback.jsonl").exists() else 0
+    fb_file = _resolve_file("eval_cases_feedback.jsonl", tests_dir)
+    fb_cases = len([l for l in fb_file.read_text(encoding="utf-8").splitlines() if l.strip()]) \
+        if fb_file.exists() else 0
     # 语料未覆盖基线：这些用例期望的行为是「明确说不知道」，
     # 计入总用例数才对得上 `evaluator.default_case_files()` 的真实合并集
     # （人工 25 + 拒答 10 + 反馈 1 = 36）。以前只算前两项，页面写 26，
@@ -1134,13 +1148,26 @@ def render(data: dict, standalone: bool = False, redacted: bool = False,
         f'<div class="table-wrap"><table><thead><tr><th>文件</th><th class="num">知识块</th>'
         f'<th>占比</th></tr></thead><tbody>{kb_rows}</tbody></table></div>'
     )
-    kb_note = "" if k.get("redacted") else (
-        '<p class="muted" style="font-size:12px;margin:10px 0 0;line-height:1.8">'
-        "其中 3 份为手写的产品与制度样本，3 份由 PDF 解析而来"
-        "（含《商业银行理财业务监督管理办法》公开条款摘录）。"
-        "PDF 接入方式：<code>python -m src.pdf_ingest --raw data/raw --out data/knowledge</code>。"
-        "演示制度已明确标注为模拟样本，不代表任何机构正式制度。</p>"
-    )
+    if k.get("redacted"):
+        kb_note = ""
+    else:
+        # 这两句原来写死「3 份手写、3 份 PDF 解析」，而 v0002 早已是 7 份——
+        # 页面上的数字与表里列出的行数对不上，读者只能怀疑整页都不准。
+        # 改成按文件名前缀实时统计：pdf_ingest 落盘时就是这个名字，骗不了人。
+        _names = [f["name"] for f in k["files"]]
+        _pdf = sum(1 for n in _names if n.startswith("pdf_"))
+        _text = len(_names) - _pdf
+        _mix = []
+        if _text:
+            _mix.append(f"{_text} 份为手写的产品与制度样本")
+        if _pdf:
+            _mix.append(f"{_pdf} 份由 PDF 解析而来")
+        kb_note = (
+            '<p class="muted" style="font-size:12px;margin:10px 0 0;line-height:1.8">'
+            + (("其中 " + "，".join(_mix) + "。") if _mix else "当前版本目录还没有文档。")
+            + "PDF 接入方式：<code>python -m src.pdf_ingest --raw data/raw --out data/knowledge</code>。"
+            "演示制度已明确标注为模拟样本，不代表任何机构正式制度。</p>"
+        )
 
     actions = "" if standalone else (
         '<div class="actions"><a class="btn" href="/ask">去试真实问答</a>'

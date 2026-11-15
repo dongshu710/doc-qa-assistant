@@ -681,9 +681,13 @@ VECTOR_IVF_NPROBE=8
 RETRIEVAL=embedding
 ```
 
-**规模上限（实测，本机 Python 3.13）**：没有 numpy/faiss 时走纯 Python 点积，
-5000 块 × 1024 维约 **186 ms/查询**，20k 块约 750 ms，而且 GIL 下并发会线性变差。
-默认的 hash 向量路径（`RETRIEVAL=vector`）5000 块只要约 18 ms，不受这个限制影响。
+**规模上限**：没有 numpy/faiss 时走纯 Python 点积，延迟随块数线性增长，而且 GIL 下并发会变差。
+具体数字看 [`docs/BENCHMARK.md`](docs/BENCHMARK.md)——那一页由 `python tools/bench.py --write`
+在本机生成，**本文件不重复这些数字**：写在这里就会过期（曾经写着 186ms，实测已到 101ms，
+差 46%，而没有任何机制能发现它错了）。现在 `bench.py --check` 会在版本变化时直接报错，
+CI 也跑这条，报告过期就红。
+
+默认的 hash 向量路径（`RETRIEVAL=vector`）比纯后端点积快一个数量级，不受这个限制影响。
 所以：**纯后端建议 ≤2k 块**；再大就装 numpy/faiss，或把 `EMBEDDING` 换成本机模型端点 +
 `VECTOR_STORE=faiss`。这不是「慢一点」，是单次问答里多出半秒以上的等待。
 

@@ -3,6 +3,8 @@
 
 用法：
     python tools/build_release.py
+    python tools/build_release.py --prune-keep 3          # 构建后只留最近 3 个版本
+    python tools/build_release.py --prune-keep 3 --dry-run
 
 产物：
     dist/jiyi-app-<version>.zip       完整服务，解压双击 start 脚本即用
@@ -17,6 +19,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -193,9 +196,58 @@ def build() -> list[Path]:
     return made
 
 
-def main() -> int:
+_PKG_RE = re.compile(r"^jiyi-(?:app|plugin|skill)-([0-9][0-9.]*)\.zip$")
+
+
+def _version_key(text: str) -> tuple[int, ...]:
+    return tuple(int(part) if part.isdigit() else 0 for part in text.split("."))
+
+
+def prune(keep: int, dry_run: bool = False) -> list[str]:
+    """只保留最近 keep 个版本的三个包，其余删掉。
+
+    为什么需要：dist/ 会累积好几代产品名、几十个版本，靠肉眼分辨「哪个是当前版本」
+    是要出错的（我曾在这里混进过旧包一起发出去）。删的是**构建产物**，随时能重建，
+    所以不备份；SHA256SUMS.txt 每次构建都会重写，不参与清理。
+    """
+    if keep < 1:
+        raise ValueError("--prune-keep 至少为 1，否则会把刚构建的包也删掉")
+    by_version: dict[str, list[Path]] = {}
+    for path in DIST.glob("jiyi-*-*.zip"):
+        found = _PKG_RE.match(path.name)
+        if found:
+            by_version.setdefault(found.group(1), []).append(path)
+    ordered = sorted(by_version, key=_version_key, reverse=True)
+    removed: list[str] = []
+    for old in ordered[keep:]:
+        for path in sorted(by_version[old]):
+            if dry_run:
+                print(f"[dry-run] 将删除：{path.name}")
+            else:
+                path.unlink()
+                print(f"已删除旧包：{path.name}")
+            removed.append(path.name)
+    if not removed:
+        print(f"无需清理：共 {len(ordered)} 个版本，保留上限 {keep}")
+    return removed
+
+
+def main(argv: list[str]) -> int:
+    keep = 0
+    dry_run = "--dry-run" in argv
+    for i, arg in enumerate(argv):
+        if arg == "--prune-keep":
+            # 给了数字按数字，只写开关就按默认 3（与文档一致）；不给开关一律不清理，
+            # 「构建」和「删历史包」必须是两个可以分别触发的事。
+            nxt = argv[i + 1] if i + 1 < len(argv) else ""
+            if nxt.isdigit():
+                keep = int(nxt)
+            else:
+                keep = 3
     try:
         build()
+        if keep:
+            prune(keep, dry_run)
     except (OSError, FileNotFoundError, ValueError) as exc:
         print(f"构建失败：{exc}", file=sys.stderr)
         return 1
@@ -203,4 +255,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -171,8 +171,9 @@ function answerHTML(d,q){
   /* 来源前置：长答案里引用卡会排到几屏之后，用户只能盲信。
      这里在正文上方给一行「来源 N 份」，点了滚到引用卡。
      只写份数不写条数：底部的「引用 N 条」已经给了条数，两处都写会在同一屏
-     出现两组相同数字，再叠加「检索依据 M 条」，读者不知道该信哪个。 */
-  if(d.citations&&d.citations.length){
+     出现两组相同数字，再叠加「检索依据 M 条」，读者不知道该信哪个。
+     只在答案够长时才出现：短答案的引用卡就在下面 8px 处，这一行纯属多一层。 */
+  if(d.citations&&d.citations.length&&(d.answer||'').length>600){
     var docs={};
     d.citations.forEach(function(c){ if(c.doc_id) docs[c.doc_id]=1; });
     var dn=Object.keys(docs).length||d.citations.length;

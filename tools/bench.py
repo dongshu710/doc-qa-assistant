@@ -14,12 +14,14 @@
     python tools/bench.py                      # 打印 Markdown 表
     python tools/bench.py --write              # 写入 docs/BENCHMARK.md
     python tools/bench.py --sizes 1000,5000    # 指定规模
+    python tools/bench.py --check               # 只校验报告版本是否过期（CI 用，不跑基准）
 """
 from __future__ import annotations
 
 import argparse
 import os
 import platform
+import re
 import statistics
 import sys
 import tempfile
@@ -308,6 +310,36 @@ def render(retrieval: list[dict], builds: list[dict], notes: list[dict],
     return "\n".join(lines)
 
 
+def check_stale() -> int:
+    """只比版本号，不跑基准——CI 每次提交都要能跑得起。
+
+    为什么需要：README 曾把「5000 块 186ms」写死在正文里，实测已到 101ms，差 46%。
+    数字一旦脱离生成它的代码，就没有任何机制能让它保持正确。这里把
+    「基准报告是不是针对当前版本生成的」变成一条可执行断言：版本变了就必须重跑 --write。
+    """
+    from src.version import __version__
+
+    target = ROOT / "docs" / "BENCHMARK.md"
+    if not target.exists():
+        print(f"缺少 {target.relative_to(ROOT)}；请跑 python tools/bench.py --write",
+              file=sys.stderr)
+        return 1
+    text = target.read_text(encoding="utf-8")
+    found = re.search(r"^\| 版本 \| v([0-9][0-9.]*) \|$", text, re.M)
+    if not found:
+        print("BENCHMARK.md 里没有版本行（可能被手改）；请重跑 python tools/bench.py --write",
+              file=sys.stderr)
+        return 1
+    reported = found.group(1)
+    if reported != __version__:
+        print(f"BENCHMARK.md 是 v{reported} 生成的，当前版本 v{__version__}。\n"
+              f"  报告里的数字已过期，请重跑：python tools/bench.py --write",
+              file=sys.stderr)
+        return 1
+    print(f"BENCHMARK 版本一致（v{__version__}）")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="可复现基准测试")
     parser.add_argument("--sizes", default="200,1000,5000",
@@ -321,10 +353,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--dims", default="256,1024",
                         help="向量维度")
     parser.add_argument("--write", action="store_true", help="写入 docs/BENCHMARK.md")
+    parser.add_argument("--check", action="store_true",
+                        help="只校验 docs/BENCHMARK.md 的版本号是否过期（不跑基准）")
     parser.add_argument("--internal", help="（内部用）在子进程里跑单个用例")
     parser.add_argument("--size", type=int, help="（内部用）块数")
     parser.add_argument("--dim", type=int, help="（内部用）维度")
     args = parser.parse_args(argv)
+
+    if args.check:
+        return check_stale()
 
     if args.internal:
         import json

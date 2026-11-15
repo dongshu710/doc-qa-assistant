@@ -129,6 +129,14 @@ jobs:
       - name: 过载拒绝（503 + Retry-After）
         run: python tests/test_server_overload.py
 
+      # 出问题时能不能查，不靠自觉：访问日志、停机落盘、指标标签、trace 丢弃计数。
+      - name: 可观测性（访问日志 / 停机落盘 / 指标标签）
+        run: python tests/test_observability.py
+
+      # 运行时长出来的用例必须落在数据目录，不能写进源码树的 tests/。
+      - name: 运行时产物落点
+        run: python tests/test_artifacts.py
+
       # 四条「不测就不知道坏了」的边界：坏参数断连、幂等串题、启动期安全校验、
       # 设置子路由泄露绝对路径。前两条用户侧无感，后两条是安全问题。
       - name: 请求边界与安全边界
@@ -305,6 +313,11 @@ jobs:
         run: |
           python tests/test_mdrender.py
           python tools/build_docs_site.py --check
+
+      # 基准报告里的数字只在「生成它的那个版本」上成立。版本涨了不重跑，报告就是谎话，
+      # 而它看上去完全正常——所以让过期变成一条会红的断言，而不是靠人记得。
+      - name: 基准报告未过期
+        run: python tools/bench.py --check
 
       - name: 构建发布包（应用 + 插件）
         if: matrix.python == '3.13'

@@ -10,10 +10,11 @@ import json
 import os
 import re
 import threading
+import time
 import traceback
 from urllib.parse import parse_qs, urlparse
 
-from .. import (openai_compat as compat,
+from .. import (accesslog, openai_compat as compat,
                 routing, security)
 from ..auth import READ_ONLY_POSTS, safe_equal
 from ..http_server import SlotAwareHandler
@@ -149,6 +150,7 @@ def make_base(deps):
     guards = deps.guards
     api_keys = deps.api_keys
     reload_kb = deps.reload_kb
+    log_dir = deps.log_dir
 
     class BaseRoutes(SlotAwareHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
@@ -165,6 +167,7 @@ def make_base(deps):
 
         def send_response(self, code, message=None) -> None:  # noqa: D102 —— 见 _responded
             self._responded = True
+            self._status = code
             super().send_response(code, message)
 
         def handle_one_request(self) -> None:
@@ -178,6 +181,8 @@ def make_base(deps):
             也永远生成不出来。
             """
             self._responded = False
+            self._status = 0
+            started = time.monotonic()
             try:
                 super().handle_one_request()
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
@@ -196,6 +201,22 @@ def make_base(deps):
                     except OSError:
                         pass
                 self.close_connection = True
+            finally:
+                self._log_access(started)
+
+        def _log_access(self, started: float) -> None:
+            """一次请求一行。空连接（浏览器预连接、keep-alive 到期关闭、端口探活）不记：
+            `command` 是上一次请求留下的，`raw_requestline` 为空才说明这次真的没读到请求行。"""
+            if not getattr(self, "command", "") or not getattr(self, "raw_requestline", b""):
+                return
+            try:
+                req_id = (self.headers.get("X-Request-Id") or "") if self.headers else ""
+            except AttributeError:
+                req_id = ""
+            accesslog.emit(log_dir, method=self.command, path=self.path,
+                           status=getattr(self, "_status", 0),
+                           ms=(time.monotonic() - started) * 1000,
+                           client=self._client(), req_id=req_id)
 
         # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
         COMPRESSIBLE = frozenset({

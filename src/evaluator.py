@@ -12,12 +12,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CURATED = ROOT / "tests" / "eval_cases.jsonl"
-FEEDBACK = ROOT / "tests" / "eval_cases_feedback.jsonl"
-DOCS = ROOT / "tests" / "eval_cases_docs.jsonl"
 HARD = ROOT / "tests" / "eval_cases_hard.jsonl"
 # 「域内但语料没覆盖」：正确行为不是答对，而是**不许装作答对**。
 # 这批用例是 1.27.0 用户测试里 4/8 假阳性的回归基线。
 UNCOVERED = ROOT / "tests" / "eval_cases_uncovered.jsonl"
+
+
+def _runtime_path(name: str) -> Path:
+    """运行时长出来的用例跟数据目录走（见 `src/artifacts.py`）。
+
+    不能写成模块级常量：`activate()` 由组合根在启动时调用，而本模块在 import
+    时就被 handler 引用了——常量会在登记之前算好，永远指向旧的 tests/ 路径。
+    """
+    from . import artifacts
+
+    return Path(artifacts.read_path(name, str(ROOT)))
+
+
+def feedback_path() -> Path:
+    return _runtime_path("eval_cases_feedback.jsonl")
+
+
+def docs_path() -> Path:
+    return _runtime_path("eval_cases_docs.jsonl")
 
 
 def _norm(text: str) -> str:
@@ -76,10 +93,12 @@ def check_l1(case: dict, actual: dict, context: list[dict] | None = None) -> lis
 
 def default_case_files(include_hard: bool = False, include_docs: bool = True) -> list[Path]:
     files = [CURATED, UNCOVERED]
-    if FEEDBACK.exists():
-        files.append(FEEDBACK)
-    if include_docs and DOCS.exists():
-        files.append(DOCS)
+    feedback = feedback_path()
+    if feedback.exists():
+        files.append(feedback)
+    docs = docs_path()
+    if include_docs and docs.exists():
+        files.append(docs)
     if include_hard:
         files.append(HARD)
     return files

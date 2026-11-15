@@ -684,6 +684,29 @@ class Guards:
             },
         }
 
+    def flush(self) -> None:
+        """把节流中的计数落盘（成本预算按 1s / 50 次节流写，退出时最后一段会丢）。
+
+        为什么必须显式调用：`CostBudget.flush()` 原来全仓零调用点，Ctrl-C 退出时
+        最后不到 1 秒的 token 用量直接消失——日上限因此永远比真实用量乐观一点点，
+        而这种偏差不会报错，只会让「超限拦截」偶尔失灵一次。
+        """
+        for target in (self.cost.primary, self.cost.fallback):
+            flush = getattr(target, "flush", None)
+            if callable(flush):
+                try:
+                    flush()
+                except Exception:  # noqa: BLE001 —— 收尾失败不能挡住退出
+                    pass
+
+    def shutdown(self) -> None:
+        """进程退出：先落盘，再断连接。可以重复调用（closer 与 atexit 都会调）。"""
+        self.flush()
+        self.close()
+
     def close(self) -> None:
         if self.redis:
-            self.redis.close()
+            try:
+                self.redis.close()
+            finally:
+                self.redis = None

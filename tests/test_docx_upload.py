@@ -10,7 +10,9 @@
 import base64
 import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -19,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src import artifacts  # noqa: E402
 from src.docx_text import extract_docx  # noqa: E402
 from src.server import create_server  # noqa: E402
 
@@ -60,8 +63,13 @@ def _get(port: int, path: str):
 
 
 def _drop_cases(doc_id: str) -> None:
-    """清掉本测试生成的用例，避免污染看板和后续评测。"""
-    path = ROOT / "tests" / "eval_cases_docs.jsonl"
+    """清掉本测试生成的用例，避免污染看板和后续评测。
+
+    路径必须走 `artifacts`：v1.41.0 起运行时用例落在 `<存储区>/artifacts/`
+    （不再写源码树的 tests/）。写死旧路径的后果是「测试看着清干净了，
+    实际每跑一次就在真实数据里攒一条」，第二次跑必然因为重复题目生成 0 条而报错。
+    """
+    path = Path(artifacts.read_path("eval_cases_docs.jsonl", str(ROOT)))
     if not path.exists():
         return
     keep = []
@@ -76,7 +84,7 @@ def _drop_cases(doc_id: str) -> None:
     else:
         path.unlink(missing_ok=True)
     # 运行报告也清掉，否则看板「上次运行」会停测试留下的 0/0
-    (ROOT / "tests" / "report_doc_cases.json").unlink(missing_ok=True)
+    Path(artifacts.read_path("report_doc_cases.json", str(ROOT))).unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -90,6 +98,11 @@ def main() -> int:
     print(f"[1] DOCX 解析：{meta['paragraphs']} 段 / {meta['headings']} 个标题 / {meta['tables']} 张表")
 
     saved = _force_offline()
+    # 用例落临时目录：一来不写用户真实存储区，二来每次都从零出题。
+    # 出题会跳过「题目已存在」的重复项——上一轮残留留着，这一轮必然生成 0 条。
+    artifacts_dir = tempfile.mkdtemp(prefix="jy-artifacts-")
+    saved_artifacts = os.environ.get("ARTIFACTS_DIR")
+    os.environ["ARTIFACTS_DIR"] = artifacts_dir
     httpd, _pipe = create_server(HOST, 0, str(ROOT / "data" / "knowledge"))
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -156,6 +169,11 @@ def main() -> int:
         _drop_cases(doc_id)
         httpd.shutdown()
         _restore_env(saved)
+        if saved_artifacts is None:
+            os.environ.pop("ARTIFACTS_DIR", None)
+        else:
+            os.environ["ARTIFACTS_DIR"] = saved_artifacts
+        shutil.rmtree(artifacts_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

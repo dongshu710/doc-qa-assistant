@@ -32,9 +32,13 @@ def _labels(pairs: dict | None) -> str:
 
 
 class Metrics:
-    def __init__(self, enabled: bool = True, service: str = "doc-qa"):
+    def __init__(self, enabled: bool = True, service: str | None = None):
         self.enabled = bool(enabled)
-        self.service = service
+        # 服务名默认跟 OTel 一致：两边不一致时，指标面板上的服务名与 trace 里的
+        # 对不上，多实例场景根本没法把「慢的那个请求」和「慢的那个实例」关联起来。
+        # 原来这里写死旧产品名 doc-qa，且 service/instance 赋值后从未进过 render。
+        chosen = (service or os.environ.get("OTEL_SERVICE_NAME") or "jiyi").strip()
+        self.service = (chosen or "jiyi")[:64]
         self.instance = f"{socket.gethostname()}:{os.getpid()}"
         self._counters: dict[tuple[str, tuple], float] = defaultdict(float)
         self._gauges: dict[tuple[str, tuple], float] = {}
@@ -70,6 +74,13 @@ class Metrics:
             row["sum"] += float(value)
             row["count"] += 1
 
+    def _tag(self, labels: dict) -> dict:
+        """每条指标都带上 service / instance：原来这两个字段赋值后从未进 render，
+        多实例部署时所有实例的指标长得一模一样，聚合时只能靠抓取目标猜。"""
+        merged = {"service": self.service, "instance": self.instance}
+        merged.update(labels or {})
+        return merged
+
     def render(self) -> str:
         if not self.enabled:
             return ""
@@ -86,20 +97,20 @@ class Metrics:
         for name in sorted(by_name):
             lines.append(f"# TYPE {name} counter")
             for labels, value in sorted(by_name[name], key=lambda x: sorted(x[0].items())):
-                lines.append(f"{name}{_labels(labels)} {value:g}")
+                lines.append(f"{name}{_labels(self._tag(labels))} {value:g}")
 
         for name in sorted({k[0] for k in gauges}):
             lines.append(f"# TYPE {name} gauge")
             for (gname, labels), value in gauges.items():
                 if gname == name:
-                    lines.append(f"{name}{_labels(dict(labels))} {value:g}")
+                    lines.append(f"{name}{_labels(self._tag(dict(labels)))} {value:g}")
 
         for name in sorted({k[0] for k in hist}):
             lines.append(f"# TYPE {name} histogram")
             for (hname, labels), row in hist.items():
                 if hname != name:
                     continue
-                base = dict(labels)
+                base = self._tag(dict(labels))
                 cumulative = 0
                 for bound, count in zip(DEFAULT_BUCKETS, row["buckets"]):
                     cumulative = count  # 已按「<= bound」累计

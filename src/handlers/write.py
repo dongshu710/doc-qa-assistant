@@ -839,8 +839,9 @@ def make_write(deps):
                 return
             if path == "/api/cases/run":
                 scope = str(payload.get("scope") or "docs")
+                docs_file = evaluator.docs_path()
                 files = (evaluator.default_case_files() if scope == "all"
-                         else ([evaluator.DOCS] if evaluator.DOCS.exists() else []))
+                         else ([docs_file] if docs_file.exists() else []))
                 cases = evaluator.load_cases(files)
                 if not cases:
                     self._json({"ok": True, "scope": scope, "total": 0, "passed": 0,
