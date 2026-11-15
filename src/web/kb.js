@@ -578,6 +578,11 @@ async function batchDelete(){
 /* ---------- 事件 ---------- */
 $('kbFile').onchange=function(){ var fs=[].slice.call(this.files||[]); this.value=''; uploadFiles(fs); };
 $('drop').onclick=function(e){ if(e.target.id!=='kbFile') $('kbFile').click(); };
+// 键盘必须也能上传：这个 div 只有 click，Tab 到不了、回车也没反应，
+// 而上传是知识库唯一的写入入口——键盘/读屏用户会被完全挡在核心任务之外。
+$('drop').addEventListener('keydown',function(e){
+  if(e.key==='Enter'||e.key===' '){ e.preventDefault(); $('kbFile').click(); }
+});
 ['dragenter','dragover'].forEach(function(ev){
   $('drop').addEventListener(ev,function(e){ e.preventDefault(); $('drop').classList.add('over'); });
 });

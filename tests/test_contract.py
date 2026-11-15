@@ -117,11 +117,28 @@ def test_each_route_runs(service: NoteService) -> None:
     check("DELETE /api/notes/{id}", status == 200, str(status))
 
 
+def test_tools_payload() -> None:
+    """`/tools.json` 的端点是给调用方按工具名查的，键必须与工具名一致。
+
+    原来按短动词（save/search/get）建键，还少了 note_stats 与 export_notes、
+    多了不是工具的 read_attachment——智能体从 tools 数组拿到名字后查不到端点。
+    """
+    from src.notes.tools import TOOLS, tools_payload
+
+    payload = tools_payload("1.39.0")
+    names = {tool["function"]["name"] for tool in payload["tools"]}
+    endpoints = set(payload["endpoints"])
+    check("endpoints 的键与工具名一一对应", names == endpoints,
+          f"缺 {sorted(names - endpoints)} 多 {sorted(endpoints - names)}")
+    check("工具数量是 9", len(TOOLS) == 9, str(len(TOOLS)))
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         service = NoteService(tmp)
         test_bidirectional()
         test_each_route_runs(service)
+        test_tools_payload()
     print()
     if FAILED:
         print(f"{FAILED} 项失败")

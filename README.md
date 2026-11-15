@@ -24,7 +24,7 @@
 | 包 | 里面有什么 | 适合谁 | 文件 |
 |---|---|---|---|
 | **应用包** | 问答 + 知识库 + 笔记 + 四页界面 + HTTP API | 想直接问文档，也顺手存笔记 | `jiyi-app-<版本>.zip` |
-| **插件包** | 只有笔记：MCP stdio，7 个工具 + 2 个资源 | 只让智能体记笔记，不想跑整站 | `jiyi-plugin-<版本>.zip` |
+| **插件包** | 只有笔记：MCP stdio，9 个工具 + 2 类资源 | 只让智能体记笔记，不想跑整站 | `jiyi-plugin-<版本>.zip` |
 | **技能包** | `jiyi-files` 技能：列/搜/读/存/导出/开页面 | 在 WorkBuddy 里直接用嘴使唤笔记 | `jiyi-skill-<版本>.zip` |
 
 解压即用，运行时零第三方依赖（Python 3.11+）。应用包双击 `start.bat` / `sh start.sh`；
@@ -1382,9 +1382,9 @@ v1.18.0 把这条分工做成了侧栏里点得到的按钮：
 `web_pages.py`（1862 行）的三引号里：没有语法高亮、没法查错、改一行要滚两千行。
 
 ```
-src/web/   base.css  settings.css  files.css  agent.css  ask.css  kb.css
-           side.js  settings.js  files.js  files_page.js  agent.js  ask.js  kb.js  theme.js  util.js
-           settings.html  files.html  files_page.html  agent.html  ask.html  kb.html  art.txt
+src/web/   base.css  settings.css  files.css  ask.css  kb.css  debug.css
+           side.js  settings.js  files.js  files_page.js  ask.js  kb.js  debug.js  theme.js  util.js
+           settings.html  files.html  files_page.html  ask.html  kb.html  art.txt
 ```
 
 - 运行时行为不变：导入时读进内存、内联进 HTML，不新增静态路由、不引入构建步骤；

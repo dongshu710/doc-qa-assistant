@@ -17,7 +17,7 @@ from ..config import api_key, load_settings
 from ..notes.api import ApiError
 from ..notes.api import dispatch as notes_dispatch
 from ..threadstore import ThreadError, ThreadStore
-from .common import (NOTES_MAX_BYTES, _open_folder, redact_settings)
+from .common import (NOTES_MAX_BYTES, _open_folder, int_qs, redact_settings)
 from .base import sse_acquire, sse_release
 
 
@@ -180,8 +180,8 @@ def make_resources(deps):
             thread_id = parts[2] if len(parts) > 2 else ""
             try:
                 if method == "GET" and not thread_id:
-                    limit = int((query.get("limit") or ["60"])[0])
-                    items = store.list(limit=max(1, min(200, limit)))
+                    limit = int_qs(query, "limit", 60, 1, 200)
+                    items = store.list(limit=limit)
                     self._json({"ok": True, "items": items, "count": len(items)}, 200, cors)
                     return
                 if method == "GET":

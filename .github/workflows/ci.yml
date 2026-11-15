@@ -129,6 +129,11 @@ jobs:
       - name: 过载拒绝（503 + Retry-After）
         run: python tests/test_server_overload.py
 
+      # 四条「不测就不知道坏了」的边界：坏参数断连、幂等串题、启动期安全校验、
+      # 设置子路由泄露绝对路径。前两条用户侧无感，后两条是安全问题。
+      - name: 请求边界与安全边界
+        run: python tests/test_security_boundaries.py
+
       - name: 后台重建与增量解析
         run: python tests/test_async_reload.py
 

@@ -52,7 +52,8 @@ DELETE /api/notes/{id}?confirm=1
 GET    /api/notes/stats
 ```
 
-`GET /tools.json` 直接给出 7 个 OpenAI function calling 声明，塞进 `tools` 数组即可。
+`GET /tools.json` 直接给出 9 个 OpenAI function calling 声明（`endpoints` 以工具名为键），
+塞进 `tools` 数组即可。
 服务端配了 `API_KEYS` 时，记得带 `Authorization: Bearer <key>`。
 
 ### 直接改文件（v1.19.0）
@@ -77,7 +78,8 @@ POST /api/files/open {path}                        # 交给用户的系统编辑
 - 浏览器发起的写请求要带 `X-Jiyi-Client: web`（页面里的 `fetch` 已统一包装，自动加）；
   curl / SDK / MCP 不带 `Origin`，不需要这个头。
 - **鉴权按 `src/routing.py` 的表**：`open`（设置/健康/更新/契约）、`api`（其余 `/api/*`）、
-  `admin`（`/metrics`、`/api/audit`、`/api/admin/*`、`/api/kb/approve|reject|rollback_doc`）。
+  `admin`（`/metrics`、`/api/audit`、`/api/admin/*`、`/api/kb/approve|reject|rollback_doc`、
+  `/api/keywords/rebuild`）。
   未登记的 `/api/*` 默认按 `api` 处理。配了 `API_KEYS` 后**读接口也要 Key**（含 `/api/source`、`/api/trace`）。
 - **要改代码**：路由在 `src/handlers/`（`read.py` 只读、`write.py` 写入、`resources.py` 资源、
   `base.py` 闸门与通用动作、`app.py` 装配依赖）。`src/server.py` 只有入口，
@@ -167,8 +169,8 @@ python -m src.notes export --out exports/all.html
 
 ## 前端资源的规矩（v1.18.0 起）
 
-- **不要往 Python 里写 CSS/JS/HTML 字符串**。它们全在 `src/web/`：`base|settings|files|agent|ask|kb.css`、
-  `side|settings|files|files_page|agent|ask|kb|theme|util.js`、对应 `.html` 片段与 `art.txt`。
+- **不要往 Python 里写 CSS/JS/HTML 字符串**。它们全在 `src/web/`：`base|settings|files|ask|kb|debug|setup.css`、
+  `side|settings|files|files_page|ask|kb|debug|theme|util.js`、对应 `.html` 片段与 `art.txt`。
   `theme.py` 只做资源装载与骨架拼接，`web_pages.py` 只做占位符替换。
 - 改完跑 `python tools/check_frontend.py`：每个 `.js` 过 `node --check`，CSS 查括号与外部引用，
   拼装后的整页再逐段复检。`tests/test_frontend.py` 会拦住「又内联回去」（`theme.py` ≤ 260 行 / 20 KB）。

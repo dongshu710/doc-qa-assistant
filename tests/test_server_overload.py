@@ -6,6 +6,8 @@
 所以必须能从客户端区分出来。
 
 预期行为：槽位满 -> 立刻 503 + Retry-After，且不新开线程。
+槽位在「读完请求行」之后才扣，所以要继承 SlotAwareHandler，否则测的还是
+accept 阶段的连接槽，与线上行为不是同一件事。
 """
 from __future__ import annotations
 
@@ -13,13 +15,12 @@ import socket
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.http_server import BoundedHTTPServer  # noqa: E402
+from src.http_server import BoundedHTTPServer, SlotAwareHandler  # noqa: E402
 
 FAILED = 0
 
@@ -33,7 +34,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"  FAIL {name}  {detail}")
 
 
-class _Handler(BaseHTTPRequestHandler):
+class _Handler(SlotAwareHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):  # noqa: N802

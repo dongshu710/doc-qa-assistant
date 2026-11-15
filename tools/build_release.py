@@ -57,7 +57,12 @@ EXCLUDE_DIR_NAMES = {"__pycache__", ".venv", "venv", "logs", "dist", ".git", ".g
 # 和存储路径**一起发到 Release 上；装包的人首启还会看到一堆别人的配置。
 EXCLUDE_FILE_NAMES = {"report_doc_cases.json", "eval_cases_docs.jsonl", ".DS_Store",
                       "Thumbs.db", "e2e-server.log", "app.json", "app.test.json"}
-EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
+# 按后缀排：原来只列了 `e2e-server.log` 一个**文件名**，实测 1.39.0 的包里
+# 还是带进了 e2e-notes-server.log / e2e-settings-server.log / e2e-layout-server.log
+# ——发布包里有开发机跑测试的痕迹，只是没人打开看过。
+EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".log"}
+# 跑分与用例产物：文件名随用例数、时间变化，只能按模式排。
+EXCLUDE_GLOBS = ("report_*.json", "eval_cases_*.jsonl")
 
 
 def version() -> str:
@@ -82,6 +87,8 @@ def iter_payload() -> list[Path]:
             if any(part in EXCLUDE_DIR_NAMES for part in rel_parts):
                 continue
             if path.name in EXCLUDE_FILE_NAMES or path.suffix in EXCLUDE_SUFFIXES:
+                continue
+            if any(path.match(pat) for pat in EXCLUDE_GLOBS):
                 continue
             files.append(path)
     return files
@@ -129,9 +136,13 @@ def _assert_no_secrets(payload: list[Path]) -> None:
     命中就直接失败——发出去不可撤销，宁可构建中断。
     """
     banned = {"app.json", "app.test.json", ".env", ".env.local", ".gh_token"}
-    hits = [p for p in payload if p.name in banned or p.suffix in {".pem", ".key"}]
+    hits = [p for p in payload
+            if p.name in banned
+            or p.suffix in {".pem", ".key", ".log"}
+            or any(p.match(pat) for pat in EXCLUDE_GLOBS)]
     if hits:
-        raise ValueError("发布包里混入了运行时配置：" + "、".join(str(p.relative_to(ROOT)) for p in hits))
+        raise ValueError("发布包里混入了运行时配置或测试产物："
+                         + "、".join(str(p.relative_to(ROOT)) for p in hits))
 
 
 def write_zip(out: Path, root_name: str, payload: list[Path],

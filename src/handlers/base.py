@@ -10,12 +10,14 @@ import json
 import os
 import re
 import threading
-from http.server import BaseHTTPRequestHandler
+import traceback
 from urllib.parse import parse_qs, urlparse
 
 from .. import (openai_compat as compat,
                 routing, security)
 from ..auth import READ_ONLY_POSTS, safe_equal
+from ..http_server import SlotAwareHandler
+from .common import redact_settings
 
 # 错误体统一形状：{"ok": false, "error": "<机器码>", "message": "<中文>"}。
 # 1.27.0 之前同一个服务里同时存在 5 种：`{"error":"not found"}`、
@@ -83,6 +85,12 @@ def normalize_error(obj, code: int):
     elif err in _LEGACY:
         obj["error"] = _LEGACY[err]
     elif not _CODE_OK.match(err):
+        # 纯英文或带方括号的异常串。原来直接 slug 成机器码，原文就丢了：
+        # `[Errno 13] Permission denied: /home/u/data` 会变成
+        # `errno_13_permission_denied_home_u_data`——原因没了，绝对路径反而
+        # 进了 error 字段（绕过 redact_path 的脱敏，还把指标标签基数打爆）。
+        # 顺序反过来：先把它当 message 留住，再 slug。
+        obj.setdefault("message", err[:200])
         obj["error"] = re.sub(r"[^a-z0-9]+", "_", err.lower()).strip("_") or "error"
     obj["ok"] = False
     obj.setdefault("message", _MESSAGE_BY_CODE.get(obj["error"], ""))
@@ -171,11 +179,52 @@ def make_base(deps):
     _count_notes = deps._count_notes
     _copy_notes = deps._copy_notes
 
-    class BaseRoutes(BaseHTTPRequestHandler):
+    class BaseRoutes(SlotAwareHandler):
         # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
         # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
+        # 并发名额的扣减在 SlotAwareHandler 里做（读完请求行才扣），
+        # 空闲连接只占连接槽，不会把工作槽吃光。
         protocol_version = "HTTP/1.1"
         timeout = 20
+
+        # 本次请求是否已经开始写响应。异常兜底靠它判断还能不能补一个 500：
+        # 已经发出 200 和部分正文之后再写一次响应，两段报文会粘在一起，
+        # 客户端解析直接失败——比不补更糟。
+        _responded = False
+
+        def send_response(self, code, message=None) -> None:  # noqa: D102 —— 见 _responded
+            self._responded = True
+            super().send_response(code, message)
+
+        def handle_one_request(self) -> None:
+            """请求边界兜底：未捕获异常必须变成 500，不能变成「无声断连」。
+
+            为什么必须在这一层：各 handler 里漏掉的异常（典型是
+            `?limit=abc` 抛出的 ValueError）原来会一路冒到 socketserver，
+            客户端拿到的是 RemoteDisconnected——没有状态码、没有响应体。
+            监控里看到的是「客户端主动断开」而不是「服务端 500」，
+            排障方向直接被带偏；`_CODE_BY_STATUS` 里那个 internal_error
+            也永远生成不出来。
+            """
+            self._responded = False
+            try:
+                super().handle_one_request()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                # 对端先走了：关标签页、Ctrl-C 打断流式输出都会这样，属正常现象
+                self.close_connection = True
+            except Exception as exc:  # noqa: BLE001 —— 这一层就是最后的兜底
+                metrics.inc("rag_request_crash_total")
+                guards.audit.write("request.crash", client=self._client(),
+                                   path=self.path[:160],
+                                   error=type(exc).__name__)
+                traceback.print_exc()
+                if not self._responded:
+                    try:
+                        self._json({"ok": False, "error": "internal_error",
+                                    "message": self._error_text(exc)}, 500)
+                    except OSError:
+                        pass
+                self.close_connection = True
 
         # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
         COMPRESSIBLE = frozenset({
@@ -238,6 +287,18 @@ def make_base(deps):
                 except (BrokenPipeError, ConnectionResetError):
                     self.close_connection = True
         def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
+            # 设置类是 open 级接口（Key 配错时的回退通道）：配了 Key 却没带有效 Key
+            # 的调用方也能读。但「能看配置长什么样」不等于「能看家目录」——
+            # 原来只在 `/api/settings` 一处脱敏，`/api/settings/mcp` 与
+            # `/api/settings/setup` 会把解释器绝对路径、PYTHONPATH、NOTE_HOME
+            # 原样交出去（实测 200 且含 C:\Users\...）。
+            # 放在这个唯一出口上判断，以后新增 settings 子路由不会漏。
+            if (isinstance(obj, dict) and self.command in ("GET", "HEAD")
+                    and (self.path == "/api/settings"
+                         or self.path.startswith("/api/settings/"))
+                    and api_keys.enabled and self._api_auth()[0] is None
+                    and not obj.get("redacted")):
+                obj = redact_settings(obj)
             self._send(code, json.dumps(normalize_error(obj, code), ensure_ascii=False),
                        extra_headers=extra_headers, cache="no-store")
 

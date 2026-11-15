@@ -241,14 +241,18 @@ def tools_payload(version: str, base_url: str = "") -> dict:
         "version": version,
         "base_url": base_url or "",
         "endpoints": {
-            "save": "POST /api/notes",
-            "search": "GET /api/notes?tag=&kind=&since=&limit=",
-            "get": "GET /api/notes/{id}",
-            "update": "PATCH /api/notes/{id}",
-            "delete": "DELETE /api/notes/{id}?confirm=1",
-            "list_attachments": "GET /api/notes/{id}/assets",
+            # 键必须是工具名。原来按短动词（save/search/get/delete）建键，
+            # 调用方从 tools 数组拿到的是工具名，两者对不上；
+            # 而且少了 note_stats 与 export_notes，多了不是工具的 read_attachment。
+            "save_conversation": "POST /api/notes",
+            "search_notes": "GET /api/notes?tag=&kind=&since=&limit=",
+            "get_note": "GET /api/notes/{id}",
+            "update_note": "PATCH /api/notes/{id}",
+            "delete_note": "DELETE /api/notes/{id}?confirm=1",
+            "note_stats": "GET /api/notes/stats",
+            "export_notes": "GET /api/notes/export?fmt=html|md",
             "save_attachment": "POST /api/notes/{id}/assets",
-            "read_attachment": "GET /api/notes/{id}/assets/{name}",
+            "list_attachments": "GET /api/notes/{id}/assets",
         },
         "auth": "若服务端配置了 API_KEYS，需要 Authorization: Bearer <key> 或 X-API-Key",
         "tools": TOOLS,

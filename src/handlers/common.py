@@ -86,6 +86,24 @@ def _read_jsonl(path: str, limit: int) -> list[dict]:
     return jsonl.tail_json(path, max(1, int(limit)))
 
 
+def int_qs(qs: dict, key: str, default: int, low: int, high: int) -> int:
+    """URL 里的整数参数：坏值一律回落默认值，并夹在区间内。
+
+    不直接 `int(...)`：`?limit=abc` 抛的 ValueError 会一路穿出 do_GET，
+    客户端拿到的是连接重置——没有状态码、没有响应体，项目里最难查的一类故障。
+    实测 `/api/threads?limit=abc` 就是这样：服务端打了 traceback，
+    客户端只看到 RemoteDisconnected。
+
+    放在 common 而不是留在 read.py：写入侧（resources.py 的会话列表）也要用，
+    各写一份迟早只修好其中一处。
+    """
+    try:
+        value = int((qs.get(key) or [""])[0])
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, value))
+
+
 def redact_path(value) -> str:
     """把绝对路径压成 `…/末级`，只保留「指的是哪个目录」。
 
@@ -122,23 +140,42 @@ def redact_settings(payload: dict) -> dict:
     for key in ("config_path", "config_backup"):
         if out.get(key):
             out[key] = redact_path(out[key])
-    for target in out.get("mcp_targets") or []:
-        if isinstance(target, dict) and target.get("path"):
-            target["path"] = redact_path(target["path"])
+    # 首启引导（`/api/settings/setup`）与 MCP 面板把 home / default_home / target
+    # 放在顶层，不在 notes 下面。原来只洗了 notes.* 与 config_*，这三个漏了——
+    # 实测无 Key 请求 `/api/settings/mcp` 能拿到解释器绝对路径与家目录。
+    for key in ("home", "default_home", "target"):
+        if isinstance(out.get(key), str) and _looks_absolute(out[key]):
+            out[key] = redact_path(out[key])
+    # 同一份客户端清单在两个接口里叫两个名字（`mcp_targets` / `targets`），
+    # 只洗一个的话，另一个仍会给出 `C:\Users\<用户名>\AppData\Roaming\...`。
+    for key in ("mcp_targets", "targets"):
+        for target in out.get(key) or []:
+            if isinstance(target, dict) and target.get("path"):
+                target["path"] = redact_path(target["path"])
     storage = out.get("storage")
     if isinstance(storage, dict):
         for item in storage.values():
             if isinstance(item, dict) and item.get("path"):
                 item["path"] = redact_path(item["path"])
-    servers = ((out.get("mcp") or {}).get("config") or {}).get("mcpServers") or {}
-    for server in servers.values():
-        if not isinstance(server, dict):
-            continue
-        if isinstance(server.get("command"), str) and _looks_absolute(server["command"]):
-            server["command"] = redact_path(server["command"])
-        for key, value in list((server.get("env") or {}).items()):
-            if isinstance(value, str) and _looks_absolute(value):
-                server["env"][key] = redact_path(value)
+    # MCP 配置在两处形状不同：`/api/settings` 放在 mcp.config 下，
+    # `/api/settings/mcp` 直接放在顶层 config 下。只洗前者时，实测
+    # 后者仍会吐出解释器绝对路径、PYTHONPATH 与 NOTE_HOME。
+    configs = []
+    if isinstance(out.get("config"), dict):
+        configs.append(out["config"])
+    mcp_block = out.get("mcp")
+    if isinstance(mcp_block, dict) and isinstance(mcp_block.get("config"), dict):
+        configs.append(mcp_block["config"])
+    for cfg in configs:
+        servers = (cfg or {}).get("mcpServers") or {}
+        for server in servers.values():
+            if not isinstance(server, dict):
+                continue
+            if isinstance(server.get("command"), str) and _looks_absolute(server["command"]):
+                server["command"] = redact_path(server["command"])
+            for key, value in list((server.get("env") or {}).items()):
+                if isinstance(value, str) and _looks_absolute(value):
+                    server["env"][key] = redact_path(value)
     out["redacted"] = True
     return out
 

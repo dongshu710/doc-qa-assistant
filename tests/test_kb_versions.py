@@ -162,11 +162,16 @@ def test_write_failure_cleanup(store: KnowledgeStore) -> None:
     assert store.active_version() == active_before, "失败的版本不该改变活动版本"
     assert _max_version(versions) == max_before
 
-    # 关键：版本号没被占坑。重试一次应当拿到同一个号并且成功。
+    # 关键判据：失败之后知识库必须还能继续发版。
+    # 版本号允许跳过一格——号在写目录之前就预留并落盘了。反过来（先写目录、
+    # 后 +1）只要在两次写盘之间崩溃，这个号就被永久占用，此后每次审批都报
+    # 「版本已存在」，重启也不会好。见 kbstore._heal_next_version 的注释。
     staged2 = store.stage({"d.md": "# D\n\n## 一、说明\n\n新文档。\n"},
                           author="alice", note="retry")
     ok = store.approve(staged2["change"]["change_id"], approver="bob")
-    assert ok["version"] == f"v{max_before + 1:04d}", (ok["version"], max_before)
+    assert int(ok["version"][1:]) > max_before, (ok["version"], max_before)
+    assert _max_version(versions) == int(ok["version"][1:]), ok["version"]
+    assert store.active_version() == ok["version"], "审批成功的版本应当是活动版本"
     print("写入失败不留残骸 OK")
 
 

@@ -30,6 +30,11 @@ from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYT
 from .base import sse_acquire, sse_limit, sse_release
 
 
+# 「从反馈生成用例」的序号分配锁。必须是模块级：handler 每个连接一个实例，
+# 实例锁根本挡不住并发请求。
+_CASE_ID_LOCK = threading.Lock()
+
+
 def behavior_of(result: dict) -> str:
     """把行为收敛成一个低基数标签——span 属性做维度，不能带自由文本。"""
     return str((result or {}).get("behavior") or "unknown")[:24]
@@ -913,24 +918,35 @@ def make_write(deps):
                 keywords = [str(k).strip() for k in (payload.get("keywords") or []) if str(k).strip()]
                 behavior = str(payload.get("behavior") or "answer")
                 note = str(payload.get("note") or "")[:200]
-                existing = _read_jsonl(feedback_cases_path, 100000)
-                seq = len(existing) + 1
-                case_id = f"F{seq:03d}"
                 expect = {"behavior": behavior}
                 if keywords:
                     expect["output_contains"] = keywords
-                case = {
-                    "id": case_id,
-                    "category": "regression",
-                    "input": query,
-                    "expect": expect,
-                    "source": "feedback",
-                    "source_trace": trace_id,
-                    "note": note,
-                }
-                os.makedirs(os.path.dirname(feedback_cases_path), exist_ok=True)
-                with open(feedback_cases_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(case, ensure_ascii=False) + "\n")
+                # 读序号 + 追加必须在同一把锁里：两个并发请求各自 `len(existing)+1`
+                # 会拿到同一个 F001，evaluator 按 id 建索引时静默丢一条——
+                # 用户看到的是「生成成功」，实际少了一条用例。
+                # 序号按已有最大 id 递增而不是按条数：文件被截断或手工清理过时，
+                # `len()+1` 会立刻撞号。
+                with _CASE_ID_LOCK:
+                    existing = _read_jsonl(feedback_cases_path, 100000)
+                    max_seq = 0
+                    for row in existing:
+                        cid = str(row.get("id") or "")
+                        if cid[:1] == "F" and cid[1:].isdigit():
+                            max_seq = max(max_seq, int(cid[1:]))
+                    seq = max_seq + 1
+                    case_id = f"F{seq:03d}"
+                    case = {
+                        "id": case_id,
+                        "category": "regression",
+                        "input": query,
+                        "expect": expect,
+                        "source": "feedback",
+                        "source_trace": trace_id,
+                        "note": note,
+                    }
+                    os.makedirs(os.path.dirname(feedback_cases_path), exist_ok=True)
+                    with open(feedback_cases_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(case, ensure_ascii=False) + "\n")
                 self._json({"ok": True, "case": case, "total": seq})
                 return
             # 组内条件互斥，走到这里说明分派给了不该给的路径。
@@ -1236,14 +1252,27 @@ def make_write(deps):
                 return None, ({"error": "rate limited", "retry_after": decision.retry_after,
                                "request_id": request_id}, 429,
                               {"Retry-After": decision.retry_after, "X-Request-Id": request_id})
-            idem_key = (self.headers.get("Idempotency-Key")
+            # 幂等键必须绑定「谁问的 + 问了什么 + 用哪个模型」。
+            # 只按 header 取值时，同一个键换一个问题会原样返回上一题的答案：
+            # 实测先问「稳盈系列起购金额是多少」、再问「大额存单的期限是多久」，
+            # 第二次拿到的是第一题的 query 与 answer，还带 X-Idempotent-Replay。
+            # 后果不是重复计费，而是静默给错答案——结果看起来完全正常，
+            # 没有任何异常信号。调用方（重试层、脚本、复用一个 id 的前端）都会中招。
+            # 不存原文而存哈希：键要进审计与指标标签，不能带用户问题。
+            model = guards.runtime.pick_model(f"{identity}|{query}")
+            raw_idem = (self.headers.get("Idempotency-Key")
                         or str(payload.get("request_id") or "")).strip()
+            idem_key = ""
+            if raw_idem:
+                idem_key = hashlib.sha256(
+                    f"{identity}\x00{query}\x00{model}\x00{raw_idem}".encode("utf-8")
+                ).hexdigest()
             return {
                 "query": query, "session_id": session_id, "client": client,
                 "api_key": key_name, "identity": identity,
                 "request_id": request_id, "decision": decision, "idem_key": idem_key,
                 "cached": guards.idem.get(idem_key),
-                "model": guards.runtime.pick_model(f"{identity}|{query}"),
+                "model": model,
                 "budget_blocked": guards.cost.blocked,
             }, None
         def _annotate_result(self, result: dict, pre: dict) -> None:

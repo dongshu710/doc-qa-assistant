@@ -211,7 +211,11 @@ body.side-mini .sb-item{justify-content:center;padding:0;}
 .mnav{display:none;position:fixed;top:10px;left:10px;z-index:70;}
 @media (max-width:900px){
   .stage-ask .topbar{padding-left:50px;}
-  .stage-kb .wrap,.stage-files .wrap{padding-top:44px;}
+  /* 移动端左上角的汉堡按钮固定在 (10,10)、32×32，会压住页面标题——笔记页的
+     「笔」字就被盖过（它用 .pf-wrap，而规则只给 .wrap 补了 padding-top）。
+     不再按页面类名逐个登记，改为「除问答页外，所有页面主体都让出 44px」，
+     新增页面自动避让，不会重犯。 */
+  .stage:not(.stage-ask) > main{padding-top:44px;}
 }
 @media (max-width:900px){
   .side{

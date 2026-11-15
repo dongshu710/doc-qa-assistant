@@ -26,21 +26,8 @@ from ..theme import FILES_PAGE
 from ..version import __version__
 from ..web_pages import ASK_HTML, DEBUG_HTML, KB_HTML
 from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
-                     _safe_name)
+                     _safe_name, int_qs as _int_qs)
 from .base import sse_acquire, sse_release
-
-
-def _int_qs(qs: dict, key: str, default: int, low: int, high: int) -> int:
-    """URL 里的整数参数：坏值一律回落默认值，并夹在区间内。
-
-    不直接 `int(...)`：`?limit=abc` 会抛 ValueError 穿过 do_GET，
-    客户端只看得到连接重置——项目里最难查的一类故障（没有状态码、没有响应体）。
-    """
-    try:
-        value = int((qs.get(key) or [""])[0])
-    except (TypeError, ValueError):
-        return default
-    return max(low, min(high, value))
 
 
 def make_read(deps):

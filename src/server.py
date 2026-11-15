@@ -17,6 +17,7 @@ import ipaddress
 import os
 import sys
 
+from .auth import ApiKeyStore
 from .handlers.app import build_app
 
 
@@ -24,10 +25,17 @@ def _loopback_only(host: str) -> bool:
     """`--host` 给的是不是只对本机可见。
 
     主机名一律按「对外」处理：它可能解析到任意地址，按名字判断等于给自己留后门。
-    空串等同 localhost（http.server 的惯例）。
+
+    空串**不是** localhost。这里原来写的是「空串等同 localhost（http.server 的惯例）」，
+    但 `socket.bind(("", port))` 的真实语义是绑到通配地址——实测
+    `python -m src.server --host ""` 会 LISTENING 0.0.0.0，而这条函数返回 True
+    让「非回环必须配 API_KEYS」的校验直接跳过，整库对局域网敞开。
+    所以空串按对外处理，交给拒启分支。
     """
     text = (host or "").strip().lower()
-    if text in ("", "localhost", "localhost."):
+    if not text:
+        return False
+    if text in ("localhost", "localhost."):
         return True
     try:
         return ipaddress.ip_address(text).is_loopback
@@ -71,15 +79,30 @@ def main() -> int:
     # 这条校验放在绑定端口之后、开始服务之前，是为了让「端口被占用」先报出来
     # （那是个更常见的一次性故障），失败时记得把端口还回去。
     keys = getattr(pipe.settings, "api_keys", "") or ""
-    if not _loopback_only(args.host) and not keys.strip():
+    # 判据是「解析出了至少一把 Key」，不是「字符串非空」。
+    # `API_KEYS=,`（或 `:`、`,,`）能通过 `.strip()` 检查，但 ApiKeyStore 会跳过
+    # 所有空条目——实测 `ApiKeyStore(",").enabled == False`，于是启动校验通过、
+    # 鉴权却全放行。服务"以为配了 Key"，日志里也不会有任何提示。
+    store_keys = ApiKeyStore(keys)
+    # 再拿实际绑定地址复核一遍：args.host 与内核真实绑定之间可能有偏差
+    # （空串 → 通配地址就是一个例子），这道检查与参数解析无关，只信 socket。
+    try:
+        bound_host = str(httpd.server_address[0])
+    except (IndexError, TypeError, AttributeError):
+        bound_host = args.host
+    exposed = not _loopback_only(args.host) or not _loopback_only(bound_host)
+    if exposed and not store_keys.enabled:
         print(
-            f"[拒绝启动] --host {args.host} 会让局域网其它机器连上，而 API_KEYS 为空（等于不鉴权）。\n"
+            f"[拒绝启动] 当前会监听 {bound_host or args.host}，局域网其它机器能连上，"
+            "而 API_KEYS 里没有解析出任何一把有效 Key（等于不鉴权）。\n"
             "  Host 校验挡不住这个：它看的是请求头，任何人都能填成 host.docker.internal。\n"
-            "  两种改法：\n"
+            "  三种改法：\n"
             "    1) 只在本机用：去掉 --host（默认就是 127.0.0.1）\n"
-            "    2) 要给容器访问：同时设 API_KEYS，例如\n"
+            "    2) 要给容器/局域网访问：同时设 API_KEYS，例如\n"
             "         set API_KEYS=<一串随机字符>   （PowerShell: $env:API_KEYS='...'）\n"
-            "        然后 Dify 里「外部知识库 API」的 Key 填同一个值。",
+            "        然后 Dify 里「外部知识库 API」的 Key 填同一个值。\n"
+            "    3) 多个 Key 用英文逗号分隔，格式 名字:密钥:ro|rw|admin；\n"
+            "       只写逗号或冒号会被当作「没有 Key」，不会启动。",
             file=sys.stderr)
         httpd.server_close()
         return 1

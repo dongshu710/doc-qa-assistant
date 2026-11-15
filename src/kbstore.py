@@ -165,9 +165,38 @@ class KnowledgeStore:
         return os.path.join(self.version_dir(self.active_version()), "files")
 
     # ---------- 初始化 ----------
+    def _heal_next_version(self, state: dict) -> dict:
+        """让 `next_version` 至少是「磁盘上最大版本号 + 1」。
+
+        为什么需要以磁盘为准：版本目录改名到位之后，`next_version` 才 +1 并落盘。
+        这两次写盘之间进程被杀、磁盘满、或 state.json 被别的程序占着，就会留下
+        「v0002 在磁盘上、next_version 还是 2」的状态。此后每次上传与审批都撞
+        `版本已存在: v0002`，重启也不会好——版本号被永久占用，只能人工去
+        `data/kb/versions/` 删目录。这正是 `_write_version` 注释里想避免的事，
+        但 staging 只消除了「逐份写文件」的窗口，最终那次改名仍在状态提交之前。
+
+        目录存在是既成事实，跳过这个号最安全：`versions()` 本来就容忍空洞，
+        `_prune` 也按名字排序保留最近 N 个，孤儿目录会自然被回收。
+        """
+        try:
+            names = os.listdir(self.versions_dir)
+        except OSError:
+            return state
+        highest = 0
+        for name in names:
+            if name.startswith("v") and name[1:].isdigit():
+                highest = max(highest, int(name[1:]))
+        if highest >= int(state.get("next_version") or 1):
+            state["next_version"] = highest + 1
+            self._write_state(state)
+        return state
+
     def bootstrap(self) -> dict:
         with _FileLock(self.lock_path):
             state = self._state()
+            # 先对账再判断「已初始化」：否则 active 目录存在时直接 return，
+            # 崩溃留下的孤儿版本号会一直卡着，永远修不好。
+            state = self._heal_next_version(state)
             if state.get("active") and os.path.isdir(self.version_dir(state["active"])):
                 return self.status()
             # 有历史版本但 state 丢了：取最新版本作为活动版本
@@ -190,11 +219,17 @@ class KnowledgeStore:
             if not files:
                 raise KnowledgeError(f"初始知识库为空: {self.seed_dir}")
             version = f"v{state['next_version']:04d}"
+            # 先预留号并落盘，再写版本目录，最后切 active。
+            # 反过来的话，两次写盘之间崩溃会留下「目录在、next_version 没动」，
+            # 该号被永久占用（_heal_next_version 兜底，但最好别产生）。
+            # 这个顺序下最坏只是浪费一个号：目录没写成 → 号跳过；
+            # 目录写成但 active 没切 → 孤儿目录，下次自愈跳过它，知识库仍可用。
+            state["next_version"] += 1
+            self._write_state(state)
             self._write_version(version, files, parent=None, kind="bootstrap",
                                 author="system", note=f"从 {self.seed_dir} 导入",
                                 change_id=None, approved_by="system")
             state["active"] = version
-            state["next_version"] += 1
             self._write_state(state)
             return self.status()
 
@@ -205,7 +240,9 @@ class KnowledgeStore:
                        deletes: list[str] | None = None) -> dict:
         target = self.version_dir(version)
         if os.path.exists(target):
-            raise KnowledgeError(f"版本已存在: {version}")
+            raise KnowledgeError(
+                f"版本已存在: {version}。可能是上一次发布在改名后、提交状态前中断留下的；"
+                f"重启服务会自动跳过该号，也可以手工删除目录 {target}")
         # 先在同盘临时目录里写完整版，成功后再一次性改名成正式版本号。
         # 为什么不能直接在 versions/vNNNN 里逐份写：中途任何一步失败（磁盘满、
         # 权限、硬链接失败）都会留下一个没有 manifest 的半成品目录；而版本号
@@ -418,13 +455,16 @@ class KnowledgeStore:
                 raise KnowledgeError("审批后知识库为空，已拒绝")
 
             version = f"v{state['next_version']:04d}"
+            # 与 bootstrap 同样的顺序：先预留号、再写目录、最后切 active。
+            # 中间崩溃最多浪费一个号，不会让这个号永久不可用。
+            state["next_version"] += 1
+            self._write_state(state)
             manifest = self._write_version(
                 version, files, parent=active, kind="change", author=request.get("author", ""),
                 note=note or request.get("note", ""), change_id=change_id,
                 approved_by=approver, deletes=request.get("deletes") or [],
             )
             state["active"] = version
-            state["next_version"] += 1
             self._write_state(state)
             pruned = self._prune(state)
 
