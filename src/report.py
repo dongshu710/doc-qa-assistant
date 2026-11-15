@@ -41,12 +41,12 @@ REPORT_CSS = """
 .rp-hero .eyebrow{color:#bcd9cd;margin-bottom:12px;}
 .rp-hero .eyebrow::before{background:#82c0a9;}
 .rp-hero h1{font-size:clamp(23px,2.4vw,31px);margin:0 0 10px;letter-spacing:-.03em;color:#f2efe8;line-height:1.28;}
-.rp-hero p{color:#c9c3b8;max-width:64ch;margin:0 0 16px;line-height:1.85;font-size:13.5px;
+.rp-hero p{color:#c9c3b8;max-width:64ch;margin:0 0 16px;line-height:1.85;font-size:14px;
   /* 中文没有单词边界，默认换行容易把「答案」拆成「答/案」两行；
      pretty 会让最后一行不至于只剩一两个字（Chromium 117+，其余浏览器无副作用） */
   text-wrap:pretty;}
 .rp-hero .badges{display:flex;flex-wrap:wrap;gap:7px;}
-.rp-hero .b{font-size:11.5px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.09);color:#e6e0d4;border:1px solid rgba(255,255,255,.1);}
+.rp-hero .b{font-size:12px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.09);color:#e6e0d4;border:1px solid rgba(255,255,255,.1);}
 .rp-hero .b.solid{background:rgba(47,111,94,.92);border-color:rgba(188,217,205,.45);color:#fff;}
 .rp-hero .actions{margin-top:20px;display:flex;gap:9px;flex-wrap:wrap;align-items:center;}
 /* 首屏两栏：左边一句话说清是什么，右边三个数字回答「行不行」。
@@ -78,7 +78,7 @@ REPORT_CSS = """
 .rp-nav{position:sticky;top:0;z-index:30;display:flex;gap:2px;overflow:auto;scrollbar-width:none;
   padding:9px 0;margin-bottom:16px;background:var(--bg);box-shadow:inset 0 -1px 0 var(--line);}
 .rp-nav::-webkit-scrollbar{display:none;}
-.rp-nav a{padding:6px 11px;border-radius:8px;font-size:12.5px;color:var(--muted);white-space:nowrap;transition:background .15s,color .15s;}
+.rp-nav a{padding:6px 11px;border-radius:8px;font-size:12px;color:var(--muted);white-space:nowrap;transition:background .15s,color .15s;}
 .rp-nav a:hover{background:var(--hover);color:var(--ink);}
 .rp-nav a.active{background:var(--surface);color:var(--brand-600);font-weight:600;border:1px solid var(--line);box-shadow:var(--sh-1);}
 
@@ -88,7 +88,7 @@ REPORT_CSS = """
 .sec table td:first-child{white-space:nowrap;}
 .sec-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;min-height:24px;}
 .sec-head h2{font-size:16px;letter-spacing:-.02em;}
-.sec-head .n{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:5px;padding:2px 6px;}
+.sec-head .n{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--brand);background:var(--brand-soft);border-radius:5px;padding:2px 6px;}
 .sec-head .note{font-size:12px;color:var(--muted);margin-left:auto;text-align:right;background:none;border:0;padding:0;display:block;line-height:1.6;}
 @media (max-width:760px){.sec-head .note{margin-left:0;text-align:left;}}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
@@ -107,14 +107,14 @@ REPORT_CSS = """
 .score.s3{background:var(--warn-soft);color:var(--warn);}
 .score.s2,.score.s1{background:var(--bad-soft);color:var(--bad);}
 .arch{background:var(--surface-2);border:1px solid var(--line);border-radius:14px;padding:10px 8px;}
-.rp-list{margin:0;padding-left:18px;line-height:1.95;font-size:12.8px;color:var(--text);}
+.rp-list{margin:0;padding-left:18px;line-height:1.95;font-size:13px;color:var(--text);}
 .rp-list li{margin-bottom:3px;}
 .rp-list li::marker{color:var(--faint);}
 /* 失败样本：用 bad 语义色标 ID 就够，不要整块铺红底——
    一片红会让人直接跳过，而这一块恰恰是最该被读完的。 */
-.edge-fail{padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px;line-height:1.7;}
+.edge-fail{padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.7;}
 .edge-fail:last-of-type{border-bottom:0;}
-.edge-fail b{display:inline-block;min-width:40px;font-family:var(--mono);font-size:11.5px;
+.edge-fail b{display:inline-block;min-width:40px;font-family:var(--mono);font-size:12px;
   color:var(--bad);font-weight:600;}
 .edge-fail span{color:var(--text);}
 .edge-fail i{display:block;font-style:normal;color:var(--muted);font-size:12px;
@@ -128,26 +128,26 @@ REPORT_CSS = """
 /* 两栏内容量不可能刚好相等：默认 stretch 会把矮的那张拉高留白，
    顶端对齐更接近排版常识——宁可高矮不一，也不要一张卡空着半屏。 */
 #s-edge{align-items:start;}
-.foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);color:var(--faint);font-size:11.5px;line-height:1.85;}
+.foot{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;line-height:1.85;}
 
 /* L3 语义质量 */
 .rp-l3{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center;}
 .rp-scores{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
 .rp-score{border:1px solid var(--line);border-radius:12px;padding:13px 14px;background:var(--surface);}
-.rp-score .k{font-size:11.5px;color:var(--muted);}
+.rp-score .k{font-size:12px;color:var(--muted);}
 .rp-score .v{font-size:26px;font-weight:700;color:var(--ink);letter-spacing:-.035em;margin:3px 0 8px;line-height:1.1;font-variant-numeric:tabular-nums;}
-.rp-score .v small{font-size:11.5px;color:var(--faint);font-weight:500;letter-spacing:0;margin-left:2px;}
+.rp-score .v small{font-size:12px;color:var(--faint);font-weight:500;letter-spacing:0;margin-left:2px;}
 .rp-score .bar{height:5px;}
-.rp-l3-note{font-size:12.5px;color:var(--muted);line-height:1.9;}
+.rp-l3-note{font-size:12px;color:var(--muted);line-height:1.9;}
 .rp-l3-note b{color:var(--ink);font-weight:600;}
-.pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:5px 10px;border-radius:999px;
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:5px 10px;border-radius:999px;
   border:1px solid var(--line);background:var(--surface-2);color:var(--text);font-weight:500;}
 @media (max-width:860px){.rp-l3{grid-template-columns:1fr;gap:16px;}}
 
 /* 让汇报页的 6 个 KPI 排成整齐的 3 × 2 */
 .kpis.four{grid-template-columns:repeat(3,1fr);}
 /* 副标题是「口径」不是装饰：--faint 在米色底上约 3.4:1，读不清等于没写 */
-.kpi .sub{color:var(--muted);font-size:11.5px;line-height:1.55;margin-top:4px;}
+.kpi .sub{color:var(--muted);font-size:12px;line-height:1.55;margin-top:4px;}
 @media (max-width:900px){.kpis.four{grid-template-columns:repeat(2,1fr);}}
 
 .rp-hero .live{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:#8fd4ae;}
@@ -167,11 +167,11 @@ REPORT_CSS = """
    打开面板时收窄正文容器，而不是拿浮层盖上去。 */
 .rp-top{position:sticky;top:0;z-index:80;display:flex;align-items:center;gap:10px;
   height:52px;padding:0 18px;background:var(--surface);border-bottom:1px solid var(--line);}
-.rp-brand{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:var(--ink);}
+.rp-brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:var(--ink);}
 .rp-brand .mark{width:24px;height:24px;border-radius:7px;}
 .rp-brand .mark svg{width:14px;height:14px;}
-.rp-brand .sep{font-weight:400;color:var(--faint);font-size:12.5px;}
-.rp-state{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+.rp-brand .sep{font-weight:400;color:var(--faint);font-size:12px;}
+.rp-state{display:inline-flex;align-items:center;gap:6px;font-size:12px;
   padding:3px 9px;border-radius:999px;background:var(--surface-2);
   border:1px solid var(--line);color:var(--muted);}
 .rp-state i{width:6px;height:6px;border-radius:50%;background:var(--faint);}
@@ -179,7 +179,7 @@ REPORT_CSS = """
 .rp-state[data-state="online"] i{background:var(--ok);box-shadow:0 0 0 3px rgba(44,122,91,.16);}
 .rp-tbtn{display:inline-flex;align-items:center;height:32px;padding:0 11px;
   border:1px solid var(--line-2);border-radius:8px;background:var(--surface);
-  color:var(--text);font-size:12.5px;font-family:inherit;white-space:nowrap;cursor:pointer;
+  color:var(--text);font-size:12px;font-family:inherit;white-space:nowrap;cursor:pointer;
   transition:background .14s,border-color .14s,color .14s,transform .12s;}
 .rp-tbtn:hover{background:var(--surface-2);color:var(--ink);}
 .rp-tbtn.primary{border-color:var(--brand-line);background:var(--brand-soft);color:var(--brand-600);font-weight:600;}
@@ -197,7 +197,7 @@ body.admin-on .rp-admin{transform:none;}
 body.admin-on .main{padding-right:380px;}
 .rp-admin-head{flex:none;display:flex;align-items:center;gap:9px;height:46px;
   padding:0 10px 0 16px;border-bottom:1px solid var(--line);}
-.rp-admin-head h2{font-size:13.5px;}
+.rp-admin-head h2{font-size:14px;}
 .rp-admin-head .spacer{flex:1;}
 .rp-admin-head .rp-tbtn{width:28px;padding:0;justify-content:center;font-size:16px;line-height:1;}
 .rp-admin-body{flex:1;overflow-y:auto;padding:12px 14px 48px;}
@@ -222,7 +222,7 @@ body.admin-on .main{padding-right:380px;}
 .ag-error{margin:0;padding:8px 10px;border-radius:7px;background:var(--bad-soft);
   color:var(--bad);font-size:12px;line-height:1.7;}
 .ag-error .ag-link{display:block;margin-top:4px;padding:0;border:0;background:none;
-  color:var(--brand);font-size:11.5px;text-decoration:underline;cursor:pointer;}
+  color:var(--brand);font-size:12px;text-decoration:underline;cursor:pointer;}
 
 /* 文档台账 */
 .ag-table{table-layout:fixed;width:100%;border-collapse:collapse;font-size:13px;}
@@ -249,7 +249,7 @@ body.admin-on .main{padding-right:380px;}
   padding-top:12px;border-top:1px dashed var(--line);}
 .ag-upload input,.ag-upload textarea,.ag-inline input{width:100%;padding:7px 9px;
   border:1px solid var(--line-3);border-radius:7px;background:var(--bg);color:var(--text);
-  font-family:inherit;font-size:12.5px;line-height:1.6;outline:none;}
+  font-family:inherit;font-size:12px;line-height:1.6;outline:none;}
 .ag-upload input:focus,.ag-upload textarea:focus,.ag-inline input:focus{
   border-color:var(--brand);box-shadow:0 0 0 3px rgba(47,111,94,.12);}
 .ag-upload input:focus-visible,.ag-upload textarea:focus-visible,.ag-inline input:focus-visible{
@@ -259,7 +259,7 @@ body.admin-on .main{padding-right:380px;}
 .ag-inline input{width:80px;flex:none;}
 .ag-body button{height:32px;padding:0 11px;border:1px solid var(--brand-line);
   border-radius:var(--r-sm);background:var(--brand-soft);color:var(--brand-600);
-  font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;
   transition:background .14s,transform .12s;}
 .rp-tbtn:active,.ag-body button:active{transform:translateY(1px);}
 .rp-tbtn[disabled],.ag-body button[disabled]{opacity:.55;cursor:not-allowed;transform:none;}
@@ -279,19 +279,19 @@ body.admin-on .main{padding-right:380px;}
 .ag-change-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:12px;}
 .ag-files{margin-top:4px;}
 .ag-file{display:inline-block;margin:3px 4px 0 0;padding:1px 6px;border-radius:5px;
-  background:var(--surface-2);font-size:11.5px;}
+  background:var(--surface-2);font-size:12px;}
 .ag-file i{font-style:normal;color:var(--faint);}
 .ag-warn{margin-top:5px;padding:3px 7px;border-radius:5px;background:var(--warn-soft);
-  color:var(--warn);font-size:11.5px;}
+  color:var(--warn);font-size:12px;}
 .ag-sub{margin:11px 0 5px;font-size:11px;font-weight:600;letter-spacing:.1em;
   text-transform:uppercase;color:var(--muted);}
 /* 失败用例：这是评测里最该被看见的部分，不要只给一个通过率 */
 .ag-fail{padding:7px 9px;border-radius:7px;background:var(--bad-soft);margin-bottom:6px;
-  color:var(--bad);font-size:12.5px;line-height:1.65;}
+  color:var(--bad);font-size:12px;line-height:1.65;}
 .ag-fail b{font-weight:600;}
 .ag-fail i{display:block;margin-top:2px;font-style:normal;color:var(--muted);}
 .ag-audit{max-height:180px;overflow:auto;}
-.ag-audit-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--line);font-size:11.5px;}
+.ag-audit-row{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--line);font-size:12px;}
 .ag-audit-row span{color:var(--muted);font-variant-numeric:tabular-nums;}
 .ag-audit-row b{font-weight:500;color:var(--text);}
 
@@ -301,10 +301,10 @@ body.admin-on .main{padding-right:380px;}
 .ag-receipt{display:grid;grid-template-columns:52px 1fr;gap:3px 8px;
   padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;line-height:1.6;}
 .ag-receipt:last-child{border-bottom:0;}
-.ag-receipt time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:11.5px;}
+.ag-receipt time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px;}
 .ag-receipt .what{color:var(--ink);}
 .ag-receipt .what b{font-weight:600;}
-.ag-receipt .said{grid-column:2;color:var(--muted);font-size:11.5px;}
+.ag-receipt .said{grid-column:2;color:var(--muted);font-size:12px;}
 .ag-receipt.is-bad .what{color:var(--bad);}
 
 /* 离线态说明：不能改的时候要说清楚为什么、怎么办 */
@@ -313,18 +313,18 @@ body.admin-on .main{padding-right:380px;}
 .ag-offline b{color:var(--ink);}
 .ag-offline code{display:block;margin-top:7px;padding:7px 9px;border-radius:6px;
   background:var(--surface);border:1px solid var(--line);
-  font-family:var(--mono);font-size:11.5px;color:var(--text);overflow-x:auto;}
+  font-family:var(--mono);font-size:12px;color:var(--text);overflow-x:auto;}
 
 /* 展示区里的管理入口：只在管理态出现，平时不打扰阅读 */
 .sec-head .adm{display:none;margin-left:8px;padding:2px 9px;border-radius:999px;
   border:1px solid var(--brand-line);background:var(--brand-soft);color:var(--brand-600);
-  font-family:inherit;font-size:11.5px;font-weight:600;cursor:pointer;}
+  font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;}
 body.admin-on .sec-head .adm{display:inline-flex;}
 
 /* 数据已变更提示 */
 .rp-stale{position:fixed;left:50%;bottom:20px;z-index:90;transform:translateX(-50%);
   display:flex;align-items:center;gap:12px;padding:9px 10px 9px 16px;border-radius:999px;
-  background:#1b1a17;color:#e6e0d4;font-size:12.5px;box-shadow:var(--sh-3);}
+  background:#1b1a17;color:#e6e0d4;font-size:12px;box-shadow:var(--sh-3);}
 .rp-stale button{border:0;border-radius:999px;padding:5px 11px;background:rgba(255,255,255,.16);
   color:inherit;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;}
 .rp-stale button:hover{background:rgba(255,255,255,.26);}
@@ -726,7 +726,7 @@ def _block_l1(l1: list[dict], total_cases: int = 0) -> str:
     stale_note = ""
     if total_cases and all(r["total"] != total_cases for r in l1):
         stale_note = (
-            '<p class="muted" style="font-size:12.5px;margin:10px 0 0;line-height:1.8">'
+            '<p class="muted" style="font-size:12px;margin:10px 0 0;line-height:1.8">'
             f'当前默认用例集 <b>{total_cases}</b> 条，上表是扩容前跑的历史轮次。'
             '要拿到覆盖全集的一轮：<code>python tests/eval_run.py</code>；'
             '页面顶部的 L1 通过率取自最新可用报告，不代表当前用例集。</p>'
@@ -823,7 +823,7 @@ def _block_hard(hard: dict, l3_hard: dict) -> str:
         f'<b>{hard.get("total") - sum(1 for r in hard.get("results", []) if not r.get("passed"))}/{hard.get("total")}'
         f' = {round((hard.get("pass_rate") or 0) * 100)}%</b>（{_esc(cats)}）</p>'
         + (f'<div class="table-wrap"><table>{head}<tbody>{rows}</tbody></table></div>' if cols else "")
-        + '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
+        + '<p class="muted" style="font-size:12px;margin:10px 0 0">'
         '同一批答案、同一套 rubric，只换裁判模型。两者分数差距即「裁判偏好」的量级——'
         '所以 L3 分数只作趋势对比，门禁取更严的一侧。'
         + ("" if cols else "（尚未运行难题集 L3，先执行 tests/eval_l3.py --report tests/report_hard.json）")
@@ -857,7 +857,7 @@ def _block_retrieval(ret: dict) -> str:
         f'<span class="note">Recall@1 / Recall@4 / MRR · {ret_cases} 条带召回标签的难题</span></div>'
         '<div class="table-wrap"><table><thead><tr><th>策略</th><th>R@1</th><th>R@4</th><th>MRR</th><th>未命中</th></tr></thead>'
         f"<tbody>{rows}</tbody></table></div>"
-        '<p class="muted" style="font-size:12.5px;margin:10px 0 0">'
+        '<p class="muted" style="font-size:12px;margin:10px 0 0">'
         f"{vec_txt}未命中项多为同义改写（如「测评 R3 想买 R5」），由查询扩展补充召回；"
         "样本量较小，结果用于版本间对比。</p></section>"
     )
@@ -1128,14 +1128,14 @@ def render(data: dict, standalone: bool = False, redacted: bool = False,
         for f in k["files"]
     )
     kb_table = (
-        '<p class="muted" style="font-size:12.5px;margin:0;line-height:1.8">'
+        '<p class="muted" style="font-size:12px;margin:0;line-height:1.8">'
         '公开视图不展示文档清单；文件数、块数与切分方式属于内部信息。</p>'
         if k.get("redacted") else
         f'<div class="table-wrap"><table><thead><tr><th>文件</th><th class="num">知识块</th>'
         f'<th>占比</th></tr></thead><tbody>{kb_rows}</tbody></table></div>'
     )
     kb_note = "" if k.get("redacted") else (
-        '<p class="muted" style="font-size:12.5px;margin:10px 0 0;line-height:1.8">'
+        '<p class="muted" style="font-size:12px;margin:10px 0 0;line-height:1.8">'
         "其中 3 份为手写的产品与制度样本，3 份由 PDF 解析而来"
         "（含《商业银行理财业务监督管理办法》公开条款摘录）。"
         "PDF 接入方式：<code>python -m src.pdf_ingest --raw data/raw --out data/knowledge</code>。"
@@ -1191,7 +1191,7 @@ def render(data: dict, standalone: bool = False, redacted: bool = False,
     <span class="note">实时聚合自 trace 与评测报告</span>
     <button class="adm" type="button" data-admin-jump="diag">管理</button></div>
   <div class="kpis four">{kpis}</div>
-  <p class="muted" style="font-size:12.5px;margin:10px 0 0;line-height:1.8">
+  <p class="muted" style="font-size:12px;margin:10px 0 0;line-height:1.8">
     L1 = 确定性断言（行为 / 事实 / 安全）；L3 = 裁判模型按忠实度 / 相关性 / 完整性打分（1-5）。
     引用覆盖率 = 答案中有效 <code>[n]</code> 占全部标注的比例。
   </p>

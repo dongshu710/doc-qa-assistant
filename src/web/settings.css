@@ -18,7 +18,7 @@
 .set-x:hover{background:var(--surface-2);color:var(--ink);}
 .set-tabs{grid-column:1;grid-row:2;display:flex;flex-direction:column;gap:2px;padding:12px 8px;
   border-right:1px solid var(--line);overflow-y:auto;}
-.set-tabs button{border:0;background:transparent;color:var(--muted);font-size:13.5px;padding:9px 12px;
+.set-tabs button{border:0;background:transparent;color:var(--muted);font-size:14px;padding:9px 12px;
   border-radius:8px;cursor:pointer;white-space:nowrap;text-align:left;}
 .set-tabs button:hover{background:var(--surface-2);color:var(--ink);}
 .set-tabs button.on{background:var(--hover);color:var(--ink);font-weight:600;}
@@ -30,29 +30,29 @@
 .st-locate{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;}
 .st-locate-main{flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:3px;}
 .st-label{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);}
-.st-path{font-family:var(--mono);font-size:12.5px;color:var(--ink);word-break:break-all;line-height:1.6;}
+.st-path{font-family:var(--mono);font-size:12px;color:var(--ink);word-break:break-all;line-height:1.6;}
 .st-locate-actions{display:flex;gap:6px;flex:none;}
-.st-hint{margin:6px 0 0;font-size:11.5px;color:var(--faint);line-height:1.7;}
+.st-hint{margin:6px 0 0;font-size:12px;color:var(--faint);line-height:1.7;}
 .st-editor{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
-.st-editor input{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--line-2);
-  border-radius:8px;font:12.5px/1.5 var(--mono);color:var(--text);background:var(--surface);outline:none;}
+.st-editor input{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--line-3);
+  border-radius:8px;font:12px/1.5 var(--mono);color:var(--text);background:var(--surface);outline:none;}
 .st-editor input:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
 .st-figures{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px;}
 .st-fig{padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);}
-.st-fig span{display:block;font-size:11.5px;color:var(--faint);margin-bottom:2px;}
+.st-fig span{display:block;font-size:12px;color:var(--faint);margin-bottom:2px;}
 .st-fig b{display:block;font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:600;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .st-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;}
-.st-keep{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);}
+.st-keep{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);}
 .st-note{margin-top:-2px;}
 @media (max-width:560px){ .st-figures{grid-template-columns:repeat(2,minmax(0,1fr));} }
 
 .st-keep{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
-.st-keep select{height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:8px;
-  background:var(--surface);color:var(--text);font-size:12.5px;font-family:inherit;}
+.st-keep select{height:32px;padding:0 8px;border:1px solid var(--line-3);border-radius:8px;
+  background:var(--surface);color:var(--text);font-size:12px;font-family:inherit;}
 /* MCP 客户端选择：和按钮同高，避免一行里三个控件高低不齐 */
-.set-pick{height:32px;max-width:220px;padding:0 8px;border:1px solid var(--line-2);border-radius:8px;
-  background:var(--surface);color:var(--text);font-size:12.5px;font-family:inherit;}
+.set-pick{height:32px;max-width:220px;padding:0 8px;border:1px solid var(--line-3);border-radius:8px;
+  background:var(--surface);color:var(--text);font-size:12px;font-family:inherit;}
 .set-pick:focus-visible{outline:2px solid var(--brand);outline-offset:2px;}
 
 /* 接口接入：先给结论（当前能不能用），再给三步操作 */
@@ -76,7 +76,7 @@
 .set-pane{display:none;flex-direction:column;gap:12px;}
 .set-pane.on{display:flex;}
 .set-f{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);font-weight:600;}
-.set-f input,.set-f select{padding:9px 11px;border:1px solid var(--line-2);border-radius:var(--r-sm);
+.set-f input,.set-f select{padding:9px 11px;border:1px solid var(--line-3);border-radius:var(--r-sm);
   background:var(--surface-2);color:var(--text);font-size:13px;font-family:inherit;width:100%;}
 .set-f input:focus,.set-f select:focus{border-color:var(--brand);outline:none;box-shadow:0 0 0 3px var(--brand-soft);}
 .set-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}

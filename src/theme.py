@@ -107,6 +107,9 @@ def nav(active: str = "", links: bool = True) -> str:
     # 调试台不再占侧栏：它是排查工具，不是业务入口。入口收进知识库页头，
     # 页面本身保留（收藏的书签不失效）。离线副本里没有服务，本来也不该有入口。
     nav_html = nav_item("kb", "/kb", "知识库", "doc") if links else ""
+    # 汇报页原来只能靠记 URL 进——一个给管理者看的页面如果没有入口，等于不存在
+    # （也因此它的排版问题一直没被日常发现）。放在知识库之后、设置之前。
+    report_html = nav_item("report", "/report", "汇报", "chart") if links else ""
     return (
         '<aside class="side" id="sideBar" aria-label="会话与导航">'
         '<div class="side-head">'
@@ -131,6 +134,7 @@ def nav(active: str = "", links: bool = True) -> str:
         'title="该备份了：点一下忽略这次提醒" hidden></button>'
         '</div>'
         + nav_html +
+        report_html +
         '<button class="sb-item" id="setBtn" type="button">'
         + icon("gear", 17) + '<span class="sb-label">设置</span></button>'
         '<div class="side-meta">'

@@ -124,6 +124,13 @@ function footHTML(d){
   var dbg=/[?&]debug=1/.test(location.search||'');
   if(d.confidence==='low'){ html+=pill('置信度低 · 请核对原文','warn'); }
   if(d.citations&&d.citations.length){ html+=pill('引用 '+d.citations.length+' 条'); }
+  /* 出处支持率：服务端逐条校验「引用的那句话能不能在原文里找到」。
+     这是这套系统相对同类唯一能一句话说清的差别（别人只渲染引用，不校验）。
+     只在真的校验过（checked>0）时才显示——没校验却写 100% 是撒谎。 */
+  if(d.citation_support_checked>0&&d.citation_support_rate!=null){
+    var sr=Math.round(d.citation_support_rate*100);
+    html+=pill('出处支持 '+sr+'%',sr<100?'warn':'');
+  }
   if(d.citation_coverage!=null&&d.citation_coverage<0.999){
     html+=pill('引用覆盖 '+Math.round(d.citation_coverage*100)+'%','warn');
   }
@@ -162,13 +169,15 @@ function answerHTML(d,q){
      排在引用卡与折叠面板之后等于没有。 */
   if(d.behavior==='no_answer') h+=similarHTML(d.similar_questions);
   /* 来源前置：长答案里引用卡会排到几屏之后，用户只能盲信。
-     这里在正文上方给一行「来源 N 份 · M 条」，点了滚到引用卡。 */
+     这里在正文上方给一行「来源 N 份」，点了滚到引用卡。
+     只写份数不写条数：底部的「引用 N 条」已经给了条数，两处都写会在同一屏
+     出现两组相同数字，再叠加「检索依据 M 条」，读者不知道该信哪个。 */
   if(d.citations&&d.citations.length){
     var docs={};
     d.citations.forEach(function(c){ if(c.doc_id) docs[c.doc_id]=1; });
     var dn=Object.keys(docs).length||d.citations.length;
     h+='<div class="src-chip"><button type="button" class="src-jump">'
-      +'来源 '+dn+' 份 · '+d.citations.length+' 条</button></div>';
+      +'来源 '+dn+' 份</button></div>';
   }
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
@@ -529,6 +538,14 @@ function setBusy(on){
   sendBtn.classList.toggle('stop',on);
   sendBtn.setAttribute('aria-label',on?'停止生成':'发送');
   sendBtn.innerHTML=on?ICON_STOP:ICON_SEND;
+  syncSend();
+}
+// 空输入时把发送按钮置为禁用。原来它一直是绿的，点了只把焦点移回输入框——
+// 没有 toast、没有状态变化，第一次用的人会以为页面坏了。
+// 生成中（busy）不适用这条：那时按钮是「停止」，永远可点。
+function syncSend(){
+  if(busy) return;
+  sendBtn.disabled = !qEl.value.trim();
 }
 async function readSSE(resp,onEvent){
   var reader=resp.body.getReader(), decoder=new TextDecoder(), buf='';
@@ -678,10 +695,11 @@ sendBtn.onclick=function(){
   }
   ask();
 };
-qEl.addEventListener('input',autoGrow);
+qEl.addEventListener('input',function(){ autoGrow(); syncSend(); });
 qEl.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); ask(); }
 });
+syncSend();
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'&&isTopOverlay('srcDrawer')) sourceView.close();
 });

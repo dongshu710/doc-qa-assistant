@@ -41,9 +41,9 @@ font-size:12.5px;color:var(--muted)}
 .side{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line)}
 .main{padding:22px 18px 60px}
 }
-</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.39.3</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-19-0">界面与交互方案（v1.19.0）</h1>
+</style></head><body><div class="layout"><aside class="side"><h1>记忆文档 · 文档站</h1><div class="ver">v1.40.0</div><a href="index.html">README · 总览</a><a href="AGENT_NOTES_PLAN.html">AGENT_NOTES_PLAN</a><a href="ARCHITECTURE.html">ARCHITECTURE</a><a href="AUDIT-2026-10-27.html">AUDIT-2026-10-27</a><a href="AUDIT.html">AUDIT</a><a href="BENCHMARK.html">BENCHMARK</a><a href="COMPARISON.html">COMPARISON</a><a href="DIFY-AGENT.html">DIFY-AGENT</a><a href="EVALUATION.html">EVALUATION</a><a href="GAP-2026-11-11.html">GAP-2026-11-11</a><a href="LAYOUT.html" class="on">LAYOUT</a><a href="PLUGIN.html">PLUGIN</a><a href="PLUGIN_PACKAGE.html">PLUGIN_PACKAGE</a><a href="RELEASE.html">RELEASE</a><a href="REVIEW-2026-11-10.html">REVIEW-2026-11-10</a><a href="ROADMAP.html">ROADMAP</a><a href="SECURITY.html">SECURITY</a><a href="SKILL.html">SKILL</a></aside><main class="main"><h1 id="界面与交互方案-v1-40-0">界面与交互方案（v1.40.0）</h1>
 <p>参照 DeepSeek 网页版的三段式结构重排全部页面：<strong>左侧常驻栏 / 中间对话流 / 底部输入</strong>。 目标不是「做得像」，而是让第一次打开的人不需要读说明就知道从哪开始、东西存在哪、接口在哪配。</p>
-<p>!<a href="screenshots/ask.png">问答页</a></p>
+<p>截图见 <code>docs/screenshots/</code>（文档站不渲染图片，直接看仓库里的文件）。</p>
 <h2 id="一-结构对照">一、结构对照</h2>
 <table><thead><tr><th>DeepSeek 的区域</th><th>本项目对应</th><th>说明</th></tr></thead><tbody><tr><td>左上角 Logo</td><td>品牌区（<code>#sideBar .brand</code>）</td><td>点回问答页</td></tr><tr><td>「开启新对话」</td><td><code>#newChat</code></td><td>同时把服务端会话 ID 换新，避免新对话里模型还记得上一段</td></tr><tr><td>历史对话列表</td><td><code>#convList</code></td><td>按 今天 / 昨天 / 7 天内 / 更早 分组；标题取第一个问题前 28 字</td></tr><tr><td>历史搜索</td><td><code>#convSearch</code></td><td>本地过滤标题，不发请求</td></tr><tr><td>左下账号 / 设置</td><td>文件 / 知识库 / 设置 三行</td><td>本项目没有账号体系，这一栏放的是「东西在哪」与「配置在哪」</td></tr><tr><td>中间对话区</td><td><code>#list</code> + <code>#hero</code></td><td>有消息时显示对话流，没有时居中显示问候与示例问题</td></tr><tr><td>底部输入框</td><td><code>#composer</code></td><td>大圆角浮层，工具项收在框内底部一行</td></tr><tr><td>深度思考 / 联网搜索开关</td><td>知识库 / 接口 两个状态标签</td><td>只放<strong>真实存在</strong>的能力：知识库版本、当前模型或离线抽取；不做无后端支撑的开关</td></tr><tr><td>右上头像 / 设置</td><td>导出 / 清空</td><td>与当前会话相关，不跨页</td></tr></tbody></table>
 <h2 id="二-页面模块与层级">二、页面模块与层级</h2>
@@ -151,4 +151,17 @@ PYTHON=&lt;python&gt; node tests/e2e_layout.mjs   # 侧栏、多会话、设置�
 <p>所以改完样式或脚本要重启进程；<code>tools/check_frontend.py</code> 负责在提交前抓语法错误。</p>
 <li>清理按钮按当前选择执行，没有二次确认——删的是旧版本与缓存，活动版本永不受影响；</li>
 <p>但如果用户依赖某个旧版本回滚，删掉后就没了，这一点在面板文案里写明。</p>
-</ul><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>
+</ul>
+<h2 id="九-设计令牌与字号阶梯">九、设计令牌与字号阶梯</h2>
+<p>这一节是给后续改界面的人看的：<strong>新增样式只许用下面这些值</strong>。 审查时统计过：字号有 24 个不同值、间距 33 个、圆角 18 个、z-index 22 个， 组件之间「差 1px」的错位大多来自这里。v1.40.0 先把半档字号和控件边框收敛掉。</p>
+<h3 id="字号">字号</h3>
+<table><thead><tr><th>档位</th><th>用途</th></tr></thead><tbody><tr><td>11px</td><td>极小辅助（版本号、图例）</td></tr><tr><td>12px</td><td>辅助文字、表格、列表、时间戳（全站主力，占一半以上）</td></tr><tr><td>13px</td><td>小标题、表单标签</td></tr><tr><td>14px</td><td>正文、段落</td></tr><tr><td>15px</td><td>答案正文、输入框</td></tr><tr><td>16–17px</td><td>面板标题</td></tr><tr><td>19–30px</td><td>页标题、首屏 hero（各页只有一处）</td></tr></tbody></table>
+<p>禁止再写 10.5 / 11.5 / 12.5 / 12.8 / 13.5 / 14.5 / 15.5——它们与相邻档只差 3–7%， 肉眼分不出层级，只会让「为什么这里要小半号」变成没人能回答的问题。</p>
+<h3 id="颜色">颜色</h3>
+<p>只许用 <code>base.css</code> 里的令牌。当前仍有约 35 处字面色值（<code>ask.css</code> 的气泡、<code>report.py</code> 的封面等）， 改到哪一块顺手换成令牌，不要一次全改——那是 100 处级别的改动，验证成本高于收益。 对比度底线：正文 4.5:1，大字（≥19px 或 ≥14px 加粗）3:1，<strong>输入控件边界 3:1</strong>（这就是 <code>--line-2</code> 不能用来画边框的原因，它只有 1.42:1）。</p>
+<h3 id="圆角与层级">圆角与层级</h3>
+<ul>
+<li>圆角四档：<code>--r-sm</code>(8) / <code>--r</code>(12) / <code>--r-lg</code>(16) / <code>999px</code>（胶囊）</li>
+<li>z-index 预算七层：侧栏 60 · 遮罩 90 · 抽屉 100 · 弹窗 120 · 快捷键表 130 · toast 200 · 首启 300</li>
+</ul>
+<p>新增浮层请落在这七层里，不要写 92、131 这种「夹在中间」的值——同值冲突时谁在上面 只由 DOM 顺序决定，组合两层浮层就会出现「设置弹窗被笔记弹窗盖住」。</p><div class="foot">由 tools/build_docs_site.py 从 Markdown 生成，请勿直接编辑这里的 HTML。</div></main></div></body></html>
