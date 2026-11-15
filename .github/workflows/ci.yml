@@ -165,6 +165,7 @@ jobs:
           python tests/test_mcp_http.py
           python tests/test_threads.py
           python tests/test_contract.py
+          python tests/test_result_contract.py
 
       - name: 模型摘要（校验 / 回落 / 严格模式）
         run: python tests/test_notes_digest_llm.py

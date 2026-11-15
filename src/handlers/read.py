@@ -37,37 +37,17 @@ def make_read(deps):
     metrics = deps.metrics
     pipe = deps.pipe
     store = deps.store
-    log_dir = deps.log_dir
     guards = deps.guards
     api_keys = deps.api_keys
-    note_ref = deps.note_ref
     feedback_path = deps.feedback_path
     feedback_cases_path = deps.feedback_cases_path
     doc_cases_path = deps.doc_cases_path
     run_report_path = deps.run_report_path
     raw_dir = deps.raw_dir
     kb_dir = deps.kb_dir
-    async_reload = deps.async_reload
-    reload_kb = deps.reload_kb
     index_payload = deps.index_payload
-    index_fields = deps.index_fields
-    _reopen_notes = deps._reopen_notes
     _repo_url = deps._repo_url
-    _downloads = deps._downloads
-    _mcp_config = deps._mcp_config
-    _probe_llm = deps._probe_llm
-    _storage_report = deps._storage_report
-    _clear_index = deps._clear_index
-    _total_bytes = deps._total_bytes
-    _settings_payload = deps._settings_payload
     _runtime_warnings = deps._runtime_warnings
-    _setup_state = deps._setup_state
-    _apply_setup = deps._apply_setup
-    _mcp_targets = deps._mcp_targets
-    _picker_command = deps._picker_command
-    _pick_folder = deps._pick_folder
-    _count_notes = deps._count_notes
-    _copy_notes = deps._copy_notes
 
     class ReadRoutes:
         # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。

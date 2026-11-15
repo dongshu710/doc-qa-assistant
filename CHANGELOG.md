@@ -2,6 +2,30 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.39.3] - 2026-11-15
+
+第二批收尾：把「问答结果是自由 dict」「依赖袋一半字段没人用」这两件事写清楚。
+
+### 变更
+
+- **`AskResult` 类型契约**：一次问答的结果有 51 个键，被五处消费（`openai_compat` 转 SDK
+  响应、`report` 算指标、`handlers/write` 记审计、`client_api` 交给桌面与终端、前端直接读 JSON），
+  而全仓 16 个 dataclass 里唯独它没有类型。新增 `src/result.py` 声明全部键，
+  `tests/test_result_contract.py` 用 AST 比对「代码里真正写过的键」与「声明的键」——
+  实测两边都是 51 个，完全对齐。漏写会红，不会再出现「声明过两周就与实现分叉」。
+- **依赖袋瘦身 87 行**：四个 handler 模块原来逐行 `x = deps.x` 解构，实测 `base.py` 绑了
+  36 个有 29 个从未使用、`write.py` 绑 37 个有 22 个未用。删掉这 87 个死绑定后，
+  「谁真的依赖什么」才读得出来。`AppDeps` 的字段类型也从 27 个 `Any` 换成真实类型
+  （`RAGPipeline` / `Settings` / `Guards` / `ApiKeyStore` / `KnowledgeStore | None` /
+  `TraceExporter | None`），闭包字段统一标 `Callable[..., Any]`——至少说明它们是「被当函数调的」。
+  删除后跑了 `ruff --select F821,F811`（未定义名/重复定义）与 85 个测试脚本，全绿。
+
+### 未做（明确记录）
+
+- `_openai_stream` 与 `_stream_answer` 仍是两套流式实现（行为已开始分叉：客户端断开的
+  取消逻辑只有后者有）。合并需要同时改两条链路并重跑四套 E2E，单独排期做。
+- 启动顺序（先 bind 端口、再建索引）要与「长任务后台化」一起改，归入下一批。
+
 ## [1.39.2] - 2026-11-15
 
 第二批：把审查里「同一件事写了多份」和「门禁在骗人」的部分收一收。无对外行为变化。

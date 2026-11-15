@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import os
 import pathlib
@@ -22,11 +22,11 @@ from .. import (appconfig, kbstore,
                 settings_ops)
 from .. import update as update_mod
 from ..auth import ApiKeyStore
-from ..config import api_key, load_settings
+from ..config import Settings, api_key, load_settings
 from ..guards import Guards
 from ..metrics_exporter import Metrics
 from ..notes.service import NoteService
-from ..otel import make_exporter
+from ..otel import TraceExporter, make_exporter
 from ..pipeline import RAGPipeline
 from ..threadstore import ThreadStore
 from ..watcher import KnowledgeWatcher
@@ -59,13 +59,15 @@ class AppDeps:
     """
 
     project_root: str
-    settings: Any
-    metrics: Any
-    pipe: Any
-    store: Any
+    # 数据字段标真实类型（原来全是 Any）：写出 `deps.pipe` 时 IDE 能补全，
+    # 字段拼错也能被静态检查发现。运行时不校验，改错类型不会让服务起不来。
+    settings: Settings
+    metrics: Metrics
+    pipe: RAGPipeline
+    store: kbstore.KnowledgeStore | None
     log_dir: str
-    guards: Any
-    api_keys: Any
+    guards: Guards
+    api_keys: ApiKeyStore
     note_ref: dict
     feedback_path: str
     feedback_cases_path: str
@@ -74,27 +76,29 @@ class AppDeps:
     raw_dir: str
     kb_dir: str
     async_reload: bool
-    reload_kb: Any
-    index_payload: Any
-    index_fields: Any
-    _reopen_notes: Any
-    _repo_url: Any
-    _downloads: Any
-    _mcp_config: Any
-    _probe_llm: Any
-    _storage_report: Any
-    _clear_index: Any
-    _total_bytes: Any
-    _settings_payload: Any
-    _runtime_warnings: Any
-    _setup_state: Any
-    _apply_setup: Any
-    _mcp_targets: Any
-    _picker_command: Any
-    _pick_folder: Any
-    _count_notes: Any
-    _copy_notes: Any
-    tracer: Any
+    # 闭包字段：`Callable[..., Any]` 比光秃秃的 `Any` 多一条信息——
+    # 它们是「被当函数调的」，不是数据。具体签名在各自定义处。
+    reload_kb: Callable[..., Any]
+    index_payload: Callable[..., dict]
+    index_fields: Callable[..., Any]
+    _reopen_notes: Callable[..., Any]
+    _repo_url: Callable[..., Any]
+    _downloads: Callable[..., Any]
+    _mcp_config: Callable[..., Any]
+    _probe_llm: Callable[..., Any]
+    _storage_report: Callable[..., Any]
+    _clear_index: Callable[..., Any]
+    _total_bytes: Callable[..., Any]
+    _settings_payload: Callable[..., Any]
+    _runtime_warnings: Callable[..., Any]
+    _setup_state: Callable[..., Any]
+    _apply_setup: Callable[..., Any]
+    _mcp_targets: Callable[..., Any]
+    _picker_command: Callable[..., Any]
+    _pick_folder: Callable[..., Any]
+    _count_notes: Callable[..., Any]
+    _copy_notes: Callable[..., Any]
+    tracer: TraceExporter | None
 
 
 def build_app(host: str, port: int, knowledge_dir: str | None = None):
