@@ -35,7 +35,7 @@ import shutil
 import time
 from .timeutil import utc_now_iso
 
-from . import locks
+from . import atomicfile, locks
 
 ALLOWED_EXT = (".md", ".txt")
 
@@ -54,11 +54,9 @@ def _sha256(data: bytes) -> str:
 
 
 def _atomic_json(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    # 同 guards：固定名 `.tmp` 的并发写会互相覆盖，且 Windows 上目标被占用时
+    # `os.replace` 直接抛 WinError 5。统一走 atomicfile。
+    atomicfile.write_json(path, data)
 
 
 def _safe_name(name: str) -> str:

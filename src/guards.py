@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import jsonl
+from . import atomicfile, jsonl
 from .redis_client import RedisClient, RedisError
 
 
@@ -38,11 +38,9 @@ def _today() -> str:
 
 
 def _atomic_write(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    # 固定名 `path + ".tmp"` 在并发写同一目标时会互相覆盖临时文件；
+    # 统一走 atomicfile（唯一临时名 + 占用重试）。
+    atomicfile.write_json(path, data)
 
 
 @dataclass

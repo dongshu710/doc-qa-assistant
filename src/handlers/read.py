@@ -463,14 +463,22 @@ def make_read(deps):
                     except OSError:
                         # 并发删除/改名：跳过这一条。少显示一份，比整个列表 500 好。
                         continue
+                # 上限保护：几千份文档时一次返回的 JSON 会到几 MB，前端解析和
+                # 表格渲染都吃不消。截断时把总数一并告诉调用方，让人知道"还有"，
+                # 而不是以为看到的就是全部（页面上写「共 N 份」用的是 total）。
+                limit = _int_qs(qs, "limit", 1000, 1, 5000)
+                shown = files[:limit]
                 self._json({
                     "files": [
                         {**f,
                          "keywords": pipe.keywords.top_terms(f["name"].rsplit(".", 1)[0], 5),
-                         "keyword_count": len(pipe.keywords.top_terms(
-                             f["name"].rsplit(".", 1)[0], 999))}
-                        for f in files
+                         # 只为拿条数而取 999 个词再 len() 是白复制：500 份文档
+                         # 就是 500 次近千元素的列表构造。count_terms 走同一份缓存。
+                         "keyword_count": pipe.keywords.count_terms(f["name"].rsplit(".", 1)[0])}
+                        for f in shown
                     ],
+                    "truncated": len(files) > len(shown),
+                    "total_files": len(files),
                     "total_chunks": len(pipe.chunks),
                     "rebuilding": bool(pipe.rebuild_state().get("rebuilding")),
                     "version": store.active_version() if store is not None else None,

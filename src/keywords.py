@@ -929,6 +929,16 @@ class KeywordIndex:
             self._build_doc_terms()
         return list((self._doc_terms.get(doc_id) or [])[:max(0, n)])
 
+    def count_terms(self, doc_id: str) -> int:
+        """某文档的关键词条数。
+
+        知识库列表原来写成 `len(top_terms(doc_id, 999))`——只为拿个长度而复制
+        一份近千元素的列表，500 份文档就是 500 次无用复制。这里有缓存、只取长度。
+        """
+        if not self._doc_terms:
+            self._build_doc_terms()
+        return len(self._doc_terms.get(doc_id) or ())
+
     def doc_view(self, doc_id: str) -> dict:
         doc = self.docs.get(doc_id) or {}
         rows = [e for e in self.entries if e.doc_id == doc_id]

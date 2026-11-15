@@ -2,6 +2,32 @@
 
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与语义化版本。
 
+## [1.39.2] - 2026-11-15
+
+第二批：把审查里「同一件事写了多份」和「门禁在骗人」的部分收一收。无对外行为变化。
+
+### 变更
+
+- **原子写盘收敛**：新增 `src/atomicfile.py`——唯一临时名（`mkstemp`）+ 占用时重试。
+  `guards` 与 `kbstore` 原来都用固定名字 `path + ".tmp"`，两个线程同时写同一个目标
+  （`cost.json`、`state.json`、`run_report.json`）会互相覆盖临时文件，把别人的半截
+  内容换到正式位置；Windows 上目标被编辑器或同步盘持有时还会直接抛 WinError 5。
+  `threadstore` 早就把两件事都做了，但只有它自己在用。
+- **知识库列表的两处白开销**：`keyword_count` 原来写成 `len(top_terms(doc_id, 999))`，
+  只为拿个长度而复制近千元素的列表；改走同一个缓存的 `count_terms()`。
+  另加 `limit` 保护（默认 1000，上限 5000），截断时返回 `truncated` 与 `total_files`——
+  几千份文档时一次几 MB 的 JSON 会让表格渲染卡住，而用户以为看到的就是全部。
+
+### 修复（门禁本身）
+
+- **`test_post_dispatch` 的判据形同虚设**：它手抄了一份 `route()` 做「路径 → 分组名」
+  映射，而兜底分支总会返回 `_post_ask`——任何路径都能通过。抄本还已经与源码分叉
+  （`/api/search/debug` 早已并进 `_post_data`，抄本仍说是 `_post_ask`），红灯永远不会亮。
+  改成从 `do_POST` 的 AST 里取 `==` / `in` / `startswith` 三类条件做判据。
+- **`test_contract` 补一条单向断言**：`api.py` 里每个 `rest == "x"` 都必须出现在
+  `ROUTES` 里。`{id}/assets` 那些走 `parts` 分支、无法从字面量提取，仍需人工，
+  但「新加一个 rest 端点却忘了登记」现在会被抓住。
+
 ## [1.39.1] - 2026-11-15
 
 一轮多维审查（代码质量 / 架构与风险 / 界面审美 / 同类对标）后的第一批修复：11 条 P0 全部落地。

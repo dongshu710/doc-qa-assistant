@@ -46,16 +46,44 @@ def declared_paths() -> list[str]:
     raise SystemExit("找不到 do_POST 的白名单元组")
 
 
-def route(path: str) -> str:
-    """与 write.py 里 `do_POST` 的分派条件保持一致。"""
-    if path.startswith("/api/admin/"):
-        return "_post_admin"
-    if path.startswith(("/api/knowledge/", "/api/kb/")):
-        return "_post_kb"
-    if (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
-            or path in ("/api/feedback", "/api/reload")):
-        return "_post_data"
-    return "_post_ask"
+def dispatch_conditions(path: Path) -> tuple[set[str], set[str], set[str]]:
+    """从 `do_POST` 的 AST 里取出三类别名：相等、`in` 集合、`startswith` 前缀。
+
+    原来这里手抄了一份 `route()` 做「路径 → 分组名」的映射，判据是
+    「分组名在 GROUPS 里」，而兜底分支会返回 `_post_ask`——于是任何路径都能通过，
+    这条检查等于没写。抄本与源码分叉时更糟：`/api/search/debug` 早已并进
+    `_post_data`，抄本还说是 `_post_ask`，红灯永远不会亮。
+    改成直接读源码里的分派条件，条件怎么重排都不影响判据。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "do_POST")
+
+    def literals(node) -> list[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return [e.value for e in node.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        return []
+
+    eqs: set[str] = set()
+    ins: set[str] = set()
+    prefixes: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) \
+                and node.left.id == "path":
+            for op, comparator in zip(node.ops, node.comparators):
+                if isinstance(op, ast.Eq):
+                    eqs.update(literals(comparator))
+                elif isinstance(op, ast.In):
+                    ins.update(literals(comparator))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "startswith"
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == "path"):
+            for arg in node.args:
+                prefixes.update(literals(arg))
+    return eqs, ins, prefixes
 
 
 def methods(path: Path, prefix: str = "") -> set[str]:
@@ -70,12 +98,11 @@ def main() -> int:
     check("白名单不为空", len(paths) >= 15, str(len(paths)))
 
     print("每条路径都要被分派条件命中")
-    unmapped = []
-    for path in paths:
-        target = route(path)
-        if target not in GROUPS:
-            unmapped.append(path)
-    check("没有落到未知分组", not unmapped, str(unmapped))
+    eqs, ins, prefixes = dispatch_conditions(WRITE)
+    missed = [p for p in paths
+              if not (p in eqs or p in ins or any(p.startswith(x) for x in prefixes))]
+    check("白名单每条路径都能被 do_POST 的条件命中", not missed,
+          f"未命中 {missed}；条件 eq={sorted(eqs)[:6]} prefix={sorted(prefixes)}")
 
     print("分组方法都真实存在")
     have = methods(WRITE, "_post_")
