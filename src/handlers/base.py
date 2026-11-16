@@ -190,6 +190,9 @@ class BaseRoutes(SlotAwareHandler):
         """
         self._responded = False
         self._status = 0
+        # keep-alive 下同一个 Handler 实例服务多条请求：每条都要重新解析来源，
+        # 否则第二个请求会沿用第一个请求的客户端地址（反代场景下就是串号）。
+        self._client_cache = None
         started = time.monotonic()
         try:
             super().handle_one_request()
@@ -427,8 +430,22 @@ class BaseRoutes(SlotAwareHandler):
         self.send_header("Content-Length", "0")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
+    def _client_info(self) -> tuple[str, bool]:
+        """`(客户端地址, 是否经可信代理)`。同一请求内只解析一次。
+
+        为什么要返回两个值：地址用来记账（审计、限流、日志），而「经没经过代理」
+        用来判管理员——反代下对端恒为 127.0.0.1，只看地址分不清「本机操作」
+        和「外网经代理进来」。
+        """
+        cached = getattr(self, "_client_cache", None)
+        if cached is None:
+            peer = self.client_address[0] if self.client_address else "unknown"
+            cached = security.client_ip(peer, self.headers.get("X-Forwarded-For") or "")
+            self._client_cache = cached
+        return cached
+
     def _client(self) -> str:
-        return self.client_address[0] if self.client_address else "unknown"
+        return self._client_info()[0]
 
     def _file_name(self, value, exts=None, maxlen: int = 80) -> str | None:
         """取「纯文件名」参数；不合法时回 400 并返回 None。
@@ -472,7 +489,10 @@ class BaseRoutes(SlotAwareHandler):
             # 作用域为 admin 的 Key 等同管理员。没有这条，`admin` 这个作用域
             # 只是个标签，发出去的 Key 一样批不了、回滚不了。
             return True
-        return self._client() in ("127.0.0.1", "::1")
+        # 没有令牌时的地址兜底。反代场景必须区分「回环」与「经代理的回环」：
+        # 只看地址的话，任何能访问代理的人都是管理员（见 security.admin_by_ip）。
+        ip, via_proxy = self._client_info()
+        return security.admin_by_ip(ip, via_proxy)
 
     def _readonly_gate(self, verb: str, path: str) -> bool:
         """只读 Key 的写操作闸门：拒绝并说明该换成什么 Key。

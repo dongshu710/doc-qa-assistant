@@ -168,6 +168,11 @@ jobs:
       - name: 路径与原子写（项目根 / 文件名 / 临时文件）
         run: python tests/test_paths.py
 
+      # 反代下「对端是 127.0.0.1 就是管理员」会变成「谁都能审批」。
+      # 三个开关的语义与组合都要有回归，否则哪天默认值被改也没人发现。
+      - name: 反代来源判定（TRUST_PROXY / ADMIN_ALLOW_REMOTE）
+        run: python tests/test_proxy_trust.py
+
       - name: 后台重建与增量解析
         run: python tests/test_async_reload.py
 

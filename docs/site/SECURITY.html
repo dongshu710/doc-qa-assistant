@@ -74,18 +74,20 @@ font-size:12.5px;color:var(--muted)}
 <p>现在和其他数据面一样按表执行——GET 不等于公开。</p>
 </ul>
 <p>测试 <code>tests/test_routing.py</code> 同时断言表本身（最长前缀优先、默认收紧）与分发函数 （六个 <code>do_*</code> 的第一次调用必须是 <code>_guard</code>），所以「绕过闸门」也会被测试挡住。</p>
-<h2 id="反向代理与来源判定-a6">反向代理与来源判定（A6）</h2>
-<p><code>_client()</code> 只认 TCP 对端的 <code>client_address</code>，<strong>从不读 <code>X-Forwarded-For</code></strong>。这是刻意的：</p>
-<ul>
-<li>伪造成本为零的请求头不能用来决定「是不是本机」，否则一个 <code>X-Forwarded-For: 127.0.0.1</code> 就能冒充管理员；</li>
-<li>代价是：挂上反向代理后，所有请求看起来都来自 <code>127.0.0.1</code>，<code>_is_admin()</code> 的「本机即可」会整体失效。</li>
-</ul>
-<p>所以<strong>一旦放到反代后面，必须同时</strong>：</p>
+<h2 id="反向代理与来源判定-v1-43-0-起">反向代理与来源判定（v1.43.0 起）</h2>
+<p>历史问题：<code>_client()</code> 只认 TCP 对端地址。单机时这是对的（能连上回环端口的只有本机 进程），但<strong>一旦挂上反向代理，所有请求的对端都是 <code>127.0.0.1</code></strong>——<code>_is_admin()</code> 的 「本机即可」就变成「任何能访问代理的人都能读 <code>/metrics</code>、<code>/api/audit</code>、审批知识库」。 默认不看 <code>X-Forwarded-For</code> 是对的（这个头伪造成本为零），但「不看」并不能解决反代 场景，只是把问题藏起来。</p>
+<p>现在把它显式化。三个变量，<strong>默认全关</strong>，不配置就等于行为与以前完全一致：</p>
+<table><thead><tr><th>变量</th><th>默认</th><th>作用</th></tr></thead><tbody><tr><td><code>TRUST_PROXY</code></td><td>关</td><td>打开后才读 <code>X-Forwarded-For</code>，且只认 <code>TRUSTED_PROXIES</code> 发来的连接</td></tr><tr><td><code>TRUSTED_PROXIES</code></td><td><code>127.0.0.1,::1</code></td><td>哪些对端算「我们自己的代理」</td></tr><tr><td><code>ADMIN_ALLOW_REMOTE</code></td><td>关</td><td>允许「不是直连本机」的地址行使管理员权限</td></tr></tbody></table>
+<p>解析规则：<code>X-Forwarded-For</code> 是逐跳追加的，<strong>最左边那段是客户端自己填的</strong>—— 取最左等于让来访者给自己写身份。所以从右往左跳过可信代理，第一个不认识的地址 才是客户端。对端不是可信代理时，整条 XFF 一概不看（局域网直连的人加个头就能 把审计日志里的来源改成别人）。</p>
+<p><code>ADMIN_ALLOW_REMOTE=1</code> 的含义是「这个端口前面的所有来访者我都认作管理员」。 打开之前请确认代理那层自己做了认证，<strong>否则等于把审批权交给整个网络</strong>。</p>
+<p>两种典型部署：</p>
 <ol>
-<li>设置 <code>ADMIN_TOKEN</code>（此时管理员判定只认 <code>X-Admin-Token</code>，不再看来源 IP）；</li>
-<li>设置 <code>API_KEYS</code>（否则所有调用方都是匿名的同一个身份）；</li>
-<li>设置 <code>ALLOWED_HOSTS</code> 为外部实际访问的域名，否则 Host 校验会 403。</li>
+<li><strong>代理与本服务同机</strong>（nginx → <code>127.0.0.1:8011</code>）</li>
+<p><code>TRUST_PROXY=on</code>、<code>ALLOWED_HOSTS=你的域名</code>、<code>API_KEYS</code>（非回环监听时必需）； 管理操作走 <code>ADMIN_TOKEN</code>（推荐），只有确实需要免令牌时才开 <code>ADMIN_ALLOW_REMOTE</code>。</p>
+<li><strong>不挂代理、只本机用</strong></li>
+<p>什么都不用设。本机直连仍然是管理员，与你之前的体验一致。</p>
 </ol>
+<p>不设 <code>ADMIN_TOKEN</code> 又不开 <code>ADMIN_ALLOW_REMOTE</code> 时，反代后面的外部访客<strong>没有</strong> 管理权限——这正是这次修复的核心。回归测试见 <code>tests/test_proxy_trust.py</code>。</p>
 <h2 id="响应头与可观测面">响应头与可观测面</h2>
 <ul>
 <li>所有响应带 <code>X-Content-Type-Options: nosniff</code>、<code>X-Frame-Options: DENY</code>、<code>Referrer-Policy: no-referrer</code>；</li>

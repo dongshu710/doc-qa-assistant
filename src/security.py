@@ -186,3 +186,104 @@ def read_problem(headers, extra: set[str] | None = None) -> str:
     if not host_allowed(headers.get("Host") or "", extra):
         return "host"
     return ""
+
+# ---------- 反代：谁才是「来访者」 ----------
+#
+# 单机场景「对端是回环 = 管理员」成立，因为能连上 127.0.0.1 的只有本机进程。
+# 一旦前面挂了反向代理，对端永远是 127.0.0.1——于是**任何能访问代理的人**
+# 都会通过 `_is_admin()`：`/metrics`、`/api/audit`、知识库审批全开。
+# 这不是配置问题，是把「网络位置」当「身份」的必然后果。
+#
+# 修法不是「默认不信代理」（那会让正常部署立刻失效），而是把这件事显式化：
+#   TRUST_PROXY=on          才读 X-Forwarded-For，且只认 TRUSTED_PROXIES 发来的
+#   ADMIN_ALLOW_REMOTE=1    才允许「不是直连本机」的地址行使管理员权限
+# 两个开关默认都关：不配置 = 行为与以前完全一致；配错也不会比现在更开放。
+
+LOOPBACK_IPS = frozenset({"127.0.0.1", "::1"})
+
+
+def trust_proxy() -> bool:
+    # 变量名写成字面量而不是拼字符串：`tools/gen_env_example.py` 靠正则扫
+    # `os.environ.get("字面量")` 生成文档，拼出来的一律扫不到，等于没文档。
+    return (os.environ.get("TRUST_PROXY") or "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def admin_allow_remote() -> bool:
+    return (os.environ.get("ADMIN_ALLOW_REMOTE") or "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def _canonical_ip(text: str) -> str | None:
+    """把 `1.2.3.4`、`1.2.3.4:5678`、`[::1]:443`、`::1` 规范成可比较的字符串。
+
+    不是 IP 就返回 None：X-Forwarded-For 是客户端可写的头，里面塞 `unknown`、
+    `_hidden`、甚至一段 HTML 都是常事，不能让它进审计日志的 client 字段。
+    """
+    value = (text or "").strip()
+    if not value:
+        return None
+    if value.startswith("["):                       # [::1]:443
+        value = value[1:].split("]", 1)[0]
+    elif value.count(":") == 1 and "." in value:    # 1.2.3.4:5678
+        value = value.split(":", 1)[0]
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
+def trusted_proxies() -> set[str]:
+    """可信代理地址；默认只信本机（nginx/traefik 与本服务同机部署是最常见形态）。"""
+    raw = (os.environ.get("TRUSTED_PROXIES") or "").strip()
+    if not raw:
+        return set(LOOPBACK_IPS)
+    out = set()
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        out.add(_canonical_ip(item) or item.lower())
+    return out
+
+
+def client_ip(peer: str, forwarded_for: str) -> tuple[str, bool]:
+    """返回 `(客户端地址, 是否来自可信代理的 X-Forwarded-For)`。
+
+    从右往左跳过可信代理：XFF 是逐跳追加的，最左边那一段是客户端自己填的，
+    直接取最左等于让来访者给自己写身份。最右那个「不认识的地址」才是最后一个
+    代理看到的对端。
+
+    `TRUST_PROXY` 关闭或对端不是可信代理时，XFF 一概不看——否则从局域网直连
+    过来的人随手加一个头就能把审计日志里的来源改成别人。
+    """
+    peer_ip = _canonical_ip(peer) or (peer or "").strip() or "unknown"
+    if not trust_proxy():
+        return peer_ip, False
+    hops = [h for h in (forwarded_for or "").split(",") if h.strip()]
+    if not hops:
+        return peer_ip, False
+    trusted = trusted_proxies()
+    if peer_ip not in trusted:
+        return peer_ip, False
+    for hop in reversed(hops):
+        addr = _canonical_ip(hop)
+        if addr and addr not in trusted:
+            return addr, True
+    # 整条链都是我们自己的代理：说不清真实客户端，退回对端，但仍标记「经过代理」
+    return peer_ip, True
+
+
+def admin_by_ip(ip: str, via_proxy: bool = False) -> bool:
+    """没有管理员令牌时，按地址判定管理员。
+
+    - 直连本机（不是代理转进来的）：是管理员。这是单机形态的默认体验。
+    - 经过代理、或地址不是回环：**必须显式 `ADMIN_ALLOW_REMOTE=1`**。
+
+    为什么要区分「回环」与「经代理的回环」：反代下两者都是 127.0.0.1，
+    但只有前者能证明操作者就在这台机器前。`ADMIN_ALLOW_REMOTE=1` 的含义是
+    「这个端口前面的所有来访者我都认作管理员」——把它打开前请确认代理自己
+    做了认证，否则等于把审批权交给整个网络。
+    """
+    loopback = _canonical_ip(ip) in LOOPBACK_IPS
+    if loopback and not via_proxy:
+        return True
+    return admin_allow_remote()
