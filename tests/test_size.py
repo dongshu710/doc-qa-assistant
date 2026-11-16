@@ -134,6 +134,14 @@ def main() -> int:
     print(f"  最大的 {CLASS_SHOW} 个类（类体行数；软 {CLASS_SOFT} / 硬 {CLASS_HARD}）")
     for size, rel, name in classes[:CLASS_SHOW]:
         print(f"        {size:4d}  {rel}::{name}")
+    # 路由类单列：它们是「结构层」的锚点，搬成模块级类之后规模必须可见，
+    # 否则下次往里加十个接口也没人发现它已经比整个模块还长。
+    routes = [c for c in classes if c[2].endswith("Routes")]
+    if routes:
+        print("  路由类（类体行数）")
+        for size, rel, name in sorted(routes, reverse=True):
+            print(f"        {size:4d}  {rel}::{name}")
+    check("四个路由类都被统计到", len(routes) == 4, str([r[2] for r in routes]))
     over_class = [c for c in classes if c[0] > CLASS_HARD]
     check("没有类超过类体上限", not over_class,
           "\n     " + "\n     ".join(f"{rel}::{name} {size} 行（上限 {CLASS_HARD}）"
