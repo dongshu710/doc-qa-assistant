@@ -26,6 +26,7 @@ from ..auth import ApiKeyStore
 from ..config import Settings, api_key, load_settings
 from ..guards import Guards
 from ..metrics_exporter import Metrics
+from ..paths import PROJECT_ROOT
 from ..notes.service import NoteService
 from ..otel import TraceExporter, make_exporter
 from ..pipeline import RAGPipeline
@@ -166,8 +167,9 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None, *,
     再把处理器换成本函数构造的 `Handler`。不传就是老行为（自己 bind），
     测试与 `create_server()` 走这条路，语义不变。
     """
-    # 本文件在 src/handlers/ 下：项目根要退三层，退两层会算成 src/
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    # 项目根只有一个来源（src/paths.py）：这里原来自己退三层目录，
+    # 少退一层就变成 src/，数据目录会悄悄换个地方。
+    project_root = str(PROJECT_ROOT)
     settings = load_settings()
     metrics = Metrics(enabled=True)
     # 显式传入目录 = 传统单目录模式（测试与批量导入用）；否则走版本库 + 审批流

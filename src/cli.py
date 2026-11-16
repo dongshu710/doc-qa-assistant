@@ -9,12 +9,13 @@ import argparse
 import json
 import os
 
+from .paths import PROJECT_ROOT
 from .pipeline import RAGPipeline
 
 
 def _knowledge_dir() -> str:
     """优先使用版本库的活动版本，未初始化时回退种子目录。"""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root = str(PROJECT_ROOT)
     state_path = os.path.join(root, "data", "kb", "state.json")
     if os.path.exists(state_path):
         try:

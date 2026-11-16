@@ -2,12 +2,12 @@
 
 打包脚本、`/api/health`、页面角标都读这里，避免三处各写一个版本号。
 """
-from pathlib import Path
+from .paths import PROJECT_ROOT
 
 
 def _read_version() -> str:
     try:
-        return (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+        return (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()
     except OSError:
         pass
     # 装成包以后项目根不在旁边了，退回包元数据。pyproject 的 dynamic version

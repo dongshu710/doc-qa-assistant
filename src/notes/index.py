@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from .. import atomicfile
 
 
 def index_path(home: Path) -> Path:
@@ -77,12 +78,10 @@ def append(home: Path, entry: dict) -> None:
 
 def write_all(home: Path, entries: dict[str, dict]) -> None:
     path = index_path(home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".jsonl.tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+    # 固定名 `.jsonl.tmp`：两个保存并发时互相覆盖临时文件，索引里会留下半行 JSON
+    with atomicfile.atomic_write(str(path), "w") as handle:
         for entry in entries.values():
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
 
 
 def needs_compact(lines: int, entries: int) -> bool:

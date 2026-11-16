@@ -10,7 +10,9 @@ import re
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from .paths import PROJECT_ROOT
+
+ROOT = PROJECT_ROOT
 CURATED = ROOT / "tests" / "eval_cases.jsonl"
 HARD = ROOT / "tests" / "eval_cases_hard.jsonl"
 # 「域内但语料没覆盖」：正确行为不是答对，而是**不许装作答对**。

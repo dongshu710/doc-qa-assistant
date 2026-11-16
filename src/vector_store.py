@@ -25,7 +25,10 @@ import json
 import math
 import operator
 import os
+import tempfile
 import threading
+
+from . import atomicfile
 from .timeutil import utc_now_iso
 
 from .embeddings import EmbeddingCache, EmbeddingError
@@ -324,22 +327,27 @@ class EmbeddingIndex:
         return vectors
 
     def _write(self, vectors: list[list[float]], fingerprint: str) -> None:
-        os.makedirs(self.index_dir, exist_ok=True)
-        tmp_vectors = self.vectors_path + ".tmp"
-        with open(tmp_vectors, "w", encoding="utf-8") as f:
+        # 三份文件都必须原子落盘，且临时名唯一：建库与查询可能在不同线程，
+        # 固定 `.tmp` 会让两个建库进程互相覆盖（半份向量表比没有更糟）。
+        with atomicfile.atomic_write(self.vectors_path, "w") as f:
             for chunk, vec in zip(self.chunks, vectors):
                 f.write(json.dumps({"id": _chunk_key(chunk),
                                     "v": [round(x, 7) for x in vec]},
                                    ensure_ascii=False) + "\n")
-        os.replace(tmp_vectors, self.vectors_path)
 
         if self.backend.startswith("faiss") and hasattr(self.store, "save"):
-            tmp_index = self.faiss_path + ".tmp"
+            # faiss 的 save 只收路径，给不了文件对象：自己造唯一临时名再替换
+            fd, tmp_index = tempfile.mkstemp(dir=self.index_dir, prefix=".tmp-",
+                                             suffix=".index")
+            os.close(fd)
             try:
                 self.store.save(tmp_index)
-                os.replace(tmp_index, self.faiss_path)
+                atomicfile.replace_with_retry(tmp_index, self.faiss_path)
             except (OSError, RuntimeError):
-                pass
+                try:
+                    os.unlink(tmp_index)
+                except OSError:
+                    pass
 
         manifest = {
             "format": INDEX_FORMAT,
@@ -355,10 +363,8 @@ class EmbeddingIndex:
             "created_at": _now(),
             "build_usage": self.build_usage,
         }
-        tmp_manifest = self.manifest_path + ".tmp"
-        with open(tmp_manifest, "w", encoding="utf-8") as f:
+        with atomicfile.atomic_write(self.manifest_path, "w") as f:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_manifest, self.manifest_path)
         self.manifest = manifest
 
     # ---------- 构建 / 加载 ----------

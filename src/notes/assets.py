@@ -25,6 +25,7 @@ import mimetypes
 import os
 import re
 from pathlib import Path
+from .. import atomicfile
 
 SCHEMA_REF = "assets"
 MAX_BYTES = 8 * 1024 * 1024          # 单个附件 8 MB：够放截图与常见文档
@@ -158,9 +159,9 @@ def save(home: str | Path, note_id: str, filename: str, data: bytes) -> dict:
 
     name = f"{prefix}{safe}"
     target = folder / name
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_bytes(bytes(data))
-    os.replace(tmp, target)
+    # 附件可能被同一账号的多个会话同时上传（哈希相同就是同一个文件），
+    # 固定名 `.tmp` 会让两个请求互相覆盖临时文件。
+    atomicfile.write_bytes(str(target), bytes(data))
     return _entry(target, note_id, digest)
 
 
@@ -189,7 +190,9 @@ def list_for(home: str | Path, note_id: str) -> list[dict]:
         return []
     rows = []
     for path in folder.iterdir():
-        if not path.is_file() or path.name.endswith(".tmp"):
+        # 跳过 atomicfile 的临时文件（`.tmp-xxxx.part`）：以点开头不会与
+        # `<哈希前8位>-<文件名>` 冲突，但按后缀判会漏——临时名后缀是 .part。
+        if not path.is_file() or path.name.startswith("."):
             continue
         digest = path.name.split("-", 1)[0]
         rows.append(_entry(path, note_id, digest))
@@ -203,7 +206,7 @@ def resolve(home: str | Path, note_id: str, name: str) -> Path:
     text = str(name or "")
     if not text or text in (".", "..") or "/" in text or "\\" in text:
         raise AssetError(f"附件名不合法：{text}", status=400)
-    if text.endswith(".tmp"):
+    if text.startswith(".") or text.endswith(".tmp"):
         raise AssetError("临时文件不可读", status=400)
     folder = asset_dir(home, note_id).resolve()
     path = (folder / text).resolve()

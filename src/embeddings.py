@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
+from . import atomicfile
 
 
 class EmbeddingError(RuntimeError):
@@ -327,15 +328,15 @@ class EmbeddingCache:
     def save(self) -> None:
         if not self.path or not self._dirty:
             return
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        tmp = self.path + ".tmp"
+        # 临时名必须唯一：固定 `.tmp` 在两个实例并发保存时会互相覆盖，
+        # 把别人写了一半的向量表换到正式位置（读回来是截断的 JSONL）。
         try:
             with self._lock:
                 self._trim()
-            with self._lock, open(tmp, "w", encoding="utf-8") as f:
-                for key, vec in self._data.items():
-                    f.write(json.dumps({"k": key, "v": vec}, ensure_ascii=False) + "\n")
-            os.replace(tmp, self.path)
+            with atomicfile.atomic_write(self.path, "w") as f:
+                with self._lock:
+                    for key, vec in self._data.items():
+                        f.write(json.dumps({"k": key, "v": vec}, ensure_ascii=False) + "\n")
             self._dirty = False
         except OSError:
             # 缓存写失败只影响下次重建成本，不影响本次检索

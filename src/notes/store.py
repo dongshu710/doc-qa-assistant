@@ -21,6 +21,7 @@ from pathlib import Path
 from .. import appconfig
 from ..locks import STALE_DEFAULT_S, break_stale, identity
 
+from .. import atomicfile
 from . import index as index_mod
 from .model import Note
 
@@ -177,10 +178,9 @@ class NoteStore:
                     existing_path = self.home / existing["path"]
                     return SaveResult(_read_note(existing_path), existing_path, created=False,
                                       duplicate_of=str(existing["id"]))
-            tmp = path.with_suffix(".md.tmp")
-            with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+            # 同上：笔记正文是用户唯一不能丢的东西，落盘必须原子且临时名唯一
+            with atomicfile.atomic_write(str(path), "w") as handle:
                 handle.write(note.to_markdown())
-            os.replace(tmp, path)
             entries = self._entries()
             entry = index_mod.entry_for(note, path, self.home)
             index_mod.append(self.home, entry)

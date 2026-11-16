@@ -32,6 +32,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from .. import atomicfile
 
 SEARCH_FILE = "search.jsonl"
 TEXT_MAX = 1200
@@ -240,11 +241,11 @@ class NoteSearcher:
             if self._lock is not None:
                 try:
                     with self._lock():
-                        os.replace(tmp, self.path)
+                        atomicfile.replace_with_retry(tmp, self.path)
                 except Exception:  # noqa: BLE001 —— 拿不到锁就退化成无锁写
-                    os.replace(tmp, self.path)
+                    atomicfile.replace_with_retry(tmp, self.path)
             else:
-                os.replace(tmp, self.path)
+                atomicfile.replace_with_retry(tmp, self.path)
         except BaseException:
             try:
                 os.unlink(tmp)

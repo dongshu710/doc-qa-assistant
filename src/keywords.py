@@ -45,7 +45,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
 
+from . import atomicfile
 from .config import api_key, load_settings
+from .paths import PROJECT_ROOT
 
 BUILDER_VERSION = 3
 
@@ -383,8 +385,7 @@ class KeywordIndex:
         configured = getattr(self.settings, "keyword_index", "data/index/keywords.json")
         if os.path.isabs(configured):
             return configured
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        return os.path.join(root, configured)
+        return os.path.join(str(PROJECT_ROOT), configured)
 
     @property
     def enabled(self) -> bool:
@@ -732,11 +733,9 @@ class KeywordIndex:
             "docs": self.docs,
         }
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            tmp = self.path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
+            # 同上：固定 `.tmp` 会让「重建索引」与「保存索引」两个线程互相覆盖。
+            with atomicfile.atomic_write(self.path, "w") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=1)
-            os.replace(tmp, self.path)
         except OSError as exc:
             self.last_error = f"关键词索引写入失败: {exc}"
 

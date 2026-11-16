@@ -36,6 +36,7 @@ import time
 from .timeutil import utc_now_iso
 
 from . import atomicfile, locks
+from .paths import require_safe_name
 
 ALLOWED_EXT = (".md", ".txt")
 
@@ -59,15 +60,17 @@ def _atomic_json(path: str, data: dict) -> None:
     atomicfile.write_json(path, data)
 
 
-def _safe_name(name: str) -> str:
-    raw = str(name or "").strip()
-    if not raw or "/" in raw or "\\" in raw or ".." in raw:
-        raise KnowledgeError(f"非法文件名: {name!r}")
-    if not raw.lower().endswith(ALLOWED_EXT):
-        raise KnowledgeError(f"只支持 .md / .txt: {name!r}")
-    if len(raw) > 80 or any(ch in raw for ch in '<>:"|?*\x00'):
-        raise KnowledgeError(f"非法文件名: {name!r}")
-    return raw
+def _require_doc_name(name: str) -> str:
+    """文件名校验的唯一实现是 `paths.require_safe_name`，这里只换异常类型。
+
+    为什么还留一层：知识库的错误要变成 `KnowledgeError`，HTTP 层按它决定状态码；
+    而 `require_safe_name` 在依赖链最底层，不该反过来知道知识库的异常类型。
+    它不做任何判断——规则只有一份，改规则只改 paths.py。
+    """
+    try:
+        return require_safe_name(name, ALLOWED_EXT)
+    except ValueError as exc:
+        raise KnowledgeError(str(exc)) from exc
 
 
 class _FileLock:
@@ -297,7 +300,8 @@ class KnowledgeStore:
                 "docs": docs,
             }
             _atomic_json(os.path.join(staging, "manifest.json"), manifest)
-            os.replace(staging, target)
+            # 目录级 rename 同样会遇到「另一个进程正在读版本目录」（Windows 共享冲突）
+            atomicfile.replace_with_retry(staging, target)
         except BaseException:
             # 失败就把半成品收干净，别让一次磁盘满变成永久故障。
             shutil.rmtree(staging, ignore_errors=True)
@@ -373,9 +377,9 @@ class KnowledgeStore:
               deletes: list[str] | None = None) -> dict:
         normalized: dict[str, bytes] = {}
         for name, data in (files or {}).items():
-            safe = _safe_name(name)
+            safe = _require_doc_name(name)
             normalized[safe] = data.encode("utf-8") if isinstance(data, str) else bytes(data)
-        deletes = [_safe_name(n) for n in (deletes or [])]
+        deletes = [_require_doc_name(n) for n in (deletes or [])]
         if not normalized and not deletes:
             raise KnowledgeError("变更内容为空")
 
@@ -487,7 +491,7 @@ class KnowledgeStore:
 
     # ---------- 文档级回滚 ----------
     def rollback_doc(self, name: str, to_version: str, author: str, note: str = "") -> dict:
-        name = _safe_name(name)
+        name = _require_doc_name(name)
         with _FileLock(self.lock_path):
             state = self._state()
             active = state.get("active")
@@ -584,7 +588,7 @@ class KnowledgeStore:
         return rows
 
     def doc_history(self, name: str) -> list[dict]:
-        name = _safe_name(name)
+        name = _require_doc_name(name)
         history = []
         for manifest in self.versions():
             for doc in manifest.get("docs") or []:
@@ -642,7 +646,7 @@ class KnowledgeStore:
         }
 
     def read_doc(self, name: str, version: str | None = None) -> bytes:
-        name = _safe_name(name)
+        name = _require_doc_name(name)
         vid = version or self.active_version()
         path = os.path.join(self.version_dir(vid), "files", name)
         if not os.path.exists(path):

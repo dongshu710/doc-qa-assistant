@@ -18,7 +18,10 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+from . import atomicfile
+from .paths import PROJECT_ROOT
+
+ROOT = PROJECT_ROOT
 DEFAULT_PATH = ROOT / "data" / "app.json"
 
 # 只开放真正需要用户选的项；其余参数仍走环境变量，避免设置面板变成参数垃圾场
@@ -212,17 +215,9 @@ def _write(data: dict) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     _last_backup = _backup_broken(target)
     payload = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-    handle, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".app-", suffix=".json")
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-        os.replace(tmp, target)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    # 临时名唯一 + 占用重试统一走 atomicfile：这里原来自己拼了一个 mkstemp，
+    # 但漏了 Windows 上「目标被编辑器/同步盘占着」的重试。
+    atomicfile.write_bytes(str(target), payload.encode("utf-8"))
     _tighten(target)
     _parse_error = ""
     _revision += 1

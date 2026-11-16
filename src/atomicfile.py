@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -39,12 +40,17 @@ def replace_with_retry(src: str, dst: str, retries: int = REPLACE_RETRIES) -> No
     raise last if last is not None else OSError(f"无法替换 {dst}")
 
 
-def write_bytes(path: str, data: bytes) -> None:
-    """原子写入字节。
+@contextlib.contextmanager
+def atomic_write(path: str, mode: str = "wb", encoding: str = "utf-8"):
+    """流式原子写：`with atomic_write(p, "w") as fh: fh.write(...)`。
 
-    不调 `fsync`：这些文件都是「可重建的派生数据或可重放的配置」，
-    掉电丢最后一次写入可以接受；而 fsync 在 Windows 上单次 5–20ms，
-    `CostBudget` 每秒落一次盘，会把这笔开销摊到正在收尾的请求上。
+    为什么需要这一版：`write_bytes` 要把整份内容先拼进内存，而上百 MB 的向量
+    缓存、几万行的 jsonl 不适合这么干；但「固定名 `path + '.tmp'`」在并发写
+    同一目标时会互相覆盖（两份实现都踩过）。这里两头都占：给流式句柄，
+    同时保证临时名唯一、异常自动清理。
+
+    文本模式统一 `newline="\\n"`：默认的 `open(..., "w")` 在 Windows 上会把
+    所有 `\\n` 变成 `\\r\\n`，同一份 jsonl 在不同机器上字节不一致。
     """
     target = os.path.abspath(path)
     directory = os.path.dirname(target) or "."
@@ -53,8 +59,14 @@ def write_bytes(path: str, data: bytes) -> None:
     # 临时文件不能长得像版本号。
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-", suffix=".part")
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
+        if "b" in mode:
+            handle = os.fdopen(fd, mode)
+        else:
+            handle = os.fdopen(fd, mode, encoding=encoding, newline="\n")
+        try:
+            yield handle
+        finally:
+            handle.close()
         replace_with_retry(tmp, target)
     except BaseException:
         try:
@@ -62,6 +74,17 @@ def write_bytes(path: str, data: bytes) -> None:
         except OSError:
             pass
         raise
+
+
+def write_bytes(path: str, data: bytes) -> None:
+    """原子写入字节。
+
+    不调 `fsync`：这些文件都是「可重建的派生数据或可重放的配置」，
+    掉电丢最后一次写入可以接受；而 fsync 在 Windows 上单次 5–20ms，
+    `CostBudget` 每秒落一次盘，会把这笔开销摊到正在收尾的请求上。
+    """
+    with atomic_write(path, "wb") as handle:
+        handle.write(data)
 
 
 def write_json(path: str, data, indent: int = 2) -> None:

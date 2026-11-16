@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 from .. import jsonl
+from ..paths import DOC_EXTS, PROJECT_ROOT, require_safe_name
 
 def _open_folder(folder: str) -> None:
     """用系统文件管理器打开目录。三个平台各一条命令，失败抛 OSError 让调用方回结构化错误。"""
@@ -37,31 +38,12 @@ ASSET_MAX_BYTES = 8 * 1024 * 1024
 ASSET_BODY_MAX = ASSET_MAX_BYTES * 4 // 3 + 64 * 1024
 SSE_HEARTBEAT_S = 15.0                  # 流式回答的空闲心跳间隔
 SSE_MAX_SECONDS = 300.0                 # 单次流式回答的总时长上限
-ALLOWED_EXT = (".md", ".txt")
-
-
-def _safe_name(name, exts=None, maxlen: int = 80) -> str | None:
-    """只接受「纯文件名」，扩展名必须在 `exts` 里。
-
-    显式拒绝路径分隔符而不是 basename 静默改名：静默改名虽然安全，但会让用户
-    以为传了 `../x.md` 却出现 `x.md`，属于隐性行为。
-
-    原来是「知识库上传」与「文档上传」各写一份，五段判断逐字相同、只差长度上限
-    与扩展名集合；现在合成一个，差异走参数。
-    """
-    raw = str(name or "").strip()
-    if not raw or "/" in raw or "\\" in raw or ".." in raw:
-        return None
-    if len(raw) > maxlen or not raw.lower().endswith(tuple(exts or ALLOWED_EXT)):
-        return None
-    if any(ch in raw for ch in '<>:"|?*\x00'):
-        return None
-    return raw
+# 常量名保留：read/write 用它拼错误提示与 os.listdir 过滤，改名字只会多一轮机械替换。
+ALLOWED_EXT = DOC_EXTS
 
 
 def _knowledge_dir() -> str:
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(root, "data", "knowledge")
+    return os.path.join(str(PROJECT_ROOT), "data", "knowledge")
 
 
 def _raw_dir() -> str:
@@ -75,8 +57,7 @@ def _raw_dir() -> str:
     if configured:
         path = os.path.abspath(os.path.expanduser(configured))
     else:
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        path = os.path.join(root, "data", "raw")
+        path = os.path.join(str(PROJECT_ROOT), "data", "raw")
     os.makedirs(path, exist_ok=True)
     return path
 

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from . import atomicfile
 
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".json", ".jsonl", ".csv", ".yaml", ".yml"}
 MAX_READ_BYTES = 2 * 1024 * 1024
@@ -107,10 +108,9 @@ def write(home, rel: str, content: str, base_rev: str = "", create: bool = False
         elif base_rev:
             # 带着旧 rev 来写一个已经不存在的文件：多半是别处删了，别悄悄把它复活
             raise FileError("文件已不存在（可能已被删除或改名），请刷新后再试", 409)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, target)
+        # 唯一临时名 + 占用重试：固定名 `.tmp` 在两个客户端同时保存同一文件时
+        # 会互相覆盖，而你多半只是用编辑器开着它（Windows 上 replace 会抛 WinError 5）。
+        atomicfile.write_bytes(str(target), data)
     return {"path": str(target.relative_to(_home(home))).replace(os.sep, "/"),
             "rev": _rev(data), "size": len(data)}
 

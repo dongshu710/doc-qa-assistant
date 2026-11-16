@@ -19,6 +19,7 @@ from .. import (accesslog, openai_compat as compat,
                 routing, security)
 from ..auth import READ_ONLY_POSTS, safe_equal
 from ..http_server import SlotAwareHandler
+from ..paths import require_safe_name
 from .common import redact_settings
 
 if TYPE_CHECKING:  # 只为注解存在：运行时导入 app 会形成环（app 反过来导入本模块）
@@ -428,6 +429,20 @@ class BaseRoutes(SlotAwareHandler):
         self.end_headers()
     def _client(self) -> str:
         return self.client_address[0] if self.client_address else "unknown"
+
+    def _file_name(self, value, exts=None, maxlen: int = 80) -> str | None:
+        """取「纯文件名」参数；不合法时回 400 并返回 None。
+
+        底层 `paths.require_safe_name` 统一抛 ValueError：那是唯一一套校验谓词，
+        两种返回风格并存时调用方会漏判（真出现过 `Path(None)` → 500）。
+        但 HTTP 边界上必须「先发响应再返回」，所以只有这一层保留 None——
+        它不是第二套语义，是这一层唯一合理的写法。
+        """
+        try:
+            return require_safe_name(value, exts, maxlen)
+        except ValueError as exc:
+            self._json({"ok": False, "error": "invalid_name", "message": str(exc)}, 400)
+            return None
     def _error_text(self, exc: Exception, prefix: str = "服务端异常") -> str:
         """异常详情默认不回传：消息里常带绝对路径与内部端点。
 

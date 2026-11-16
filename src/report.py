@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import artifacts
 from .metrics import summarize
+from .paths import PROJECT_ROOT
 from .theme import (BASE_CSS, BRAND, JS_UTIL, MARK, THEME_HEAD, THEME_JS, footer)
 from .version import __version__
 from .webassets import load
@@ -450,7 +451,7 @@ def _collect_key(pipe, tests_dir: Path) -> tuple:
 
 def collect(pipe=None, root: Path | None = None, use_cache: bool = True) -> dict:
     """汇总页面所需的全部数据；带 mtime 签名缓存，静态输入不变就直接复用。"""
-    project_root = Path(root) if root else Path(__file__).resolve().parents[1]
+    project_root = Path(root) if root else PROJECT_ROOT
     tests_dir = project_root / "tests"
     if pipe is None:
         from .pipeline import RAGPipeline
@@ -1283,7 +1284,7 @@ def render(data: dict, standalone: bool = False, redacted: bool = False,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="导出项目汇报页（独立 HTML）")
-    ap.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "dist" / "report.html"))
+    ap.add_argument("--out", default=str(PROJECT_ROOT / "dist" / "report.html"))
     ap.add_argument("--json", action="store_true", help="同时打印汇总数据")
     args = ap.parse_args()
 

@@ -163,6 +163,11 @@ jobs:
       - name: 运行期并发（成本落盘 / 索引代次 / 单飞 / 重建）
         run: python tests/test_runtime_concurrency.py
 
+      # 路径与文件名的唯一来源：全仓不许再有第二处自己算项目根，
+      # 也不许再长出第二个 `_safe_name`（两份实现的失败方式不一样）。
+      - name: 路径与原子写（项目根 / 文件名 / 临时文件）
+        run: python tests/test_paths.py
+
       - name: 后台重建与增量解析
         run: python tests/test_async_reload.py
 

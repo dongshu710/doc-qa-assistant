@@ -14,6 +14,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import atomicfile
 from . import assets as assets_mod
 
 BUNDLE_SCHEMA = "notes-bundle/v1"
@@ -261,11 +262,9 @@ def export(service, out: str | Path, note_ids: list[str] | None = None, fmt: str
         mime = "text/html"
     else:
         raise ValueError(f"不支持的导出格式：{fmt}（可选 html / json）")
-    tmp = target.with_name(target.name + ".tmp")
-    # newline="" 关掉换行转换：Windows 上默认会把 \n 变成 \r\n，
-    # 于是返回的 bytes 和磁盘实际大小差出「行数个字节」，核对文件时对不上。
-    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+    # 行尾固定 \n（atomicfile 的文本模式就是这么开的）：Windows 上默认会把 \n
+    # 变成 \r\n，于是返回的 bytes 和磁盘实际大小差出「行数个字节」，核对时对不上。
+    with atomicfile.atomic_write(str(target), "w") as fh:
         fh.write(text)
-    tmp.replace(target)
     return {"ok": True, "count": len(notes), "path": str(target), "format": fmt,
             "mime": mime, "bytes": len(text.encode("utf-8"))}

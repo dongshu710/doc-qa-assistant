@@ -20,13 +20,13 @@ from urllib.parse import parse_qs, urlparse
 
 from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore, openai_compat as compat,
                 tasks)
+from ..paths import require_safe_name
 from . import sse
 from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYTES,
                      DOC_MAX_BYTES,
                      MAX_BODY_BYTES, SSE_MAX_SECONDS,
                      UPLOAD_MAX_BYTES,
-                     _read_jsonl,
-                     _safe_name)
+                     _read_jsonl)
 # 流式回答同样是长连接，必须和 /mcp 共用同一套名额。
 # 之前这里没接，`_SSE_LIMIT` 只护住了 MCP，问答流是完全不受限的。
 from .base import sse_acquire, sse_limit, sse_release
@@ -475,8 +475,10 @@ class WriteRoutes:
         if os.path.isdir(self.deps.ask.kb_dir()):
             existing = {n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
         for name in chosen["names"]:
-            safe = _safe_name(name, ALLOWED_EXT, 120)
-            if not safe:
+            # 批量导入：单个文件名不合法就跳过这一个，不打断整批
+            try:
+                safe = require_safe_name(name, ALLOWED_EXT, 120)
+            except ValueError:
                 continue
             if safe in existing:
                 # 幂等：重复点不会生成同名覆盖的那条「旧内容没了」告警
@@ -528,10 +530,9 @@ class WriteRoutes:
     def _post_kb_upload(self, path: str, payload: dict) -> None:
         """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
         if path == "/api/knowledge/upload":
-            name = _safe_name(payload.get("name"))
+            name = self._file_name(payload.get("name"))
             content = str(payload.get("content") or "")
-            if not name:
-                self._json({"ok": False, "error": "只支持 .md / .txt，文件名不合法"}, 400)
+            if name is None:
                 return
             if not content.strip():
                 self._json({"ok": False, "error": "文件内容为空"}, 400)
@@ -588,11 +589,8 @@ class WriteRoutes:
         所以下游（切分、检索、引用、审批）完全不需要知道原始格式。
         """
         if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
-            name = _safe_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
-            if not name:
-                self._json({"ok": False,
-                            "error": "只接受纯文件名的 " + " / ".join(
-                                e.lstrip(".").upper() for e in ingest.SUPPORTED_EXT) + " 文件"}, 400)
+            name = self._file_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
+            if name is None:
                 return
             blob = payload.get("data_b64") or payload.get("file") or ""
             if not isinstance(blob, str) or not blob.strip():
@@ -719,9 +717,11 @@ class WriteRoutes:
     def _post_kb_review(self, path: str, payload: dict) -> None:
         """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
         if path == "/api/knowledge/delete":
-            name = _safe_name(payload.get("name"))
-            target = os.path.join(self.deps.ask.kb_dir(), name) if name else ""
-            if not name or not os.path.exists(target):
+            name = self._file_name(payload.get("name"))
+            if name is None:
+                return
+            target = os.path.join(self.deps.ask.kb_dir(), name)
+            if not os.path.exists(target):
                 self._json({"ok": False, "error": "文件不存在"}, 404)
                 return
             remaining = [n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT) and n != name]
@@ -813,9 +813,8 @@ class WriteRoutes:
     def _post_cases(self, path: str, payload: dict) -> None:
         """用例集：从文档/反馈生成，以及跑一遍评测。"""
         if path == "/api/cases/from_doc":
-            name = _safe_name(payload.get("name"))
-            if not name:
-                self._json({"ok": False, "error": "请指定知识库里的 .md 文件名"}, 400)
+            name = self._file_name(payload.get("name"))
+            if name is None:
                 return
             doc_id = name.rsplit(".", 1)[0]
             chunks = [c for c in self.deps.ask.pipe.chunks if c.doc_id == doc_id]

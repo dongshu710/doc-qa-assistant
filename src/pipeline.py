@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from .chunking import load_corpus
 from . import citations
 from .config import api_key, load_settings
+from .paths import PROJECT_ROOT
 from .embeddings import EmbeddingError, EmbeddingUnavailable
 from .generator import (build_messages, extractive_answer, generate, low_confidence,
                         repair_citation, stream_chat)
@@ -128,7 +129,7 @@ class RAGPipeline:
         if not self.chunks:
             raise ValueError("知识库为空，无法启动")
         self._rebuild["chunks"] = len(self.chunks)
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        root = str(PROJECT_ROOT)
         self.project_root = root
         # 日志目录可被 LOG_DIR 覆盖：测试与临时实例不该把 trace/feedback 写进仓库，
         # 否则「跑一遍测试」就会在项目里留下与代码无关的脏数据。

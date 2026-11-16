@@ -19,6 +19,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from . import atomicfile
+
 INCLUDE = ("notes", "threads", "exports", "assets")
 SKIP_PARTS = {("exports", "backups")}
 MAX_FILES = 20000
@@ -194,15 +196,15 @@ def restore(home, name: str, force: bool = False) -> dict:
         written = 0
         for info in members:
             target = home / info.filename
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_suffix(target.suffix + ".restore-tmp")
-            with zf.open(info) as src, open(tmp, "wb") as dst:
-                while True:
-                    chunk = src.read(1024 * 256)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
-            os.replace(tmp, target)
+            # 流式解压 + 唯一临时名：备份里可能有大附件，不能整个读进内存；
+            # 而固定名 `.restore-tmp` 在「同一个备份恢复两次」时会互相踩。
+            with atomicfile.atomic_write(str(target), "wb") as dst:
+                with zf.open(info) as src:
+                    while True:
+                        chunk = src.read(1024 * 256)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
             written += 1
     return {"restored": written, "source": safe,
             "pre_backup": (pre or {}).get("name"),

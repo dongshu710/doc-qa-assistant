@@ -23,11 +23,12 @@ from .. import update as update_mod
 from ..metrics import summarize
 from ..notes.tools import tools_payload as notes_tools_payload
 from ..openapi import build_spec
+from ..paths import require_safe_name
 from ..theme import FILES_PAGE
 from ..version import __version__
 from ..web_pages import ASK_HTML, DEBUG_HTML, KB_HTML
 from .common import (ALLOWED_EXT, SSE_HEARTBEAT_S, SSE_MAX_SECONDS, _read_jsonl,
-                     _safe_name, int_qs as _int_qs)
+                     int_qs as _int_qs)
 from .base import sse_acquire, sse_release
 
 if TYPE_CHECKING:  # 只为注解存在：运行时导入 app 会形成环
@@ -299,9 +300,9 @@ class ReadRoutes:
         if path == "/api/knowledge/raw":
             # 上传时的原件（PDF / DOCX / XLSX …）。用途只有一个：引用里带页码时
             # 能「打开第 N 页」对回原件——解析后的 md 已经丢掉了版式。
-            name = _safe_name((qs.get("name") or [""])[0], ingest.SUPPORTED_EXT, 120)
-            if not name:
-                self._json({"error": "name 只能是文件名"}, 400)
+            name = self._file_name((qs.get("name") or [""])[0],
+                                   ingest.SUPPORTED_EXT, 120)
+            if name is None:
                 return True
             # 双保险：文件名已经过滤过路径分隔符，这里再按 realpath 确认没跑出 RAW_DIR
             root = os.path.realpath(self.deps.ask.raw_dir)
@@ -332,9 +333,8 @@ class ReadRoutes:
             # 不挂在 /api/kb 下，是因为这里读的是索引内存，与版本库的文档历史是两件事。
             raw = (qs.get("name") or [""])[0]
             # 知识库目录里只会是解析后的 .md（以及手传的 .txt），所以用 ALLOWED_EXT
-            name = _safe_name(raw, ALLOWED_EXT, 120)
-            if not name:
-                self._json({"error": "name 只能是文件名"}, 400)
+            name = self._file_name(raw, ALLOWED_EXT, 120)
+            if name is None:
                 return True
             detail = self.deps.ask.pipe.doc_chunks(name.rsplit(".", 1)[0])
             if detail is None:
@@ -464,7 +464,12 @@ class ReadRoutes:
                 "keywords": self.deps.ask.pipe.keywords.summary(),
             })
         elif path == "/api/keywords":
-            name = _safe_name((qs.get("name") or [""])[0])
+            # name 是可选参数：传了个非法名字就当他没传，返回全部文档的视图。
+            # 这里不能复用 `_file_name`——那会直接回 400，把「可选参数」变成「必填」。
+            try:
+                name = require_safe_name((qs.get("name") or [""])[0])
+            except ValueError:
+                name = ""
             if name:
                 doc_id = name.rsplit(".", 1)[0]
                 if doc_id not in self.deps.ask.pipe.keywords.docs:
