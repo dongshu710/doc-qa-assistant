@@ -15,6 +15,7 @@ import re
 import threading
 import time
 import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from .chunking import load_corpus
@@ -77,19 +78,44 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@dataclass(frozen=True, slots=True)
+class IndexSnapshot:
+    """一代索引的全部内容，换索引时整对象替换。
+
+    为什么要有这个类型：`chunks / retriever / keywords / vocabulary` 是**配对**读的——
+    检索出的命中块下标必须与 chunks 出自同一代，否则引用会指向别的文档，
+    或直接下标越界（`chunk_index < len(chunks)` 的断言就是在防这个）。
+    原来是四个独立属性、`_swap_index` 分四次赋值：中间任意一次被读到，
+    拿到的就是「新 chunks + 旧 retriever」这种组合，而它在请求里不报错，
+    只是答非所问。合成一个不可变对象后，读侧 `snap = self._index` 取一次，
+    后面整段逻辑都钉在同一代上。
+
+    字段本身仍是可变容器（list/dict），冻结的是「哪一代」这件事——真正要防的
+    不是有人往 chunks 里 append，而是同一次检索里混用两代。
+    """
+
+    chunks: list
+    vocabulary: set
+    retriever: object
+    keywords: object
+    knowledge_dir: str
+
+
 class RAGPipeline:
     def __init__(self, knowledge_dir: str):
         self.settings = load_settings()
-        self.knowledge_dir = knowledge_dir
-        self._corpus_cache: dict[str, tuple] = {}
-        self._parsed_docs = 0
-        self._reused_docs = 0
         # 索引替换必须成组：chunks / retriever / keywords 是配对读的，分开赋值会让
         # 正在飞的查询看到「新 chunks + 旧 retriever」。构建在锁外，只有替换在锁内。
         # 原来还有一份 `_chunk_pos`（id(chunk) → 位置）需要一起换；后来发现
         # `Chunk.chunk_index` 本来就带着自己的位置，那份映射纯属冗余且是跨代
         # 错位的来源，已删除。
         self._swap_lock = threading.RLock()
+        # 先摆一个空快照：下面的属性赋值都走 setter，最终指向同一个对象。
+        self._index = IndexSnapshot(chunks=[], vocabulary=set(), retriever=None,
+                                    keywords=None, knowledge_dir=knowledge_dir)
+        self._corpus_cache: dict[str, tuple] = {}
+        self._parsed_docs = 0
+        self._reused_docs = 0
         self._build_lock = threading.Lock()
         self._rebuild_lock = threading.RLock()
         self._rebuild = {
@@ -119,6 +145,66 @@ class RAGPipeline:
     def _index_dir(self) -> str:
         configured = self.settings.embedding_index_dir or "data/index"
         return configured if os.path.isabs(configured) else os.path.join(self.project_root, configured)
+
+    # ---- 索引快照的读写口 ----
+    #
+    # 五个属性保留原来的名字与「可读可写」用法：调用点有九十多处（handlers、
+    # evaluator、测试），改成 `pipe.snapshot().chunks` 是一次纯噪声的大改动。
+    # 写成属性后，单次读仍是「取一次引用」，而写变成「整代替换」——
+    # 后者才是真正需要的语义：`pipe.retriever = fake` 这种测试注入也照旧能用。
+    def _replace_index(self, **fields) -> None:
+        # 用 `object.__new__` 造出来的实例（测试只注入 settings + retriever 的那类）
+        # 没有锁也没有快照：这里补齐，否则「注入一个假检索器」这种最普通的写法
+        # 会在赋值时 AttributeError。
+        lock = getattr(self, "_swap_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self.__dict__["_swap_lock"] = lock
+        base = getattr(self, "_index", None) or IndexSnapshot(
+            chunks=[], vocabulary=set(), retriever=None, keywords=None, knowledge_dir="")
+        with lock:
+            self._index = replace(base, **fields)
+
+    @property
+    def chunks(self):
+        return self._index.chunks
+
+    @chunks.setter
+    def chunks(self, value) -> None:
+        self._replace_index(chunks=value)
+
+    @property
+    def vocabulary(self):
+        return self._index.vocabulary
+
+    @vocabulary.setter
+    def vocabulary(self, value) -> None:
+        self._replace_index(vocabulary=value)
+
+    @property
+    def retriever(self):
+        return self._index.retriever
+
+    @retriever.setter
+    def retriever(self, value) -> None:
+        self._replace_index(retriever=value)
+
+    @property
+    def keywords(self):
+        return self._index.keywords
+
+    @keywords.setter
+    def keywords(self, value) -> None:
+        self._replace_index(keywords=value)
+
+    @property
+    def knowledge_dir(self) -> str:
+        return self._index.knowledge_dir
+
+    @knowledge_dir.setter
+    def knowledge_dir(self, value) -> None:
+        self._replace_index(knowledge_dir=value)
+
 
     def _make_retriever(self, chunks):
         """embedding 不可用时回退 hashing 向量，并把原因留在 retrieval_detail。"""
@@ -177,7 +263,8 @@ class RAGPipeline:
         """是否具备调用真实模型的条件（有 Key）；否则走离线抽取。"""
         return bool(api_key())
 
-    def _retrieve(self, query: str, focus: str | None = None, top_k: int | None = None):
+    def _retrieve(self, query: str, focus: str | None = None, top_k: int | None = None,
+                  snapshot: "IndexSnapshot | None" = None):
         """检索一次，返回 (hits, meta)。
 
         检索器支持 `search_ex` 就用它拿元数据；老实现只有 `search`，包一层空 meta。
@@ -187,11 +274,13 @@ class RAGPipeline:
         传进来就用它——否则对方设 5 条、这里按 4 条截断，少的那条没有任何提示。
         """
         want = top_k if top_k and top_k > 0 else self.settings.top_k
-        fn = getattr(self.retriever, "search_ex", None)
+        # 一次取定检索器：原来先 `getattr(self.retriever, ...)` 再 `self.retriever.search()`，
+        # 两次读属性之间可能被重建换掉，于是「在旧对象上找到 search_ex、在新对象上调用」。
+        retriever = (snapshot or self._index).retriever
+        fn = getattr(retriever, "search_ex", None)
         if callable(fn):
             return fn(query, want, focus_query=focus or query)
-        return self.retriever.search(query, want,
-                                     focus_query=focus or query), {}
+        return retriever.search(query, want, focus_query=focus or query), {}
 
     def debug_search(self, query: str, top_k: int | None = None,
                      doc: str | None = None) -> dict:
@@ -288,10 +377,10 @@ class RAGPipeline:
             "items": items,
         }
 
-    def _search(self, query: str, result: dict):
+    def _search(self, query: str, result: dict, snapshot: "IndexSnapshot | None" = None):
         """检索一次；异常降级为空结果并显式标注，不把异常抛给调用方。"""
         try:
-            hits, meta = self._retrieve(query)
+            hits, meta = self._retrieve(query, snapshot=snapshot)
         except Exception as exc:  # noqa: BLE001 —— 检索失败降级为不检索
             hits = []
             result["degraded"] = True
@@ -327,6 +416,10 @@ class RAGPipeline:
         """
         trace_id = uuid.uuid4().hex[:12]
         t0 = time.monotonic()
+        # 本次问答只认这一代索引：检索、关键词、相似问题全用它。
+        # 一次请求跨几秒（生成要等模型），期间重建完全可能发生两次；
+        # 每处各读一次 self.chunks 就等于让一次回答混用三代语料。
+        snap = self._index
         raw_query = query or ""
         clean = _normalize(raw_query)
         history = self.sessions.history(session_id)
@@ -383,7 +476,7 @@ class RAGPipeline:
             # 原来这里读一次、下面组装引用时再读一次，中间被换掉就会出现
             # 「report 来自旧索引、chunks 来自新索引」——chunk_index 越界直接 IndexError，
             # 而那一行在 try 之外，整次问答变成 500。局部变量把两半钉在同一代。
-            kw_index = self.keywords
+            kw_index = snap.keywords
             try:
                 report = kw_index.match_report(clean)
             except Exception as exc:  # noqa: BLE001 —— 关键词匹配失败就退回正常检索
@@ -438,7 +531,7 @@ class RAGPipeline:
         # 扩展要付一次 LLM + 一次 embedding；若先扩展再判域，域外问题也要付这笔钱，
         # 而且扩展词会把域外问题「拉近」，闸门更容易误放行。所以用原问题先检索并判域，
         # 通过之后才扩展、再召回一次；扩展只做加法（分数不升就不替换）。
-        base_hits = self._search(context_query, result)
+        base_hits = self._search(context_query, result, snapshot=snap)
         gate_score = base_hits[0][1] if base_hits else 0.0
         hits = base_hits
         result["gate_score"] = gate_score
@@ -450,7 +543,7 @@ class RAGPipeline:
             result.update(
                 behavior="no_answer",
                 answer="无法找到答案。",
-                similar_questions=similar_questions(self.chunks, context_query, hits, 3),
+                similar_questions=similar_questions(snap.chunks, context_query, hits, 3),
             )
             return self._finish(result, t0), None
 
@@ -470,7 +563,8 @@ class RAGPipeline:
                     result["search_query"] = search_query
                     result["api_called"] = True
                     try:
-                        exp_hits, exp_meta = self._retrieve(search_query, focus=context_query)
+                        exp_hits, exp_meta = self._retrieve(search_query, focus=context_query,
+                                                            snapshot=snap)
                         self._absorb_meta(result, exp_meta)
                     except Exception as exc:  # noqa: BLE001 —— 扩展检索失败就保留原结果
                         exp_hits = []
@@ -483,7 +577,7 @@ class RAGPipeline:
 
         return result, {"query": context_query, "hits": hits, "t0": t0,
                         "model": model, "force_extractive": force_extractive,
-                        "history": history}
+                        "history": history, "snapshot": snap}
 
     def ask(self, query: str, model: str | None = None, force_extractive: bool = False,
             session_id: str | None = None) -> dict:
@@ -536,6 +630,9 @@ class RAGPipeline:
         """生成之后：引用校验、补引用、降级、引用回填。"""
         hits = ctx["hits"]
         context_query = ctx["query"]
+        # 生成可能耗时十几秒，期间索引可能已经换代；相似问题必须与 hits 同代，
+        # 否则「相邻问题」会从另一份语料里找出来。
+        chunks = (ctx.get("snapshot") or self._index).chunks
         result["mode"] = gen["mode"]
         result["api_called"] = bool(result["api_called"] or gen["mode"] == "llm")
         result["degraded"] = bool(gen["degraded"] or result["degraded"])
@@ -558,7 +655,7 @@ class RAGPipeline:
         _NO_INFO = re.compile(r"(资料中|资料库中)?(未找到|未提供|未提及|未披露|未明确|未规定|没有(相关)?(说明|规定|提及))")
         if gen["mode"] == "llm" and not valid and _NO_INFO.search(gen["answer"]):
             result["citation_exempt_reason"] = "insufficient_info"
-            result["similar_questions"] = similar_questions(self.chunks, context_query, hits, 3)
+            result["similar_questions"] = similar_questions(chunks, context_query, hits, 3)
             # 模型常只回一句「资料中未找到。」：诚实但不可用，统一成一句明确结论
             if len(gen["answer"]) < 40:
                 result["answer"] = "无法找到答案。"
@@ -636,12 +733,17 @@ class RAGPipeline:
         return chunks, retriever, keywords, parsed, reused
 
     def _swap_index(self, knowledge_dir: str, chunks, retriever, keywords) -> int:
+        """整代替换索引：一次赋值，读侧没有「新旧混搭」的窗口。
+
+        原来这里是四次赋值（chunks → vocabulary → retriever → keywords），
+        都在锁内，但**读者不持锁**——一次请求只要在这几百微秒里取值，
+        就可能拿到新 chunks 配旧 retriever。这类错误没有异常、没有日志，
+        表现只是「偶尔引用指向另一份文档」，属于最难复现的一类。
+        """
         with self._swap_lock:
-            self.chunks = chunks
-            self.vocabulary = _build_vocabulary(chunks)
-            self.retriever = retriever
-            self.keywords = keywords
-            self.knowledge_dir = knowledge_dir
+            self._index = IndexSnapshot(
+                chunks=chunks, vocabulary=_build_vocabulary(chunks),
+                retriever=retriever, keywords=keywords, knowledge_dir=knowledge_dir)
             return len(chunks)
 
     def reload_settings(self) -> None:

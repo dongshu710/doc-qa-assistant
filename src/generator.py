@@ -115,7 +115,44 @@ def chat(
     - 生成层不传 model，走配置里的默认模型；
     - L3 裁判传 model，可用另一个模型做裁判（同一端点即可）。
     显式超时；不在此处重试——重试策略由调用方按场景决定。
+
+    为什么改成「流式累积」而不是 `resp.read()` 一把取回：
+    `urlopen(timeout=)` 管的是**socket 空闲多久算超时**，管不住「上游每 29 秒
+    吐一个字节」——那样一次调用能把请求线程占几十分钟，而 `generate()` 的墙钟
+    预算在重试循环外面，看不到单次调用内部的进展。流式路径有 `LLM_STREAM_MAX_S`
+    总预算（见 `stream_chat`），到点直接抛错。
+
+    降级：上游不认 `stream=true`（400/握手失败）时退回一次阻塞调用——这时
+    还什么都没收到，退回是安全的。**已经收到内容后不再降级**：半截答案再补一次
+    完整调用会产生重复正文，那比报错更难处理。
     """
+    budget = _stream_budget_s()
+    if timeout_s:
+        # 调用方给的超时是「这次最多等多久」，比全局流式预算更紧时以它为准
+        budget = min(budget, float(timeout_s))
+    usage: dict = {}
+    pieces: list[str] = []
+    try:
+        for piece in stream_chat(messages, temperature=temperature, model=model,
+                                 timeout_s=timeout_s, usage_out=usage, budget_s=budget):
+            pieces.append(piece)
+    except Exception:  # noqa: BLE001 —— 先看有没有半截内容，再决定能不能降级
+        if pieces:
+            raise
+        return _chat_blocking(messages, temperature=temperature, model=model,
+                              timeout_s=timeout_s)
+    text = "".join(pieces).strip()
+    if not text:
+        # 流式返回空正文（有的兼容实现在空 delta 里只给 finish_reason）
+        return _chat_blocking(messages, temperature=temperature, model=model,
+                              timeout_s=timeout_s)
+    return text, usage
+
+
+def _chat_blocking(messages: list[dict], temperature: float = 0.0,
+                   model: str | None = None,
+                   timeout_s: float | None = None) -> tuple[str, dict]:
+    """一次阻塞调用（1.41.0 及以前 `chat()` 的做法），只作为流式不可用时的退路。"""
     settings = load_settings()
     key = api_key()
     if not key:
@@ -207,7 +244,8 @@ def _stream_budget_s(default: float = 180.0) -> float:
 
 
 def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | None = None,
-                timeout_s: float | None = None, usage_out: dict | None = None):
+                timeout_s: float | None = None, usage_out: dict | None = None,
+                budget_s: float | None = None):
     """OpenAI 兼容的流式对话：逐段 yield 文本增量。
 
     只在生成层使用：上游一旦开始输出就不再重试（半截答案重试会产生重复内容），
@@ -230,9 +268,23 @@ def stream_chat(messages: list[dict], temperature: float = 0.1, model: str | Non
         method="POST",
     )
     saw_done = False
-    budget = _stream_budget_s()
+    budget = budget_s if budget_s else _stream_budget_s()
     deadline = time.monotonic() + budget
     with urllib.request.urlopen(req, timeout=timeout_s or settings.llm_timeout_s) as resp:
+        # 上游不认 stream=true 时回的是**一整段 JSON**，不是 SSE。这里就地按非流式
+        # 解析，而不是抛错让调用方重发：重发等于每次调用打两次上游（第一次的
+        # token 白花）。判据只认 Content-Type——按「有没有 data: 行」判会把
+        # 一个空回答误当成「不支持流式」。
+        ctype = (resp.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" not in ctype:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+            if usage_out is not None and isinstance(body.get("usage"), dict):
+                usage_out.update(body["usage"])
+            choices = body.get("choices") or []
+            content = ((choices[0].get("message") or {}).get("content") if choices else "") or ""
+            if content:
+                yield content
+            return
         for raw in resp:
             if time.monotonic() > deadline:
                 raise RuntimeError(f"流式响应超过 {int(budget)} 秒上限")

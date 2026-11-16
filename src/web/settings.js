@@ -256,19 +256,23 @@
     }).finally(function(){ btn.disabled=false; btn.textContent=label; });
   });
 
-  if($('stBackup')) $('stBackup').addEventListener('click',function(){
+  if($('stBackup')) $('stBackup').addEventListener('click',async function(){
     var btn=this, label=btn.textContent;
     btn.disabled=true; btn.textContent='备份中…';
-    api('POST','/api/storage/backup',{}).then(function(d){
+    try{
+      var d=await api('POST','/api/storage/backup',{});
+      // 附件多、整包大时服务端会先回 202：任务在后台跑，这里轮询到完成为止。
+      // 不轮询的话用户会看到一个「成功的空响应」，然后去恢复一个还不存在的备份。
+      d=await waitTask(d,function(_s,secs){ btn.textContent='备份中… '+secs+'s'; });
       if(!d||!d.ok){ note('stMsg',(d&&d.message)||'备份失败',true); return; }
       var msg='已备份 '+(d.files||0)+' 个文件（'+fmtBytes(d.bytes||0)+'）';
       // 附件超限是「跳过」而不是失败，不显示出来用户会照着成功提示去恢复，才发现图没了
       var warn=(d.warnings||[]).join('；');
       note('stMsg',warn?(msg+'，但附件没进全：'+warn):(msg+'。'),!!warn);
       load();
-    }).catch(function(e){
+    }catch(e){
       note('stMsg','备份失败：'+((e&&e.message)||e),true);
-    }).finally(function(){ btn.disabled=false; btn.textContent=label; });
+    }finally{ btn.disabled=false; btn.textContent=label; }
   });
 
   function load(){

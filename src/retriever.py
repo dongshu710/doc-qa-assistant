@@ -16,11 +16,23 @@ embedding 调用失败（超时/限流/维度错）不会让问答挂掉：当�
 """
 import math
 import re
+import threading
+import time
 import zlib
-from collections import Counter
+from collections import Counter, deque
 
 from .embeddings import EmbeddingError, EmbeddingUnavailable, make_provider
 from .vector_store import EmbeddingIndex
+
+# 查询向量缓存条数。同一句在多轮追问/评测重跑里会反复出现，缓存命中省下的
+# 是一次外部调用（几十毫秒到几百毫秒 + 钱），不是省几十微秒。
+QUERY_CACHE_SIZE = 128
+# 等别人算同一句话的上限。超时就自己算：宁可多花一次，也别让一次并发
+# 把请求拖成「等一个可能永远不会来的结果」。
+INFLIGHT_WAIT_S = 10.0
+# 错误在健康检查里保留多久。太短会让刚发生的降级看不见，太长会让一次抖动
+# 挂着一小时——运维看到的是「一直有问题」，实际早就恢复了。
+ERROR_WINDOW_S = 300.0
 
 _ALNUM_RE = re.compile(r"[a-z]+|\d+(?:\.\d+)?")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]+")
@@ -308,22 +320,90 @@ class EmbeddingRetriever:
         except Exception as exc:  # noqa: BLE001 —— 索引后端异常统一转成可降级的错误
             raise EmbeddingError(
                 f"索引构建失败: {type(exc).__name__}: {exc}") from exc
-        self.last_error: str | None = None
+        self._errors: deque = deque(maxlen=20)
+        self._error_lock = threading.Lock()
         self._query_cache: dict[str, list[float]] = {}
         self._cache_order: list[str] = []
+        # 缓存与「同题合并」共用一把锁：`_cache_order` 与 `_query_cache` 必须同步变动。
+        # 原来两者都是裸 dict/list——两个请求同时淘汰时，`pop(0)` 可能弹掉别人刚
+        # 插进来的键，于是 `_cache_order` 里留下已不存在的键、`_query_cache` 里留下
+        # 永远不会被淘汰的僵尸（内存只涨不降，且不报错）。
+        self._cache_lock = threading.Lock()
+        self._inflight: dict[str, threading.Event] = {}
+
+    # ---- 最近错误（滑动窗口）----
+    def _note_error(self, message: str) -> None:
+        with self._error_lock:
+            self._errors.append((time.monotonic(), message[:300]))
+
+    @property
+    def last_error(self) -> str | None:
+        """最近 `ERROR_WINDOW_S` 内的最后一条错误。
+
+        为什么不再是一个单值字段：成功分支原来会把它清成 None，于是并发下
+        「A 刚失败、B 成功」会让健康检查显示一切正常——而用户那次确实降级了。
+        改成时间窗：错误只按时间过期，不会被别人的成功抹掉。
+        """
+        with self._error_lock:
+            cutoff = time.monotonic() - ERROR_WINDOW_S
+            while self._errors and self._errors[0][0] < cutoff:
+                self._errors.popleft()
+            return self._errors[-1][1] if self._errors else None
+
+    @property
+    def recent_errors(self) -> int:
+        """窗口内的错误条数：`/api/health` 用它区分「偶发一次」与「一直在失败」。"""
+        with self._error_lock:
+            cutoff = time.monotonic() - ERROR_WINDOW_S
+            while self._errors and self._errors[0][0] < cutoff:
+                self._errors.popleft()
+            return len(self._errors)
+
+    def _cache_get(self, query: str) -> list[float] | None:
+        with self._cache_lock:
+            return self._query_cache.get(query)
+
+    def _cache_put(self, query: str, vec: list[float]) -> None:
+        with self._cache_lock:
+            if query not in self._query_cache:
+                self._cache_order.append(query)
+            self._query_cache[query] = vec
+            while len(self._cache_order) > QUERY_CACHE_SIZE:
+                old = self._cache_order.pop(0)
+                self._query_cache.pop(old, None)
 
     def _embed_query(self, query: str) -> tuple[list[float], dict]:
-        """返回 (向量, 用量)。用量跟着返回值走，不落实例字段——并发会串账。"""
-        hit = self._query_cache.get(query)
+        """返回 (向量, 用量)。用量跟着返回值走，不落实例字段——并发会串账。
+
+        同题合并（single-flight）：10 个并发请求问同一句，原来会发 10 次
+        embedding——每次都花钱，且慢的那 9 次还可能把 429 打出来。
+        现在只有一个线程真去算，其余等它；等到失败就自己再算一次
+        （宁可多花一次，也不能因为别人的失败让这次直接降级）。
+        """
+        hit = self._cache_get(query)
         if hit is not None:
             return hit, {}
-        result = self.provider.embed([query])
-        vec = result.vectors[0]
-        self._query_cache[query] = vec
-        self._cache_order.append(query)
-        if len(self._cache_order) > 128:
-            self._query_cache.pop(self._cache_order.pop(0), None)
-        return vec, result.usage
+        with self._cache_lock:
+            waiter = self._inflight.get(query)
+            owner = waiter is None
+            if owner:
+                waiter = threading.Event()
+                self._inflight[query] = waiter
+        if not owner:
+            waiter.wait(INFLIGHT_WAIT_S)
+            hit = self._cache_get(query)
+            if hit is not None:
+                return hit, {}
+        try:
+            result = self.provider.embed([query])
+            vec = result.vectors[0]
+            self._cache_put(query, vec)
+            return vec, result.usage
+        finally:
+            if owner:
+                with self._cache_lock:
+                    self._inflight.pop(query, None)
+                waiter.set()
 
     def search_ex(self, query: str, top_k: int = 4, focus_query: str | None = None):
         """返回 (hits, meta)。meta = {degraded, error, tokens}。
@@ -337,7 +417,6 @@ class EmbeddingRetriever:
         try:
             qv, usage = self._embed_query(query)
             candidates = self.index.search(qv, max(self.recall_k, top_k * 8))
-            self.last_error = None
         except EmbeddingError as exc:
             # 失败降级：当次用 BM25 召回，分数仍归一化，保证闸门语义一致
             hits = self._fallback(query, focus, top_k, str(exc))
@@ -383,7 +462,7 @@ class EmbeddingRetriever:
         return hits
 
     def _fallback(self, query: str, focus: str, top_k: int, error: str):
-        self.last_error = error
+        self._note_error(error)
         hits = self.bm25.search(query or focus, max(self.recall_k, top_k * 8))
         if not hits:
             return []

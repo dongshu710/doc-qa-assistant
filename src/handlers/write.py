@@ -9,7 +9,6 @@ import binascii
 import hashlib
 import json
 import os
-import queue
 import shutil
 import tempfile
 import threading
@@ -18,10 +17,12 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore, openai_compat as compat)
+from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore, openai_compat as compat,
+                tasks)
+from . import sse
 from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYTES,
                      DOC_MAX_BYTES,
-                     MAX_BODY_BYTES, SSE_HEARTBEAT_S, SSE_MAX_SECONDS,
+                     MAX_BODY_BYTES, SSE_MAX_SECONDS,
                      UPLOAD_MAX_BYTES,
                      _read_jsonl,
                      _safe_name)
@@ -56,7 +57,49 @@ def make_write(deps):
     kb_dir = deps.kb_dir
     reload_kb = deps.reload_kb
     index_fields = deps.index_fields
+    task_registry = deps.tasks
     tracer = deps.tracer
+
+    def _cases_run_work(scope: str, cases: list, sleep_s: float, client: str) -> dict:
+        """跑一遍评测用例并落盘报告。同步路径与后台任务跑的是同一个函数。
+
+        写成闭包而不是方法，是为了让它**不持有 `self`**：超过 grace 之后这段
+        跑在另一个线程里，而 `self` 属于某条连接——连接关了再去读它的
+        headers 就是竞态。这里只接纯参数。
+        """
+        started = time.monotonic()
+        results, skipped = evaluator.run_cases(
+            pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=kb_dir())
+        summary = evaluator.summarize(results, skipped)
+        report = {
+            "run_at": datetime.now(timezone.utc).isoformat(),
+            "scope": scope,
+            "channel": pipe.settings.channel,
+            "model": pipe.settings.model,
+            **summary,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "results": results,
+        }
+        # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
+        # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
+        # 管理面板「评测」组永久打不开。复用版本库的原子写。
+        kbstore._atomic_json(run_report_path, report)
+        guards.audit.write("cases.run", client=client, scope=scope,
+                           total=summary["total"], passed=summary["passed"],
+                           duration_ms=report["duration_ms"])
+        return {
+            "ok": True,
+            "scope": scope,
+            "total": summary["total"],
+            "passed": summary["passed"],
+            "pass_rate": summary["pass_rate"],
+            "by_category": summary["by_category"],
+            "skipped": summary["skipped"],
+            "failed": [{"id": r["id"], "input": r["input"], "failures": r["failures"]}
+                       for r in results if not r["passed"]],
+            "duration_ms": report["duration_ms"],
+            "run_at": report["run_at"],
+        }
 
     class WriteRoutes:
         # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
@@ -288,101 +331,59 @@ def make_write(deps):
             与 `/api/ask/stream` 的差别只有协议格式：内部是 `delta/replace/final`
             三种语义，OpenAI 只有「追加」。`replace` 用 `suffix_for` 折算成追加，
             折算不掉的极端情况（生成被整段改写）会在结尾用 final 再补一次差量。
+            时序（生产线程、心跳、总时长、断连取消）统一交给 `sse.relay`。
             """
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Accel-Buffering", "no")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.close_connection = True
-
+            self._sse_headers()
             completion = compat.completion_id()
             created = int(time.time())
-            sent = ""
+            sent = [""]
 
-            def emit(frame: str) -> bool:
-                try:
-                    self.wfile.write(frame.encode("utf-8"))
-                    self.wfile.flush()
-                    return True
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-                    # 客户端走了：立刻取消生成，别让这一轮 token 白烧。
-                    self.close_connection = True
-                    cancel.set()
-                    return False
+            def raw(frame: str) -> None:
+                # 故意不吞 OSError：relay 靠它判断「客户端走了」。这里吞掉，
+                # 下游会继续把整轮 token 跑完，钱照记、线程照占。
+                self.wfile.write(frame.encode("utf-8"))
+                self.wfile.flush()
 
-            if not emit(compat.to_sse_chunk("", model, completion, created, role=True)):
+            try:
+                raw(compat.to_sse_chunk("", model, completion, created, role=True))
+            except OSError:
+                self.close_connection = True
                 return
+
+            def send(event: str, data) -> None:
+                text = (str((data or {}).get("answer") or "") if event == "final"
+                        else str(data or ""))
+                piece = compat.suffix_for(sent[0], text)
+                if not piece:
+                    return          # 空差量不发帧：客户端会收到一堆空 chunk
+                sent[0] += piece
+                raw(compat.to_sse_chunk(piece, model, completion, created))
 
             started = time.monotonic()
-            events: queue.Queue = queue.Queue()
+            outcome = sse.relay(
+                factory=lambda: pipe.ask_stream(pre["query"], model=pre["model"],
+                                                force_extractive=pre["budget_blocked"],
+                                                session_id=pre["session_id"]),
+                send=send, cancel=cancel, thread_name="openai-stream")
 
-            def produce() -> None:
-                stream = None
-                try:
-                    stream = pipe.ask_stream(pre["query"], model=pre["model"],
-                                             force_extractive=pre["budget_blocked"],
-                                             session_id=pre["session_id"])
-                    for item in stream:
-                        if cancel.is_set():
-                            break
-                        events.put(item)
-                except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
-                    events.put(("__error__", str(exc)[:300]))
-                finally:
-                    if stream is not None:
-                        closer = getattr(stream, "close", None)
-                        if closer is not None:
-                            try:
-                                closer()
-                            except Exception:  # noqa: BLE001
-                                pass
-                    events.put(("__done__", None))
-
-            threading.Thread(target=produce, name="openai-stream", daemon=True).start()
-            final: dict | None = None
-            try:
-                while True:
-                    if time.monotonic() - started > SSE_MAX_SECONDS:
-                        emit(compat.error_frame(f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断",
-                                                "timeout_error", "timeout"))
-                        break
-                    try:
-                        event, data = events.get(timeout=SSE_HEARTBEAT_S)
-                    except queue.Empty:
-                        # OpenAI 客户端不解析 SSE 注释，发心跳只会变成噪音；
-                        # 300 秒硬上限已经保证连接不会无限挂着。
-                        continue
-                    if event == "__done__":
-                        break
-                    if event == "__error__":
-                        emit(compat.error_frame(str(data)))
-                        break
-                    if event in ("delta", "replace"):
-                        piece = compat.suffix_for(sent, str(data or ""))
-                        if piece:
-                            sent += piece
-                            if not emit(compat.to_sse_chunk(piece, model, completion, created)):
-                                return
-                    elif event == "final":
-                        final = data
-                        piece = compat.suffix_for(sent, str(data.get("answer") or ""))
-                        if piece:
-                            sent += piece
-                            if not emit(compat.to_sse_chunk(piece, model, completion, created)):
-                                return
-            except (BrokenPipeError, ConnectionResetError):
-                cancel.set()
+            if outcome.broken:
+                return              # 客户端走了：不是错误，别记进审计
+            if outcome.timed_out:
+                self._sse_raw(compat.error_frame(
+                    f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断", "timeout_error", "timeout"))
+                return
+            if outcome.error:
+                self._sse_raw(compat.error_frame(outcome.error))
                 return
 
+            final = outcome.final
             if final is not None:
                 self._annotate_result(final, pre)
                 self._record_ask(final, pre, started, "/v1/chat/completions")
             usage = compat.usage_of(final or {})
-            emit(compat.to_sse_chunk("", model, completion, created, finish="stop",
-                                     usage=usage))
-            emit(compat.sse_done())
+            self._sse_raw(compat.to_sse_chunk("", model, completion, created,
+                                              finish="stop", usage=usage))
+            self._sse_raw(compat.sse_done())
 
         def _post_admin(self, path: str, payload: dict) -> None:
             """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""
@@ -853,39 +854,29 @@ def make_write(deps):
                     sleep_s = max(0.0, min(10.0, float(payload.get("sleep") or 0)))
                 except (TypeError, ValueError):
                     sleep_s = 0.0
-                started = time.monotonic()
-                results, skipped = evaluator.run_cases(
-                    pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=kb_dir())
-                summary = evaluator.summarize(results, skipped)
-                report = {
-                    "run_at": datetime.now(timezone.utc).isoformat(),
-                    "scope": scope,
-                    "channel": pipe.settings.channel,
-                    "model": pipe.settings.model,
-                    **summary,
-                    "duration_ms": int((time.monotonic() - started) * 1000),
-                    "results": results,
-                }
-                # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
-                # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
-                # 管理面板「评测」组永久打不开。复用版本库的原子写。
-                kbstore._atomic_json(run_report_path, report)
-                guards.audit.write("cases.run", client=self._client(), scope=scope,
-                                   total=summary["total"], passed=summary["passed"],
-                                   duration_ms=report["duration_ms"])
-                self._json({
-                    "ok": True,
-                    "scope": scope,
-                    "total": summary["total"],
-                    "passed": summary["passed"],
-                    "pass_rate": summary["pass_rate"],
-                    "by_category": summary["by_category"],
-                    "skipped": summary["skipped"],
-                    "failed": [{"id": r["id"], "input": r["input"], "failures": r["failures"]}
-                               for r in results if not r["passed"]],
-                    "duration_ms": report["duration_ms"],
-                    "run_at": report["run_at"],
-                })
+                client = self._client()
+                # 真模型跑 36 条要几十秒到几分钟。超过 grace 就转后台：
+                # 继续占着工作槽、又被代理 60s 掐断，是「白跑 + 用户看到失败」的双输。
+                try:
+                    outcome, deferred = task_registry.run_or_defer(
+                        "cases.run",
+                        lambda: _cases_run_work(scope, cases, sleep_s, client))
+                except tasks.TaskBusy as exc:
+                    self._json({"ok": False, "error": "server_busy", "message": str(exc)},
+                               503, extra_headers={"Retry-After": "5"})
+                    return
+                except tasks.TaskError as exc:
+                    self._json(exc.payload, exc.status)
+                    return
+                except Exception as exc:  # noqa: BLE001 —— 评测失败要带原因回给界面
+                    self._json({"ok": False, "error": "cases_run_failed",
+                                "message": self._error_text(exc)}, 500)
+                    return
+                if deferred:
+                    self._json(outcome, 202,
+                               extra_headers={"Location": f"/api/tasks/{outcome['id']}"})
+                    return
+                self._json(outcome)
                 return
             if path == "/api/cases/from_feedback":
                 trace_id = str(payload.get("trace_id", ""))
@@ -1094,26 +1085,25 @@ def make_write(deps):
             """把一次问答渲染成 SSE。
 
             `cancel` 由调用方在收尾时置位，也覆盖「客户端中途断开」。
-            生成线程每出一块检查一次，取消就关掉生成器——不关的话，模型那一轮
-            token 会照常跑完，只是没人收，成本却照记。
+            时序交给 `sse.relay`：生成线程每出一块检查一次取消，取消就关掉生成器——
+            不关的话，模型那一轮 token 会照常跑完，只是没人收，成本却照记。
             """
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Accel-Buffering", "no")
-            self.send_header("Connection", "close")
-            self.end_headers()
-            self.close_connection = True
+            self._sse_headers()
 
-            def send(event: str, data: dict) -> None:
-                chunk = f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            def send(event: str, data) -> None:
+                # 增量统一包成 {"text": ...}：前端按这个字段取文本，
+                # 直接发裸字符串会让 `d.text` 变成 undefined（答案一片空白）。
+                payload = {"text": data} if event in ("delta", "replace") else data
+                chunk = (f"event: {event}\ndata: "
+                         + json.dumps(payload, ensure_ascii=False) + "\n\n")
+                # 不吞 OSError：relay 靠它判断断开（见 _openai_stream 的同类说明）
                 self.wfile.write(chunk.encode("utf-8"))
                 self.wfile.flush()
 
             def send_comment(text: str) -> None:
-                # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着
-                self.wfile.write(f": {text}\n\n".encode("utf-8"))
-                self.wfile.flush()
+                # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着。
+                # 这条必须吞异常——心跳失败只意味着该结束了，收尾帧还要继续走。
+                self._sse_raw(f": {text}\n\n")
 
             if pre["cached"] is not None:
                 metrics.inc("rag_idempotent_replay_total")
@@ -1121,69 +1111,41 @@ def make_write(deps):
                                    key=pre["idem_key"],
                                    trace_id=pre["cached"].get("trace_id"),
                                    request_id=pre["request_id"])
-                send("final", pre["cached"])
+                self._sse_raw("event: final\ndata: "
+                              + json.dumps(pre["cached"], ensure_ascii=False) + "\n\n")
                 return
 
             started = time.monotonic()
-            events: queue.Queue = queue.Queue()
+            send_comment("connected")
+            outcome = sse.relay(
+                factory=lambda: pipe.ask_stream(pre["query"], model=pre["model"],
+                                                force_extractive=pre["budget_blocked"],
+                                                session_id=pre["session_id"]),
+                send=send, cancel=cancel, heartbeat=lambda: send_comment("ping"),
+                thread_name="ask-stream")
 
-            # 生成放到独立线程：主线程要能在「模型还没吐第一个字」时发心跳，
-            # 否则浏览器/代理会以为连接死了，而实际只是检索慢或模型排队。
-            def produce() -> None:
-                stream = None
-                try:
-                    stream = pipe.ask_stream(
-                        pre["query"], model=pre["model"],
-                        force_extractive=pre["budget_blocked"],
-                        session_id=pre["session_id"])
-                    for item in stream:
-                        if cancel.is_set():
-                            break
-                        events.put(item)
-                except Exception as exc:  # noqa: BLE001 —— 生成线程的异常要回传给请求线程
-                    events.put(("__error__", str(exc)[:300]))
-                finally:
-                    # 取消时关掉生成器：close() 触发 GeneratorExit，上游的模型请求
-                    # 立刻断开，而不是把整轮 token 跑完再丢掉。
-                    if stream is not None:
-                        closer = getattr(stream, "close", None)
-                        if closer is not None:
-                            try:
-                                closer()
-                            except Exception:  # noqa: BLE001
-                                pass
-                    events.put(("__done__", None))
-
-            threading.Thread(target=produce, name="ask-stream", daemon=True).start()
-            try:
-                send_comment("connected")
-                while True:
-                    if time.monotonic() - started > SSE_MAX_SECONDS:
-                        send("error", {"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"})
-                        cancel.set()
-                        break
-                    try:
-                        event, data = events.get(timeout=SSE_HEARTBEAT_S)
-                    except queue.Empty:
-                        send_comment("ping")
-                        continue
-                    if event == "__done__":
-                        break
-                    if event == "__error__":
-                        send("error", {"error": data})
-                        break
-                    if event == "delta":
-                        send("delta", {"text": data})
-                    elif event == "replace":
-                        send("replace", {"text": data})
-                    elif event == "final":
-                        self._annotate_result(data, pre)
-                        self._record_ask(data, pre, started, "/api/ask/stream")
-                        send("final", data)
-            except (BrokenPipeError, ConnectionResetError):
-                # 客户端走了：立刻取消生成。用户拿不到答案，也就不该再为它烧 token
+            if outcome.broken:
+                # 客户端走了：用户拿不到答案，也就不该再为它烧 token
                 # （产品口径：断开即取消，不按已生成部分计费）。
-                cancel.set()
+                return
+            if outcome.timed_out:
+                self._sse_raw("event: error\ndata: "
+                              + json.dumps({"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"},
+                                           ensure_ascii=False) + "\n\n")
+                return
+            if outcome.error:
+                self._sse_raw("event: error\ndata: "
+                              + json.dumps({"error": outcome.error},
+                                           ensure_ascii=False) + "\n\n")
+                return
+            if outcome.final is not None:
+                # 顺序不能换：先标注引用与成本，再把 final 发给客户端。
+                # 发完再记账的话，客户端可能在记账前就断开（用户已看到答案），
+                # 这一轮成本就丢了。
+                self._annotate_result(outcome.final, pre)
+                self._record_ask(outcome.final, pre, started, "/api/ask/stream")
+                self._sse_raw("event: final\ndata: "
+                              + json.dumps(outcome.final, ensure_ascii=False) + "\n\n")
 
         # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
         # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。

@@ -11,7 +11,7 @@ import shutil
 import time
 import traceback
 
-from .. import (appconfig, backup, fileops, settings_ops)
+from .. import (appconfig, backup, fileops, settings_ops, tasks)
 from ..auth import safe_equal
 from ..config import api_key, load_settings
 from ..notes.api import ApiError
@@ -43,6 +43,23 @@ def make_resources(deps):
     _pick_folder = deps._pick_folder
     _count_notes = deps._count_notes
     _copy_notes = deps._copy_notes
+    task_registry = deps.tasks
+
+    def _backup_work(home: str, note: str, client: str) -> dict:
+        """整库备份。写成闭包：超过 grace 后会跑在别的线程里，不能持有 `self`。"""
+        result = backup.create(home, note=note)
+        guards.audit.write("storage.backup", client=client, name=result["name"],
+                           files=result["files"], bytes=result["bytes"])
+        return {"ok": True, **result}
+
+    def _restore_work(home: str, name: str, force: bool, client: str) -> dict:
+        """整库恢复。恢复前自动再备份一次（在 `backup.restore` 里）。"""
+        result = backup.restore(home, name, force=force)
+        # 恢复后统计口径全变了：作废缓存，否则设置页显示的仍是恢复前的数字
+        settings_ops.invalidate_storage()
+        guards.audit.write("storage.restore", client=client, source=result["source"],
+                           restored=result["restored"], pre_backup=result.get("pre_backup"))
+        return {"ok": True, **result}
 
     class ResourcesRoutes:
         # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
@@ -265,21 +282,55 @@ def make_resources(deps):
                     self._json({"ok": True, "items": backup.list_backups(home)}, 200, cors)
                     return
                 if method == "POST" and action == "backup":
-                    result = backup.create(home, note=str((body or {}).get("note") or ""))
-                    guards.audit.write("storage.backup", client=self._client(),
-                                       name=result["name"], files=result["files"],
-                                       bytes=result["bytes"])
-                    self._json({"ok": True, **result}, 200, cors)
+                    note = str((body or {}).get("note") or "")
+                    client = self._client()
+                    # 大存储区（附件多）要几十秒，而浏览器/代理 60s 会掐断连接。
+                    # 这里先同步等一会儿：小库直接出结果，前端什么都不用改。
+                    try:
+                        result, deferred = task_registry.run_or_defer(
+                            "storage.backup", lambda: _backup_work(home, note, client))
+                    except tasks.TaskBusy as exc:
+                        self._json({"ok": False, "error": "server_busy",
+                                    "message": str(exc)}, 503,
+                                   {**cors, "Retry-After": "5"})
+                        return
+                    except backup.BackupError as exc:
+                        self._json({"ok": False, "error": "backup_error",
+                                    "message": str(exc)}, exc.status, cors)
+                        return
+                    except OSError as exc:
+                        self._json({"ok": False, "error": "storage_error",
+                                    "message": f"存储区读写失败：{exc}"}, 500, cors)
+                        return
+                    self._json(result, 202 if deferred else 200,
+                               {**cors, "Location": f"/api/tasks/{result.get('id')}"}
+                               if deferred else cors)
                     return
                 if method == "POST" and action == "restore":
                     data = body or {}
-                    result = backup.restore(home, str(data.get("name") or ""),
-                                            force=bool(data.get("force")))
-                    settings_ops.invalidate_storage()
-                    guards.audit.write("storage.restore", client=self._client(),
-                                       source=result["source"], restored=result["restored"],
-                                       pre_backup=result.get("pre_backup"))
-                    self._json({"ok": True, **result}, 200, cors)
+                    name = str(data.get("name") or "")
+                    force = bool(data.get("force"))
+                    client = self._client()
+                    try:
+                        result, deferred = task_registry.run_or_defer(
+                            "storage.restore",
+                            lambda: _restore_work(home, name, force, client))
+                    except tasks.TaskBusy as exc:
+                        self._json({"ok": False, "error": "server_busy",
+                                    "message": str(exc)}, 503,
+                                   {**cors, "Retry-After": "5"})
+                        return
+                    except backup.BackupError as exc:
+                        self._json({"ok": False, "error": "backup_error",
+                                    "message": str(exc)}, exc.status, cors)
+                        return
+                    except OSError as exc:
+                        self._json({"ok": False, "error": "storage_error",
+                                    "message": f"存储区读写失败：{exc}"}, 500, cors)
+                        return
+                    self._json(result, 202 if deferred else 200,
+                               {**cors, "Location": f"/api/tasks/{result.get('id')}"}
+                               if deferred else cors)
                     return
             except backup.BackupError as exc:
                 self._json({"ok": False, "error": "backup_error", "message": str(exc)},

@@ -8,6 +8,7 @@ from __future__ import annotations
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 
 def busy_body(max_workers: int, reason: str = "server_busy") -> bytes:
@@ -89,6 +90,59 @@ class SlotAwareHandler(BaseHTTPRequestHandler):
         except OSError:
             # 对端已经走了；这时连日志都是噪音
             pass
+
+
+class StartingHandler(SlotAwareHandler):
+    """启动期应答器：索引还没建好之前，先替真处理器接住请求。
+
+    为什么需要：`RAGPipeline.__init__` 要读语料、加载或重建向量索引，
+    大语料上这是几十秒到几分钟。端口原来在这之后才 bind，这段时间客户端拿到的是
+    `ECONNREFUSED`——用户看到的是「服务没起来」，而它其实正在正常加载。
+
+    两条口径必须分开：
+
+    - `/api/health` 立刻 200 + `{"state":"starting"}`，编排脚本与前端据此等待；
+    - 其余一律 503 + `Retry-After`。**绝不能**在这个阶段返回「检索结果为空」——
+      那会让用户看到「无法找到答案」，比「正在启动」糟糕得多：前者是错的答案，
+      后者只是慢。
+    """
+
+    protocol_version = "HTTP/1.1"
+    timeout = 10
+
+    _BUSY = ('{"ok":false,"error":"starting",'
+             '"message":"服务正在启动（正在加载或重建索引），请稍后重试"}').encode("utf-8")
+    _HEALTH = b'{"ok":true,"state":"starting"}'
+
+    def do_GET(self) -> None:  # noqa: N802 —— BaseHTTPRequestHandler 的约定
+        if urlparse(self.path).path == "/api/health":
+            self._reply(200, self._HEALTH)
+        else:
+            self._reply(503, self._BUSY, retry=True)
+
+    do_HEAD = do_GET
+    do_POST = do_GET
+    do_PUT = do_GET
+    do_PATCH = do_GET
+    do_DELETE = do_GET
+    do_OPTIONS = do_GET
+
+    def _reply(self, code: int, body: bytes, retry: bool = False) -> None:
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            if retry:
+                self.send_header("Retry-After", "3")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+                self.wfile.flush()
+        except OSError:
+            # 客户端在这个窗口里走了（浏览器重试、探针超时）——正常现象
+            pass
+        self.close_connection = True
 
 
 class BoundedHTTPServer(ThreadingHTTPServer):

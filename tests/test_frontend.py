@@ -143,6 +143,12 @@ def test_wiring() -> None:
         ("分段懒渲染", "function ckMore" in kb_js and "data-k=" in kb_js),
         ("询问用行内弹层", "function askText" in kb_js and "ask-input" in kb_js),
         ("浮层栈", all(n in util_js for n in ("openOverlay", "closeOverlay", "isTopOverlay"))),
+        # 1.42：长任务会回 202，前端必须真的去轮询——只发请求不轮询的话，
+        # 用户看到的是一个「成功的空响应」，然后去找一个还不存在的结果。
+        ("长任务轮询工具", "async function waitTask" in util_js and "/api/tasks/" in util_js),
+        ("评测与备份都接了轮询",
+         "await waitTask(r)" in admin_js
+         and (ROOT / "src" / "web" / "settings.js").read_text(encoding="utf-8").count("waitTask(") >= 1),
     ]
     for name, ok in checks:
         check(f"接线：{name}", ok)

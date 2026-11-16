@@ -46,6 +46,7 @@ def make_read(deps):
     raw_dir = deps.raw_dir
     kb_dir = deps.kb_dir
     index_payload = deps.index_payload
+    task_registry = deps.tasks
     _repo_url = deps._repo_url
     _runtime_warnings = deps._runtime_warnings
 
@@ -535,6 +536,21 @@ def make_read(deps):
             elif path == "/api/feedback/list":
                 limit = _int_qs(qs, "limit", 20, 1, 200)
                 self._json({"items": list(reversed(_read_jsonl(feedback_path, limit)))})
+            elif path == "/api/tasks" or path.startswith("/api/tasks/"):
+                # 长任务查询：`/api/tasks` 列最近若干条，`/api/tasks/{id}` 取一条。
+                # 任务表在内存里（结果本身已落盘），重启后查不到是预期行为——
+                # 落盘一个「running」状态反而会让人等一个永远不会完成的任务。
+                if path == "/api/tasks" or path == "/api/tasks/":
+                    self._json({"ok": True, "items": task_registry.list(
+                        _int_qs(qs, "limit", 20, 1, 50))})
+                    return
+                task_id = path[len("/api/tasks/"):].strip()
+                task = task_registry.get(task_id) if task_id else None
+                if task is None:
+                    self._json({"ok": False, "error": "not_found",
+                                "message": "任务不存在或已过期（完成任务保留 1 小时）"}, 404)
+                    return
+                self._json(task.payload())
             elif path == "/api/trace":
                 limit = _int_qs(qs, "limit", 20, 1, 200)
                 rows = list(reversed(_read_jsonl(pipe.log_path, limit)))

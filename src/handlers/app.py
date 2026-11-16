@@ -20,7 +20,7 @@ import threading
 import time
 
 from .. import (appconfig, artifacts, kbstore,
-                settings_ops)
+                settings_ops, tasks)
 from .. import update as update_mod
 from ..auth import ApiKeyStore
 from ..config import Settings, api_key, load_settings
@@ -69,6 +69,8 @@ class AppDeps:
     log_dir: str
     guards: Guards
     api_keys: ApiKeyStore
+    # 长任务登记表：慢接口（评测、备份）超时后转后台，前端轮询取结果
+    tasks: tasks.TaskRegistry
     note_ref: dict
     feedback_path: str
     feedback_cases_path: str
@@ -102,7 +104,31 @@ class AppDeps:
     tracer: TraceExporter | None
 
 
-def build_app(host: str, port: int, knowledge_dir: str | None = None):
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def build_app(host: str, port: int, knowledge_dir: str | None = None, *,
+              server=None):
+    """装配整个应用，返回 (httpd, pipe)。
+
+    `server` 允许传入一个**已经 bind 好**的服务器：启动期先占端口、用
+    `StartingHandler` 应答「正在启动」，等这里的慢活（建索引）干完，
+    再把处理器换成本函数构造的 `Handler`。不传就是老行为（自己 bind），
+    测试与 `create_server()` 走这条路，语义不变。
+    """
     # 本文件在 src/handlers/ 下：项目根要退三层，退两层会算成 src/
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     settings = load_settings()
@@ -122,6 +148,13 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
     log_dir = os.path.dirname(pipe.log_path)
     guards = Guards(pipe.settings, log_dir)
     api_keys = ApiKeyStore(pipe.settings.api_keys)
+    # 两个名额：这类任务各自会再开线程/进程（评测还要打模型），
+    # 放太多只是把机器打满，用户反而觉得「全都变慢了」。
+    # 两个旋钮走环境变量：`TASK_GRACE_S` 决定「多慢才算长任务」（测试里设 0 就能
+    # 稳定走到异步分支），`TASK_MAX_CONCURRENT` 给慢机器调小。
+    task_registry = tasks.TaskRegistry(
+        max_concurrent=_env_int("TASK_MAX_CONCURRENT", tasks.MAX_CONCURRENT),
+        grace_s=_env_float("TASK_GRACE_S", tasks.DEFAULT_GRACE_S))
     try:
         note_ref: dict = {"service": NoteService(), "error": None}
     except OSError as exc:  # 目录不可写等情况：接口回 503，问答照常
@@ -513,6 +546,7 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
     deps = AppDeps(
         project_root=project_root, settings=settings, metrics=metrics, pipe=pipe,
         store=store, log_dir=log_dir, guards=guards, api_keys=api_keys,
+        tasks=task_registry,
         note_ref=note_ref, feedback_path=feedback_path,
         feedback_cases_path=feedback_cases_path, doc_cases_path=doc_cases_path,
         run_report_path=run_report_path, raw_dir=raw_dir, kb_dir=kb_dir,
@@ -536,7 +570,14 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None):
         # 不显式绑定就会 501（浏览器的预检与部分客户端会先发 HEAD）。
         do_HEAD = ReadRoutes.do_GET
 
-    httpd = BoundedHTTPServer((host, port), Handler)
+    if server is None:
+        httpd = BoundedHTTPServer((host, port), Handler)
+    else:
+        httpd = server
+        # 交棒点：此后新连接走真处理器。已经在跑的启动期请求不受影响
+        # （它们属于上一个处理器实例，本来也只是回一条 503）。
+        httpd.RequestHandlerClass = Handler
+        httpd.handler_ready = True
     # 停机收尾：把节流中的成本计数落盘、断开 redis。
     # 两条路径都挂上——`server_close()` 管正常停机与测试里的反复起停，
     # `atexit` 管 KeyboardInterrupt / 异常退出没走到 close 的情况。

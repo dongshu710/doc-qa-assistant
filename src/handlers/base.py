@@ -225,6 +225,35 @@ def make_base(deps):
             "image/svg+xml",
         })
 
+        def _sse_headers(self) -> None:
+            """流式响应的四行头，两条流式共用一个实现。
+
+            `Connection: close` 不是可选项：分块 + keep-alive 一起用会被代理层缓冲，
+            用户看到的是「答案憋到最后一次性出现」，而服务端日志里一切正常。
+            也不能发 Content-Length——长度在这时根本不知道。
+            """
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
+        def _sse_raw(self, frame: str) -> bool:
+            """写一段已经编码好的 SSE 文本；返回 False 表示客户端已经走了。
+
+            收尾帧（结束、[DONE]、错误）用它：这时已经没什么可补救的，
+            再抛一次异常只会把「正常结束」记成 500。
+            """
+            try:
+                self.wfile.write(frame.encode("utf-8"))
+                self.wfile.flush()
+                return True
+            except OSError:
+                self.close_connection = True
+                return False
+
         def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8",
                   extra_headers: dict | None = None, cache: str = "no-cache") -> None:
             """统一出口：gzip + ETag 协商 + 定长。

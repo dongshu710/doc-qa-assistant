@@ -142,6 +142,27 @@ jobs:
       - name: 请求边界与安全边界
         run: python tests/test_security_boundaries.py
 
+      # 启动顺序：先占端口再建索引。写错的表现是几分钟的 ECONNREFUSED，
+      # 或者更糟——建库没完成时返回「无法找到答案」（错答案，不是慢）。
+      - name: 启动顺序（先绑端口，再建索引）
+        run: python tests/test_startup_order.py
+
+      # 长任务：202 + 轮询。只发请求不轮询，用户拿到的是一个「成功的空响应」。
+      - name: 长任务（同步快速路径 / 转后台 / 轮询）
+        run: python tests/test_tasks.py
+
+      # 两套流式共用一条中继：断连必须取消（否则那一轮 token 照跑照记）。
+      - name: SSE 中继（断连取消 / 总时长 / 心跳）
+        run: python tests/test_sse_relay.py
+
+      # 非流式调用也要有总墙钟：上游每 29 秒吐一个字节，urlopen 的超时管不住。
+      - name: LLM 总墙钟（慢滴上游必须被掐断）
+        run: python tests/test_llm_wallclock.py
+
+      # 四条「只在并发下错、而且不报错」的运行期状态。
+      - name: 运行期并发（成本落盘 / 索引代次 / 单飞 / 重建）
+        run: python tests/test_runtime_concurrency.py
+
       - name: 后台重建与增量解析
         run: python tests/test_async_reload.py
 

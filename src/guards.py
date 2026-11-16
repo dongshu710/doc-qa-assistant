@@ -128,6 +128,10 @@ class CostBudget:
         self.daily_limit = max(0, int(daily_limit))
         self.path = path
         self._lock = threading.Lock()
+        # 文件写单独一把锁：`_lock` 只保护计数，不该被磁盘 IO 占着。
+        self._io_lock = threading.Lock()
+        # 已落盘的最大用量（水位线）。见 `_persist`。
+        self._written = -1
         self._date = _today()
         self._used = 0
         self._pending = 0          # 距上次落盘累计了几次 add
@@ -148,35 +152,57 @@ class CostBudget:
         if data.get("date") == _today():
             self._used = max(0, int(data.get("tokens") or 0))
 
-    def _save(self) -> None:
-        if not self.path:
-            return
-        try:
-            _atomic_write(self.path, {"date": self._date, "tokens": self._used, "updated_at": _now_iso()})
-            self.persist_error = None
-        except OSError as exc:
-            # 不抛：预算写不进去不该把问答打死；但计数与原因要能被健康检查看到，
-            # 否则重启后用量归零，日上限形同不存在。
-            self.persist_failures += 1
-            self.persist_error = f"{type(exc).__name__}: {exc}"[:300]
+    def _due_snapshot(self, force: bool = False) -> tuple[str, int] | None:
+        """按节流判断「这次要不要落盘」，要就把快照取出来。调用方必须已持 `self._lock`。
 
-    def _maybe_save(self, force: bool = False) -> None:
-        """按节流落盘。调用方必须已持 `self._lock`。"""
+        为什么只判断不写：写盘（建临时文件 + replace）在慢盘上要 1–20ms，
+        原来 `add()` 是持着 `_lock` 调它的，于是所有并发问答都串在这把锁上——
+        而这里真正需要互斥的只有 `_used += n` 这一行。
+
+        `_pending` 与 `_last_save` 必须在锁内推进：否则两个并发请求看到同一个
+        「到期」判断，各写一次盘，节流等于没有。
+        """
         if not self.path:
-            return
+            return None
         now = time.monotonic()
         over = bool(self.daily_limit) and self._used >= self.daily_limit
         if not (force or over or self._pending >= self.SAVE_EVERY_N
                 or now - self._last_save >= self.SAVE_INTERVAL_S):
-            return
-        self._save()
+            return None
         self._pending = 0
         self._last_save = now
+        return (self._date, self._used)
+
+    def _persist(self, snapshot: tuple[str, int]) -> None:
+        """把快照写盘。不持 `self._lock`，只持 `_io_lock`。
+
+        `_written` 是水位线：两个请求各拿一份快照来落盘，先到的是大数、
+        后到的是小数，直接写就把用量写回去了——重启后「今天还剩多少额度」
+        会算多。快照只增不减，所以「小于已写入值就丢」是安全的。
+        """
+        if not self.path:
+            return
+        date, used = snapshot
+        with self._io_lock:
+            if used < self._written:
+                return
+            self._written = used
+            try:
+                _atomic_write(self.path,
+                              {"date": date, "tokens": used, "updated_at": _now_iso()})
+                self.persist_error = None
+            except OSError as exc:
+                # 不抛：预算写不进去不该把问答打死；但计数与原因要能被健康检查看到，
+                # 否则重启后用量归零，日上限形同不存在。
+                self.persist_failures += 1
+                self.persist_error = f"{type(exc).__name__}: {exc}"[:300]
 
     def flush(self) -> None:
         """把还没落盘的计数写下去。进程退出、健康检查、测试断言时调用。"""
         with self._lock:
-            self._maybe_save(force=True)
+            snapshot = self._due_snapshot(force=True)
+        if snapshot is not None:
+            self._persist(snapshot)
 
     def _roll(self) -> None:
         today = _today()
@@ -204,8 +230,11 @@ class CostBudget:
             self._roll()
             self._used += n
             self._pending += 1
-            self._maybe_save()
-            return self._used
+            used = self._used
+            snapshot = self._due_snapshot()   # 只判断，不写
+        if snapshot is not None:
+            self._persist(snapshot)           # 写盘在锁外
+        return used
 
     def status(self) -> dict:
         with self._lock:

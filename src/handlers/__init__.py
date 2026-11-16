@@ -15,6 +15,7 @@
                  /api/knowledge /api/keywords /api/kb/versions /api/kb/changes
                  /api/kb/change /api/kb/doc_history /api/source /api/feedback/list
                  /api/trace /api/audit /api/admin/config /api/admin/cost /api/cases
+                 /api/tasks /api/tasks/{id}
                  /api/notes[/{id}] /api/threads[/{id}] /api/files/raw
                  /api/storage/backups /api/settings
 
@@ -27,6 +28,10 @@
             PUT  /api/files/raw /api/threads/{id}
             PATCH  /api/notes/{id} /api/threads/{id}
             DELETE /api/notes/{id} /api/threads/{id}
+
+长任务：`/api/cases/run`、`/api/storage/backup|restore` 先同步等 20 秒（`TASK_GRACE_S`），
+超时转后台并回 202 + `Location: /api/tasks/{id}`；前端用 `util.js::waitTask` 轮询。
+任务表在内存里（`src/tasks.py`），结果本身已落盘，重启后查不到是预期行为。
 
 新增接口的做法：在对应模块的 `do_*` 分支里挂上，并在 `src/routing.py` 登记等级。
 未登记的 `/api/*` 默认按 `api` 处理（要 Key），所以漏登记是「更严格」，不是「裸奔」。

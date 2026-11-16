@@ -432,6 +432,20 @@ def _paths_data() -> dict:
                                                "maximum": 200, "default": 20}}],
                     "responses": {"200": {"description": "反馈条目"}}},
         },
+        "/api/tasks": {
+            "get": {"tags": ["运维"], "summary": "后台任务列表（最近 20 条）", **_x_internal(),
+                    "parameters": [{"name": "limit", "in": "query", "required": False,
+                                    "schema": {"type": "integer", "minimum": 1,
+                                               "maximum": 50, "default": 20}}],
+                    "responses": {"200": {"description": "任务摘要：id / name / state / elapsed_ms"}}},
+        },
+        "/api/tasks/{id}": {
+            "get": {"tags": ["运维"], "summary": "长任务进度与结果", **_x_internal(),
+                    "parameters": [{"name": "id", "in": "path", "required": True,
+                                    "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "state=running/done/error；done 时带 result"},
+                                  "404": _err("任务不存在或已过期（保留 1 小时）")}},
+        },
         "/api/kb/doc_history": {
             "get": {"tags": ["知识库"], "summary": "单文档的版本历史", **_x_internal(),
                     "parameters": [{"name": "name", "in": "query", "required": True,

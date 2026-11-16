@@ -84,6 +84,29 @@ function tooSoon(el, ms){
   return Date.now()-t < (ms||300);
 }
 
+/* 长任务：服务端超过 20 秒的操作会回 202 + {id,state:'running'}，结果要轮询取。
+   为什么不在服务端死等：浏览器与中间代理 60 秒左右会掐断连接，用户看到「请求失败」，
+   而任务其实跑完了——白跑一次，结果也没人拿到。轮询把等待变成可见进度。
+   传进来的不是任务（没有 id，或已经结束）就原样返回，调用方不用先判断。 */
+async function waitTask(data, onTick){
+  if(!data || !data.id || data.state!=='running') return data;
+  var id=data.id, started=Date.now();
+  while(true){
+    await new Promise(function(r){ setTimeout(r, 700); });
+    var s=null;
+    try{
+      var resp=await fetch('/api/tasks/'+encodeURIComponent(id),{cache:'no-store',headers:reqHeaders(false)});
+      s=await resp.json();
+    }catch(e){ s=null; }
+    if(onTick) onTick(s||{}, Math.round((Date.now()-started)/1000));
+    if(!s) continue;                       // 一次网络抖动不该让等待直接失败
+    if(s.state==='done') return s.result||{};
+    if(s.state==='error') throw new Error(s.error||'后台任务失败');
+    // 上限兜底：任务表只保留 1 小时，再等下去只会拿到 404
+    if(Date.now()-started>30*60*1000) throw new Error('任务超过 30 分钟仍未完成');
+  }
+}
+
 /* 浮层层级表：Esc 只关「最上面那层」。
    以前每个浮层各自监听 Esc 各关各的：设置面板 + 版本弹层同时开着时，
    一次 Esc 会两层一起消失。压栈顺序按打开时间，与用户心智一致。 */

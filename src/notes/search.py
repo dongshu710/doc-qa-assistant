@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import tempfile
 import threading
 import time
 from collections import Counter
@@ -227,19 +228,29 @@ class NoteSearcher:
 
     def _flush(self, rows: dict[str, dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".jsonl.tmp")
-        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
-            for item in rows.values():
-                handle.write(json.dumps(item, ensure_ascii=False) + "\n")
-        # 写索引很快（毫秒级），借用存储锁避免两个进程同时替换出半份文件
-        if self._lock is not None:
-            try:
-                with self._lock():
+        # 唯一临时名：原来固定用 `.jsonl.tmp`，而 `search` 的分支与 `rebuild`
+        # 都可能同时落盘，两条 write 交错写同一个文件 → 索引里出现半行 JSON，
+        # 之后每次查询都在 `_load` 里坏掉（而且是「偶尔坏」，最难查的一类）。
+        handle, tmp = tempfile.mkstemp(dir=str(self.path.parent), prefix=".idx-", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as fh:
+                for item in rows.values():
+                    fh.write(json.dumps(item, ensure_ascii=False) + "\n")
+            # 写索引很快（毫秒级），借用存储锁避免两个进程同时替换出半份文件
+            if self._lock is not None:
+                try:
+                    with self._lock():
+                        os.replace(tmp, self.path)
+                except Exception:  # noqa: BLE001 —— 拿不到锁就退化成无锁写
                     os.replace(tmp, self.path)
-            except Exception:  # noqa: BLE001 —— 拿不到锁就退化成无锁写
+            else:
                 os.replace(tmp, self.path)
-        else:
-            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         try:
             stat = self.path.stat()
             self._rows_stat = (stat.st_mtime_ns, stat.st_size)
@@ -488,7 +499,11 @@ class NoteSearcher:
             # 重建是显式动作，预算按建库口径放宽（默认 600s）
             _, degraded = self._embed_into(stale, rows,
                                            budget_s=_env_float("NOTE_SEARCH_REBUILD_BUDGET_S", 600.0))
-        self._flush(rows)
+        # 读文档与算向量都留在锁外（几百篇要几十秒，持锁等于把搜索全冻住），
+        # 只有「替换索引」这一步进锁：它与 `search` 的 `_sync` 是同一份派生物的
+        # 两个写者，谁先谁后不重要，交错就会写出半份索引。
+        with self._mutex:
+            self._flush(rows)
         return len(rows), degraded, skipped
 
 

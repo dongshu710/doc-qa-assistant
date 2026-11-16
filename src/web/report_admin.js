@@ -219,12 +219,16 @@
     }, 1000);
     try {
       var r = await api('/api/cases/run', { method: 'POST', body: { scope: 'all' } });
+      // 超过 20 秒会转后台（202 + task_id）：这里接着轮询，按钮上的秒表继续跑，
+      // 用户看到的仍是「在跑」而不是「请求失败」。
+      r = await waitTask(r);
       toast('评测完成：' + (r.passed || 0) + '/' + (r.total || 0) + ' 通过');
       receipt('跑评测', (r.total || 0) + ' 条用例',
         (r.passed || 0) + ' 通过 · ' + Math.round((r.pass_rate || 0) * 100) + '% · ' +
         // 离线跑一轮只有几十毫秒，`Math.round` 会写成「0s」——看起来像没跑
         ((r.duration_ms || 0) < 1000 ? '<1s' : Math.round(r.duration_ms / 1000) + 's') +
-        '，写 tests/report_doc_cases.json');
+        // 运行时产物在 1.41 起迁到存储区的 artifacts/ 下，tests/ 里不写了
+        '，写存储区 artifacts/report_doc_cases.json');
       var cnt = $('agEvalCount');
       if (cnt) cnt.textContent = Math.round((r.pass_rate || 0) * 100) + '%';
       box.innerHTML = evalResult(r);
