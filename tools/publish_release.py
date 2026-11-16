@@ -119,7 +119,37 @@ def asset_paths(version: str) -> list[Path]:
     return [DIST / f"jiyi-app-{version}.zip",
             DIST / f"jiyi-plugin-{version}.zip",
             DIST / f"jiyi-skill-{version}.zip",
-            DIST / "SHA256SUMS.txt"]
+            sums_file(version)]
+
+
+def sums_file(version: str) -> Path:
+    """该版本三包的校验清单。
+
+    `dist/SHA256SUMS.txt` 是**最近一次构建**的清单：一次发两个版本时
+    （`--all` 或连发两批）直接传它，旧版本的 Release 上会挂着另一版的哈希——
+    用户照着核对会以为下载的包被篡改了。内容对不上就按本版本重算一份临时清单，
+    上传时仍叫 SHA256SUMS.txt。
+    """
+    zips = [p for p in (DIST / f"jiyi-app-{version}.zip",
+                        DIST / f"jiyi-plugin-{version}.zip",
+                        DIST / f"jiyi-skill-{version}.zip") if p.exists()]
+    want = "".join(f"{sha256_of(p)}  {p.name}\n" for p in zips)
+    canonical = DIST / "SHA256SUMS.txt"
+    if canonical.exists() and canonical.read_text(encoding="utf-8") == want:
+        return canonical
+    tmp = DIST / f".SHA256SUMS-{version}.txt"
+    tmp.write_text(want, encoding="utf-8", newline="\n")
+    return tmp
+
+
+def asset_name(path: Path) -> str:
+    """临时清单在远端仍叫 SHA256SUMS.txt（用户与脚本都按这个名字找）。"""
+    return "SHA256SUMS.txt" if path.name.startswith(".SHA256SUMS-") else path.name
+
+
+def cleanup_sums() -> None:
+    for stale in DIST.glob(".SHA256SUMS-*.txt"):
+        stale.unlink(missing_ok=True)
 
 
 def sha256_of(path: Path) -> str:
@@ -165,8 +195,9 @@ def find_release(slug: str, tag: str) -> dict | None:
 ASSET_TYPES = {".zip": "application/zip", ".txt": "text/plain; charset=utf-8"}
 
 
-def upload_asset(slug: str, release_id: int, path: Path) -> bool:
-    url = f"{UPLOADS}/repos/{slug}/releases/{release_id}/assets?name={urllib.parse.quote(path.name)}"
+def upload_asset(slug: str, release_id: int, path: Path, name: str | None = None) -> bool:
+    url = (f"{UPLOADS}/repos/{slug}/releases/{release_id}/assets"
+           f"?name={urllib.parse.quote(name or path.name)}")
     payload = path.read_bytes()
     req = urllib.request.Request(url, data=payload, method="POST")
     req.add_header("Authorization", f"token {token()}")
@@ -238,7 +269,7 @@ def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool 
 
     if dry_run:
         say(f"[dry-run] {tag}：release={'已存在' if existing else '将创建'}，"
-            f"附件 {len(paths)} 个（{', '.join(p.name for p in paths) or '无'}）")
+            f"附件 {len(paths)} 个（{', '.join(asset_name(p) for p in paths) or '无'}）")
         say(f"[dry-run] 正文 {len(body)} 字符，前 80 字：{body[:80]!r}")
         return True
 
@@ -268,29 +299,30 @@ def publish(slug: str, tag: str, dry_run: bool, with_asset: bool, replace: bool 
         return True
 
     for path in paths:
-        old = next((a for a in (existing or {}).get("assets", []) if a["name"] == path.name), None)
+        name = asset_name(path)
+        old = next((a for a in (existing or {}).get("assets", []) if a["name"] == name), None)
         if old and not replace:
-            say(f"  附件已存在，跳过：{path.name}")
+            say(f"  附件已存在，跳过：{name}")
             continue
         if old:
             if not delete_asset(slug, old["id"]):
                 return False
-            say(f"  已删除旧附件：{path.name}")
-        ok = upload_asset(slug, release_id, path)
-        say(f"  附件 {'上传完成' if ok else '未上传'}：{path.name}"
+            say(f"  已删除旧附件：{name}")
+        ok = upload_asset(slug, release_id, path, name=name)
+        say(f"  附件 {'上传完成' if ok else '未上传'}：{name}"
             f"（{path.stat().st_size // 1024} KB）")
         if not ok:
             return False
         # 上传成功不算数，回读比对 sha256 才算数
         status, fresh = api("GET", f"/repos/{slug}/releases/{release_id}")
         asset = next((a for a in (fresh or {}).get("assets", [])
-                      if a.get("name") == path.name), None) if status == 200 else None
+                      if a.get("name") == name), None) if status == 200 else None
         if asset is None:
-            say(f"  回读失败：远端找不到刚上传的 {path.name}")
+            say(f"  回读失败：远端找不到刚上传的 {name}")
             return False
         if not verify_asset(slug, asset, path):
             return False
-        say(f"  回读校验通过：{path.name} sha256 {sha256_of(path)[:12]}…")
+        say(f"  回读校验通过：{name} sha256 {sha256_of(path)[:12]}…")
     return True
 
 
@@ -349,9 +381,13 @@ def main(argv: list[str]) -> int:
     say(f"仓库 {slug}，共 {len(tags)} 个版本，凭据来源："
         f"{'环境变量' if (os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')) else 'git 凭据管理器'}")
     failed: list[str] = []
-    for tag in tags:
-        if not publish(slug, tag, dry_run, with_asset, replace):
-            failed.append(tag)
+    try:
+        for tag in tags:
+            if not publish(slug, tag, dry_run, with_asset, replace):
+                failed.append(tag)
+    finally:
+        # 按版本重算的临时清单只在这次发布里有用，别留在 dist/ 里被下次打包带进去
+        cleanup_sums()
     if failed:
         say(f"失败的版本：{', '.join(failed)}")
         return 1
