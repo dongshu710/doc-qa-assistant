@@ -162,12 +162,14 @@ doc-qa-assistant/
 │  ├─ http_server.py           # 限并发的 HTTP 服务器（64 槽位）
 │  ├─ routing.py               # 路由鉴权表：open / api / admin，未登记的 /api/* 默认要 Key
 │  ├─ handlers/                # 路由层（按职责拆开，组合根在 app.py）
-│  │   ├─ app.py               #   装配依赖，把四个路由类拼成 Handler
+│  │   ├─ app.py               #   装配四组依赖（core/ask/notes/tracing），拼成 Handler
 │  │   ├─ base.py              #   响应/压缩/ETag、来源闸门、鉴权、PUT/PATCH/DELETE/OPTIONS
 │  │   ├─ resources.py         #   笔记 / 会话 / 文件 / 存储 / 设置
 │  │   ├─ read.py              #   页面与只读 API
 │  │   ├─ write.py             #   问答（含 SSE）/ 知识库 / 设置写入 / 评测用例
-│  │   └─ common.py            #   上限常量与纯函数（文件名净化、项目根、jsonl 尾读）
+│  │   └─ common.py            #   上限常量与纯函数（jsonl 尾读、请求体解析）
+│  ├─ paths.py                 # 项目根与「纯文件名」的唯一来源（require_safe_name）
+│  ├─ atomicfile.py            # 原子写盘：唯一临时名 + 占用重试（write_bytes / atomic_write）
 │  ├─ auth.py                  # API Key 解析 / 常量时间校验 / 脱敏
 │  ├─ openapi.py               # OpenAPI 3.0 契约（路径/方法数由 build_spec() 生成，含笔记与内部端点）
 │  ├─ theme.py                 # 外壳 / 侧栏 / 骨架拼接 / 前端资源装载点

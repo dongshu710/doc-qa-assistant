@@ -235,7 +235,9 @@ def main() -> int:
                 fromfile="磁盘上的 .env.example", tofile="按代码生成的", lineterm=""))
             print("\n".join(diff[:40]))
             return 1
-        total = content.count("\n# ") - content.count("\n# =====")
+        # 计数口径必须与 --write 那条一致：原来用的是「以 # 开头的行数减分组标题」，
+        # 把说明文字也算成了变量（同一个文件写 97、检查说 111）。
+        total = len(re.findall(r"^# [A-Z][A-Z0-9_]*=", content, re.M))
         print(f"{TARGET.name} 与代码一致（{total} 个变量）")
         return 0
     TARGET.write_text(content, encoding="utf-8", newline="\n")
