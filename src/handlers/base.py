@@ -196,8 +196,8 @@ class BaseRoutes(SlotAwareHandler):
             # 对端先走了：关标签页、Ctrl-C 打断流式输出都会这样，属正常现象
             self.close_connection = True
         except Exception as exc:  # noqa: BLE001 —— 这一层就是最后的兜底
-            self.deps.metrics.inc("rag_request_crash_total")
-            self.deps.guards.audit.write("request.crash", client=self._client(),
+            self.deps.core.metrics.inc("rag_request_crash_total")
+            self.deps.core.guards.audit.write("request.crash", client=self._client(),
                                path=self.path[:160],
                                error=type(exc).__name__)
             traceback.print_exc()
@@ -220,7 +220,7 @@ class BaseRoutes(SlotAwareHandler):
             req_id = (self.headers.get("X-Request-Id") or "") if self.headers else ""
         except AttributeError:
             req_id = ""
-        accesslog.emit(self.deps.log_dir, method=self.command, path=self.path,
+        accesslog.emit(self.deps.core.log_dir, method=self.command, path=self.path,
                        status=getattr(self, "_status", 0),
                        ms=(time.monotonic() - started) * 1000,
                        client=self._client(), req_id=req_id)
@@ -324,7 +324,7 @@ class BaseRoutes(SlotAwareHandler):
         if (isinstance(obj, dict) and self.command in ("GET", "HEAD")
                 and (self.path == "/api/settings"
                      or self.path.startswith("/api/settings/"))
-                and self.deps.api_keys.enabled and self._api_auth()[0] is None
+                and self.deps.core.api_keys.enabled and self._api_auth()[0] is None
                 and not obj.get("redacted")):
             obj = redact_settings(obj)
         self._send(code, json.dumps(normalize_error(obj, code), ensure_ascii=False),
@@ -433,7 +433,7 @@ class BaseRoutes(SlotAwareHandler):
 
         排查问题时设 `DEBUG=on` 才带上原文；平时只给异常类型，正文进服务端日志。
         """
-        if self.deps.pipe.settings.debug:
+        if self.deps.ask.pipe.settings.debug:
             return f"{prefix}：{type(exc).__name__}: {exc}"
         return f"{prefix}：{type(exc).__name__}（详情见服务端日志，设 DEBUG=on 可显示）"
     def _key_scope(self) -> str:
@@ -442,13 +442,13 @@ class BaseRoutes(SlotAwareHandler):
         「没配 Key」（单机开放）不能返回 rw 以外的东西，否则默认形态下
         所有写接口都会被自己的作用域检查挡住。
         """
-        if not self.deps.api_keys.enabled:
+        if not self.deps.core.api_keys.enabled:
             return ""
-        _name, scope, err = self.deps.api_keys.identify_scope(self._presented_key())
+        _name, scope, err = self.deps.core.api_keys.identify_scope(self._presented_key())
         return "" if err else scope
 
     def _is_admin(self) -> bool:
-        token = self.deps.pipe.settings.admin_token
+        token = self.deps.ask.pipe.settings.admin_token
         if token:
             # 显式配了管理员令牌时，它是唯一凭据：Admin Key 也不能绕过它。
             # 否则「我设了令牌为什么别人还能审批」会变成一个安全盲区。
@@ -472,10 +472,10 @@ class BaseRoutes(SlotAwareHandler):
             return False
         if path in READ_ONLY_POSTS:
             return False
-        self.deps.metrics.inc("rag_readonly_rejected_total")
-        self.deps.guards.audit.write("request.forbidden", client=self._client(),
+        self.deps.core.metrics.inc("rag_readonly_rejected_total")
+        self.deps.core.guards.audit.write("request.forbidden", client=self._client(),
                            path=path[:160], reason="read_only_key",
-                           key=self.deps.api_keys.mask(self._presented_key()))
+                           key=self.deps.core.api_keys.mask(self._presented_key()))
         self._json({"ok": False, "error": "read_only_key",
                     "message": f"这把 API Key 是只读的，不能调用 {path}。"
                                "需要写入请换有写权限的 Key（或去掉配置里的 :ro 后缀）。"},
@@ -483,7 +483,7 @@ class BaseRoutes(SlotAwareHandler):
         return True
     def _auto_approve(self) -> bool:
         """KB_APPROVAL=off 全放行；on 全审批；auto 仅本机管理员直通。"""
-        mode = (self.deps.pipe.settings.kb_approval or "auto").strip().lower()
+        mode = (self.deps.ask.pipe.settings.kb_approval or "auto").strip().lower()
         if mode == "off":
             return True
         if mode == "on":
@@ -500,13 +500,13 @@ class BaseRoutes(SlotAwareHandler):
         返回 (staged, change_id, approved, total)，approved 为 None 表示还在待审。
         """
         who = author or self._client()
-        staged = self.deps.store.stage(files, author=who, note=note, deletes=deletes or [])
+        staged = self.deps.ask.store.stage(files, author=who, note=note, deletes=deletes or [])
         change_id = staged["change"]["change_id"]
         approved = None
         total = None
         if self._auto_approve():
-            approved = self.deps.store.approve(change_id, approver=who, note="auto-approve")
-            total = self.deps.reload_kb()
+            approved = self.deps.ask.store.approve(change_id, approver=who, note="auto-approve")
+            total = self.deps.ask.reload_kb()
         return staged, change_id, approved, total
     def _guard(self, method: str, path: str) -> bool:
         """所有请求的唯一入口闸门：Host → 鉴权等级 → 来源/内容类型。
@@ -522,8 +522,8 @@ class BaseRoutes(SlotAwareHandler):
             return False
         level = routing.level_for(path)
         if level == routing.ADMIN and not self._is_admin():
-            self.deps.metrics.inc("rag_unauthorized_total")
-            self.deps.guards.audit.write("request.forbidden", client=self._client(),
+            self.deps.core.metrics.inc("rag_unauthorized_total")
+            self.deps.core.guards.audit.write("request.forbidden", client=self._client(),
                                path=path[:160], reason="admin_required")
             self._json({"ok": False, "error": "forbidden",
                         "message": "需要管理员权限（本机访问或带 X-Admin-Token）"}, 403)
@@ -531,7 +531,7 @@ class BaseRoutes(SlotAwareHandler):
         if verb in ("GET", "HEAD"):
             # 读请求同样按表：/api/source 返回整段原文、/api/trace 返回用户提问，
             # 只因为方法是 GET 就放行，等于把语料和提问记录公开。
-            if level == routing.API and self.deps.api_keys.enabled:
+            if level == routing.API and self.deps.core.api_keys.enabled:
                 return self._require_key(path, "read.unauthorized")
             return False
         if self._write_gate(path):
@@ -547,8 +547,8 @@ class BaseRoutes(SlotAwareHandler):
         _name, err = self._api_auth()
         if not err:
             return False
-        self.deps.metrics.inc("rag_unauthorized_total")
-        self.deps.guards.audit.write(action, client=self._client(),
+        self.deps.core.metrics.inc("rag_unauthorized_total")
+        self.deps.core.guards.audit.write(action, client=self._client(),
                            path=path[:160], reason=err)
         if path == "/v1" or path.startswith("/v1/"):
             body = compat.CompatError(
@@ -570,8 +570,8 @@ class BaseRoutes(SlotAwareHandler):
         reason = security.read_problem(self.headers)
         if not reason:
             return False
-        self.deps.metrics.inc("rag_host_rejected_total")
-        self.deps.guards.audit.write("request.rejected", client=self._client(),
+        self.deps.core.metrics.inc("rag_host_rejected_total")
+        self.deps.core.guards.audit.write("request.rejected", client=self._client(),
                            path=self.path[:160], reason=reason)
         self._json({"ok": False, "error": "host_not_allowed",
                     "message": security.REASONS[reason]}, 403)
@@ -588,8 +588,8 @@ class BaseRoutes(SlotAwareHandler):
             has_body = True
         reason = security.write_problem(self.headers, has_body)
         if reason:
-            self.deps.metrics.inc("rag_write_rejected_total", {"reason": reason})
-            self.deps.guards.audit.write("write.rejected", client=self._client(),
+            self.deps.core.metrics.inc("rag_write_rejected_total", {"reason": reason})
+            self.deps.core.guards.audit.write("write.rejected", client=self._client(),
                                path=path[:160], reason=reason)
             self._json({"ok": False, "error": reason,
                         "message": security.REASONS[reason]},
@@ -611,9 +611,9 @@ class BaseRoutes(SlotAwareHandler):
         return (self.headers.get("X-API-Key") or "").strip()
     def _api_auth(self) -> tuple[str | None, str | None]:
         """未配置 API_KEYS 时保持开放；配置后必须带有效 Key。"""
-        if not self.deps.api_keys.enabled:
+        if not self.deps.core.api_keys.enabled:
             return None, None
-        return self.deps.api_keys.identify(self._presented_key())
+        return self.deps.core.api_keys.identify(self._presented_key())
     def _cors_headers(self) -> dict:
         """跨域默认关闭；NOTES_CORS=* 或来源白名单才放行，个人笔记不该随便被网页读。"""
         raw = (os.environ.get("NOTES_CORS") or "").strip()

@@ -74,7 +74,7 @@ class ReadRoutes:
             # OpenAI 兼容：SDK 与 LiteLLM 启动时会先探这个端点，
             # 拿不到就认为 base_url 配错，后面的 chat 请求根本不会发。
             self._json(openai_compat.models_payload(
-                self.deps.pipe.settings.model or "jiyi"), 200, self._cors_headers())
+                self.deps.ask.pipe.settings.model or "jiyi"), 200, self._cors_headers())
             return
         if path == "/tools.json":
             host = self.headers.get("Host") or "127.0.0.1"
@@ -83,7 +83,7 @@ class ReadRoutes:
         if path == "/api/update/check":
             # 只查不装：返回版本号与下载地址，本地文件一个字节都不动
             force = (qs.get("force") or ["0"])[0].lower() in ("1", "true", "yes")
-            self._json(update_mod.check(__version__, self.deps._repo_url(), force=force),
+            self._json(update_mod.check(__version__, self.deps.core._repo_url(), force=force),
                        200, self._cors_headers())
             return
         if path == "/api/notes" or path.startswith("/api/notes/"):
@@ -160,7 +160,7 @@ class ReadRoutes:
         _name, err = self._api_auth()
         redacted = bool(err)
         try:
-            data = report.collect(self.deps.pipe)
+            data = report.collect(self.deps.ask.pipe)
             if redacted:
                 data = report.redact(data)
             # 管理入口默认不渲染：汇报页的读者是业务方，不该看见「删除文档」
@@ -179,7 +179,7 @@ class ReadRoutes:
     def _get_meta(self, path: str, qs: dict) -> None:
         """发布与运行时自述：L3 报表、OpenAPI、健康检查、Prometheus。"""
         if path == "/api/l3":
-            l3_path = os.path.join(self.deps.project_root, "tests", "report_l3.json")
+            l3_path = os.path.join(self.deps.core.project_root, "tests", "report_l3.json")
             if not os.path.exists(l3_path):
                 self._json({"available": False})
             else:
@@ -199,36 +199,36 @@ class ReadRoutes:
                     "gate": d.get("gate"),
                 })
         elif path == "/openapi.json":
-            self._json(build_spec(__version__, self.deps.api_keys.describe(),
-                                  self.deps.pipe.settings.model, self.deps.pipe.settings.retrieval))
+            self._json(build_spec(__version__, self.deps.core.api_keys.describe(),
+                                  self.deps.ask.pipe.settings.model, self.deps.ask.pipe.settings.retrieval))
         elif path == "/api/health":
-            if self.deps.store is not None:
-                self.deps.metrics.set_gauge("rag_kb_version", 1, {"version": self.deps.store.active_version()})
-            self.deps.metrics.set_gauge("rag_index_chunks", len(self.deps.pipe.chunks))
+            if self.deps.ask.store is not None:
+                self.deps.core.metrics.set_gauge("rag_kb_version", 1, {"version": self.deps.ask.store.active_version()})
+            self.deps.core.metrics.set_gauge("rag_index_chunks", len(self.deps.ask.pipe.chunks))
             self._json({
                 "status": "ok",
                 "version": __version__,
-                "channel": self.deps.pipe.settings.channel,
-                "model": self.deps.pipe.settings.model,
-                "llm_ready": self.deps.pipe.llm_ready,
-                "chunks": len(self.deps.pipe.chunks),
-                "retrieval": self.deps.pipe.settings.retrieval,
-                "retrieval_detail": self.deps.pipe.retrieval_detail,
-                "kb": self.deps.store.status() if self.deps.store is not None else {"enabled": False},
-                "keywords": self.deps.pipe.keyword_detail,
-                "sessions": self.deps.pipe.sessions.status(),
-                "guards": self.deps.guards.status(),
-                "index": self.deps.index_payload(),
+                "channel": self.deps.ask.pipe.settings.channel,
+                "model": self.deps.ask.pipe.settings.model,
+                "llm_ready": self.deps.ask.pipe.llm_ready,
+                "chunks": len(self.deps.ask.pipe.chunks),
+                "retrieval": self.deps.ask.pipe.settings.retrieval,
+                "retrieval_detail": self.deps.ask.pipe.retrieval_detail,
+                "kb": self.deps.ask.store.status() if self.deps.ask.store is not None else {"enabled": False},
+                "keywords": self.deps.ask.pipe.keyword_detail,
+                "sessions": self.deps.ask.pipe.sessions.status(),
+                "guards": self.deps.core.guards.status(),
+                "index": self.deps.ask.index_payload(),
                 # 目录监听状态：改了文件没生效时，这里能看出监听是否在跑
                 "kb_watch": self._watch_status(),
                 # 观测导出：没配时回 enabled=false；配错时把原因带出来
                 "otel": self._otel_status(),
-                "auth": self.deps.api_keys.describe(),
+                "auth": self.deps.core.api_keys.describe(),
                 "runtime": {
                     # 明确告诉使用者：这是单实例内存态，不是集群
                     "mode": "single-instance",
-                    "state_backend": self.deps.guards.backend,
-                    "warnings": self.deps._runtime_warnings(),
+                    "state_backend": self.deps.core.guards.backend,
+                    "warnings": self.deps.notes._runtime_warnings(),
                 },
             })
         elif path == "/metrics":
@@ -236,7 +236,7 @@ class ReadRoutes:
             if not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
-            self._send(200, self.deps.metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
+            self._send(200, self.deps.core.metrics.render(), "text/plain; version=0.0.4; charset=utf-8")
         else:
             self._not_found(self.command, path)
 
@@ -264,15 +264,15 @@ class ReadRoutes:
                 return
             self._json({
                 "ok": True,
-                "runtime": self.deps.guards.runtime.status(),
-                "model": self.deps.pipe.settings.model,
-                "retrieval": self.deps.pipe.settings.retrieval,
+                "runtime": self.deps.core.guards.runtime.status(),
+                "model": self.deps.ask.pipe.settings.model,
+                "retrieval": self.deps.ask.pipe.settings.retrieval,
             })
         elif path == "/api/admin/cost":
             if not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
-            self._json({"ok": True, "cost": self.deps.guards.cost.status()})
+            self._json({"ok": True, "cost": self.deps.core.guards.cost.status()})
         elif path == "/api/audit":
             if not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
@@ -281,9 +281,9 @@ class ReadRoutes:
                 limit = max(1, min(200, int(qs.get("limit", ["20"])[0])))
             except (TypeError, ValueError):
                 limit = 20
-            self._json({"items": self.deps.guards.audit.tail(limit)})
+            self._json({"items": self.deps.core.guards.audit.tail(limit)})
         elif path == "/api/metrics":
-            self._json(summarize(self.deps.pipe.log_path))
+            self._json(summarize(self.deps.ask.pipe.log_path))
         else:
             self._not_found(self.command, path)
 
@@ -304,7 +304,7 @@ class ReadRoutes:
                 self._json({"error": "name 只能是文件名"}, 400)
                 return True
             # 双保险：文件名已经过滤过路径分隔符，这里再按 realpath 确认没跑出 RAW_DIR
-            root = os.path.realpath(self.deps.raw_dir)
+            root = os.path.realpath(self.deps.ask.raw_dir)
             full = os.path.realpath(os.path.join(root, name))
             if os.path.commonpath([full, root]) != root or not os.path.isfile(full):
                 self._json({"error": "原件不存在（只有文档类上传会留存原件）"}, 404)
@@ -336,10 +336,10 @@ class ReadRoutes:
             if not name:
                 self._json({"error": "name 只能是文件名"}, 400)
                 return True
-            detail = self.deps.pipe.doc_chunks(name.rsplit(".", 1)[0])
+            detail = self.deps.ask.pipe.doc_chunks(name.rsplit(".", 1)[0])
             if detail is None:
                 self._json({"error": "文档不存在或尚未建立索引", "name": name,
-                            "rebuilding": bool(self.deps.pipe.rebuild_state().get("rebuilding"))}, 404)
+                            "rebuilding": bool(self.deps.ask.pipe.rebuild_state().get("rebuilding"))}, 404)
                 return True
             self._json(detail)
             return True
@@ -350,13 +350,13 @@ class ReadRoutes:
         if self._get_kb_doc_read(path, qs):
             return
         if path == "/api/cases":
-            curated = _read_jsonl(os.path.join(self.deps.project_root, "tests", "eval_cases.jsonl"), 100000)
-            fb_cases = _read_jsonl(self.deps.feedback_cases_path, 100000)
-            doc_cases = _read_jsonl(self.deps.doc_cases_path, 100000)
+            curated = _read_jsonl(os.path.join(self.deps.core.project_root, "tests", "eval_cases.jsonl"), 100000)
+            fb_cases = _read_jsonl(self.deps.ask.feedback_cases_path, 100000)
+            doc_cases = _read_jsonl(self.deps.ask.doc_cases_path, 100000)
             last_run = None
             try:
-                if os.path.exists(self.deps.run_report_path):
-                    with open(self.deps.run_report_path, encoding="utf-8") as f:
+                if os.path.exists(self.deps.ask.run_report_path):
+                    with open(self.deps.ask.run_report_path, encoding="utf-8") as f:
                         rep = json.load(f)
                     last_run = {k: rep.get(k) for k in
                                 ("run_at", "scope", "total", "passed", "pass_rate", "channel", "model")}
@@ -385,21 +385,21 @@ class ReadRoutes:
                 n = 4
             # 新上传的文档优先出现在示例里：按文件 mtime 倒序排 doc
             mtimes = {}
-            if os.path.isdir(self.deps.kb_dir()):
-                for name in os.listdir(self.deps.kb_dir()):
+            if os.path.isdir(self.deps.ask.kb_dir()):
+                for name in os.listdir(self.deps.ask.kb_dir()):
                     if name.lower().endswith(ALLOWED_EXT):
                         try:
-                            mtimes[name.rsplit(".", 1)[0]] = os.path.getmtime(os.path.join(self.deps.kb_dir(), name))
+                            mtimes[name.rsplit(".", 1)[0]] = os.path.getmtime(os.path.join(self.deps.ask.kb_dir(), name))
                         except OSError:
                             pass
-            ordered = sorted(self.deps.pipe.chunks, key=lambda c: (-mtimes.get(c.doc_id, 0), c.doc_id))
+            ordered = sorted(self.deps.ask.pipe.chunks, key=lambda c: (-mtimes.get(c.doc_id, 0), c.doc_id))
             self._json({"items": suggest.examples(ordered, n)})
         elif path == "/api/knowledge":
-            counts = Counter(c.doc_id for c in self.deps.pipe.chunks)
+            counts = Counter(c.doc_id for c in self.deps.ask.pipe.chunks)
             # 每份文档有哪些页：状态列要能区分「PDF 有页码」与「PDF 转出来没页标」，
             # 后者在调页码引用时是硬伤（无法跳到第 N 页），但不影响检索，所以只是提示。
             pages_of: dict[str, set] = {}
-            for c in self.deps.pipe.chunks:
+            for c in self.deps.ask.pipe.chunks:
                 page_no = getattr(c, "page", None)
                 if page_no:
                     pages_of.setdefault(c.doc_id, set()).add(page_no)
@@ -408,18 +408,18 @@ class ReadRoutes:
             # 与 /api/health、汇报页各算一遍：审批通过到索引重建完成之间，
             # kb_dir() 与 pipe.knowledge_dir 必然不同，三个接口会给出不同的文件集。
             names: list[str] = []
-            if self.deps.store is not None:
+            if self.deps.ask.store is not None:
                 try:
-                    names = self.deps.store.doc_names()
+                    names = self.deps.ask.store.doc_names()
                 except (kbstore.KnowledgeError, OSError):
                     names = []
-            if not names and os.path.isdir(self.deps.kb_dir()):
+            if not names and os.path.isdir(self.deps.ask.kb_dir()):
                 # manifest 缺失或知识库未初始化：退回目录扫描，页面至少还能显示
-                names = sorted(n for n in os.listdir(self.deps.kb_dir())
+                names = sorted(n for n in os.listdir(self.deps.ask.kb_dir())
                                if n.lower().endswith(ALLOWED_EXT))
             for name in names:
                 try:
-                    full = os.path.join(self.deps.kb_dir(), name)
+                    full = os.path.join(self.deps.ask.kb_dir(), name)
                     doc_id = name.rsplit(".", 1)[0]
                     pages = pages_of.get(doc_id) or set()
                     # 状态只从索引事实推导，不读解析日志：解析警告从来没落过盘，
@@ -449,68 +449,68 @@ class ReadRoutes:
             self._json({
                 "files": [
                     {**f,
-                     "keywords": self.deps.pipe.keywords.top_terms(f["name"].rsplit(".", 1)[0], 5),
+                     "keywords": self.deps.ask.pipe.keywords.top_terms(f["name"].rsplit(".", 1)[0], 5),
                      # 只为拿条数而取 999 个词再 len() 是白复制：500 份文档
                      # 就是 500 次近千元素的列表构造。count_terms 走同一份缓存。
-                     "keyword_count": self.deps.pipe.keywords.count_terms(f["name"].rsplit(".", 1)[0])}
+                     "keyword_count": self.deps.ask.pipe.keywords.count_terms(f["name"].rsplit(".", 1)[0])}
                     for f in shown
                 ],
                 "truncated": len(files) > len(shown),
                 "total_files": len(files),
-                "total_chunks": len(self.deps.pipe.chunks),
-                "rebuilding": bool(self.deps.pipe.rebuild_state().get("rebuilding")),
-                "version": self.deps.store.active_version() if self.deps.store is not None else None,
-                "pending_changes": self.deps.store.status()["pending_changes"] if self.deps.store is not None else 0,
-                "keywords": self.deps.pipe.keywords.summary(),
+                "total_chunks": len(self.deps.ask.pipe.chunks),
+                "rebuilding": bool(self.deps.ask.pipe.rebuild_state().get("rebuilding")),
+                "version": self.deps.ask.store.active_version() if self.deps.ask.store is not None else None,
+                "pending_changes": self.deps.ask.store.status()["pending_changes"] if self.deps.ask.store is not None else 0,
+                "keywords": self.deps.ask.pipe.keywords.summary(),
             })
         elif path == "/api/keywords":
             name = _safe_name((qs.get("name") or [""])[0])
             if name:
                 doc_id = name.rsplit(".", 1)[0]
-                if doc_id not in self.deps.pipe.keywords.docs:
+                if doc_id not in self.deps.ask.pipe.keywords.docs:
                     self._json({"error": "文档不存在或未生成关键词"}, 404)
                     return
-                self._json(self.deps.pipe.keywords.doc_view(doc_id))
+                self._json(self.deps.ask.pipe.keywords.doc_view(doc_id))
                 return
             # 一次算完每个文档的条目数。原写法是嵌套推导式（文档数 × 全部条目），
             # 500 文档 / 25k 条时实测 338ms，文档翻倍就是 4 倍。
-            per_doc = Counter(e.doc_id for e in self.deps.pipe.keywords.entries)
+            per_doc = Counter(e.doc_id for e in self.deps.ask.pipe.keywords.entries)
             self._json({
-                "summary": self.deps.pipe.keywords.summary(),
+                "summary": self.deps.ask.pipe.keywords.summary(),
                 "docs": [
                     {"doc_id": doc_id, "title": meta.get("title") or doc_id,
                      "count": per_doc.get(doc_id, 0),
-                     "terms": self.deps.pipe.keywords.top_terms(doc_id, 8)}
-                    for doc_id, meta in self.deps.pipe.keywords.docs.items()
+                     "terms": self.deps.ask.pipe.keywords.top_terms(doc_id, 8)}
+                    for doc_id, meta in self.deps.ask.pipe.keywords.docs.items()
                 ],
             })
         elif path == "/api/kb/versions":
-            if self.deps.store is None:
+            if self.deps.ask.store is None:
                 self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
                 return
-            self._json({"active": self.deps.store.active_version(), "items": self.deps.store.versions()})
+            self._json({"active": self.deps.ask.store.active_version(), "items": self.deps.ask.store.versions()})
         elif path == "/api/kb/change":
-            if self.deps.store is None:
+            if self.deps.ask.store is None:
                 self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
                 return
             change_id = (qs.get("id") or [""])[0].strip()
             try:
-                self._json(self.deps.store.change_detail(change_id))
+                self._json(self.deps.ask.store.change_detail(change_id))
             except kbstore.KnowledgeError as exc:
                 self._json({"error": str(exc)}, 404)
         elif path == "/api/kb/changes":
-            if self.deps.store is None:
+            if self.deps.ask.store is None:
                 self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
                 return
             status = (qs.get("status", [""])[0] or "").strip() or None
-            self._json({"items": self.deps.store.changes(status)})
+            self._json({"items": self.deps.ask.store.changes(status)})
         elif path == "/api/kb/doc_history":
-            if self.deps.store is None:
+            if self.deps.ask.store is None:
                 self._json({"error": "KB_STORE=off，当前未启用版本库"}, 400)
                 return
             name = (qs.get("name", [""])[0] or "").strip()
             try:
-                self._json({"name": name, "items": self.deps.store.doc_history(name)})
+                self._json({"name": name, "items": self.deps.ask.store.doc_history(name)})
             except kbstore.KnowledgeError as exc:
                 self._json({"error": str(exc)}, 400)
         else:
@@ -524,25 +524,25 @@ class ReadRoutes:
                 chunk_index = int((qs.get("chunk") or ["-1"])[0])
             except (TypeError, ValueError):
                 chunk_index = -1
-            src = self.deps.pipe.source_chunk(doc, chunk_index)
+            src = self.deps.ask.pipe.source_chunk(doc, chunk_index)
             if not src:
                 self._json({"error": "原文不存在或索引已更新"}, 404)
                 return
-            src["version"] = self.deps.store.active_version() if self.deps.store is not None else None
+            src["version"] = self.deps.ask.store.active_version() if self.deps.ask.store is not None else None
             self._json(src)
         elif path == "/api/feedback/list":
             limit = _int_qs(qs, "limit", 20, 1, 200)
-            self._json({"items": list(reversed(_read_jsonl(self.deps.feedback_path, limit)))})
+            self._json({"items": list(reversed(_read_jsonl(self.deps.ask.feedback_path, limit)))})
         elif path == "/api/tasks" or path.startswith("/api/tasks/"):
             # 长任务查询：`/api/tasks` 列最近若干条，`/api/tasks/{id}` 取一条。
             # 任务表在内存里（结果本身已落盘），重启后查不到是预期行为——
             # 落盘一个「running」状态反而会让人等一个永远不会完成的任务。
             if path == "/api/tasks" or path == "/api/tasks/":
-                self._json({"ok": True, "items": self.deps.tasks.list(
+                self._json({"ok": True, "items": self.deps.core.tasks.list(
                     _int_qs(qs, "limit", 20, 1, 50))})
                 return
             task_id = path[len("/api/tasks/"):].strip()
-            task = self.deps.tasks.get(task_id) if task_id else None
+            task = self.deps.core.tasks.get(task_id) if task_id else None
             if task is None:
                 self._json({"ok": False, "error": "not_found",
                             "message": "任务不存在或已过期（完成任务保留 1 小时）"}, 404)
@@ -550,7 +550,7 @@ class ReadRoutes:
             self._json(task.payload())
         elif path == "/api/trace":
             limit = _int_qs(qs, "limit", 20, 1, 200)
-            rows = list(reversed(_read_jsonl(self.deps.pipe.log_path, limit)))
+            rows = list(reversed(_read_jsonl(self.deps.ask.pipe.log_path, limit)))
             items = [{
                 "ts": r.get("ts"),
                 "query": r.get("query"),

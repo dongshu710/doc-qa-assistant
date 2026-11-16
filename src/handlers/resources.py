@@ -38,7 +38,7 @@ def make_resources(deps: "AppDeps") -> type:
 def _backup_work(deps, home: str, note: str, client: str) -> dict:
     """整库备份。保持模块级函数：超过 grace 后会跑在别的线程里，不能持有 `self`。"""
     result = backup.create(home, note=note)
-    deps.guards.audit.write("storage.backup", client=client, name=result["name"],
+    deps.core.guards.audit.write("storage.backup", client=client, name=result["name"],
                             files=result["files"], bytes=result["bytes"])
     return {"ok": True, **result}
 
@@ -48,7 +48,7 @@ def _restore_work(deps, home: str, name: str, force: bool, client: str) -> dict:
     result = backup.restore(home, name, force=force)
     # 恢复后统计口径全变了：作废缓存，否则设置页显示的仍是恢复前的数字
     settings_ops.invalidate_storage()
-    deps.guards.audit.write("storage.restore", client=client, source=result["source"],
+    deps.core.guards.audit.write("storage.restore", client=client, source=result["source"],
                             restored=result["restored"], pre_backup=result.get("pre_backup"))
     return {"ok": True, **result}
 
@@ -65,8 +65,8 @@ class ResourcesRoutes:
         _key_name, err = self._api_auth()
         if not err:
             return None
-        self.deps.metrics.inc("rag_unauthorized_total")
-        self.deps.guards.audit.write("notes.unauthorized", client=self._client(),
+        self.deps.core.metrics.inc("rag_unauthorized_total")
+        self.deps.core.guards.audit.write("notes.unauthorized", client=self._client(),
                            path=self.path[:200], reason=err)
         return {"ok": False, "error": "unauthorized",
                 "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"}
@@ -102,9 +102,9 @@ class ResourcesRoutes:
         if denied:
             self._json(denied, 401, {**cors, "WWW-Authenticate": 'Bearer realm="notes"'})
             return
-        if self.deps.note_ref["service"] is None:
+        if self.deps.core.note_ref["service"] is None:
             self._json({"ok": False, "error": "notes_unavailable",
-                        "message": f"笔记存储不可用：{self.deps.note_ref['error']}"}, 503, cors)
+                        "message": f"笔记存储不可用：{self.deps.core.note_ref['error']}"}, 503, cors)
             return
         # 「储存对话内容」只约束问答页自动/手动沉淀的那条路子：
         # 智能体经 MCP/API 显式 save_note 是它自己的意图，不该被这个开关连坐。
@@ -115,16 +115,16 @@ class ResourcesRoutes:
                         "message": "已关闭「储存对话内容」，可在设置里打开后再保存"}, 403, cors)
             return
         try:
-            status, payload, extra = notes_dispatch(self.deps.note_ref["service"], method, path, query, body)
+            status, payload, extra = notes_dispatch(self.deps.core.note_ref["service"], method, path, query, body)
         except ApiError as exc:
             if method != "GET":
-                self.deps.guards.audit.write(f"notes.{method.lower()}.rejected", client=self._client(),
+                self.deps.core.guards.audit.write(f"notes.{method.lower()}.rejected", client=self._client(),
                                    path=path[:120], error=exc.payload.get("error"))
             self._json(exc.payload, exc.status, {**cors, **exc.headers})
             return
         except Exception as exc:  # noqa: BLE001 —— 未预期异常也要回结构化错误，不能掐断连接
             traceback.print_exc()
-            self.deps.guards.audit.write(f"notes.{method.lower()}.error", client=self._client(),
+            self.deps.core.guards.audit.write(f"notes.{method.lower()}.error", client=self._client(),
                                path=path[:120], error=f"{type(exc).__name__}: {exc}")
             self._json({"ok": False, "error": "internal_error",
                         "message": self._error_text(exc)}, 500, cors)
@@ -136,7 +136,7 @@ class ResourcesRoutes:
                              {**cors, **extra})
             return
         if method != "GET":
-            self.deps.guards.audit.write(f"notes.{method.lower()}", client=self._client(),
+            self.deps.core.guards.audit.write(f"notes.{method.lower()}", client=self._client(),
                                id=payload.get("id"), duplicate_of=payload.get("duplicate_of"))
         elif (path.rstrip("/") == "/api/notes/export" and status == 200
                 and self.command == "GET"):
@@ -145,7 +145,7 @@ class ResourcesRoutes:
         self._json(payload, status, {**cors, **extra})
     def _home(self) -> str:
         """存储区根目录：笔记、会话、导出都在它下面，换位置只需改一处。"""
-        service = self.deps.note_ref["service"]
+        service = self.deps.core.note_ref["service"]
         return str(service.store.home) if service else ""
     def _threads(self, method: str, path: str, query: dict, body: dict | None) -> None:
         """会话记录改存服务端（v1.19.0）。
@@ -168,7 +168,7 @@ class ResourcesRoutes:
         home = self._home()
         if not home:
             self._json({"ok": False, "error": "storage_unavailable",
-                        "message": f"存储区不可用：{self.deps.note_ref['error']}"}, 503, cors)
+                        "message": f"存储区不可用：{self.deps.core.note_ref['error']}"}, 503, cors)
             return
         store = ThreadStore(home)
         parts = [p for p in path.strip("/").split("/") if p]  # ["api","threads",id?]
@@ -283,7 +283,7 @@ class ResourcesRoutes:
                 # lambda 只捕获 deps：转后台后连接可能已关，闭包里不能再摸 self。
                 deps = self.deps
                 try:
-                    result, deferred = deps.tasks.run_or_defer(
+                    result, deferred = deps.core.tasks.run_or_defer(
                         "storage.backup", lambda: _backup_work(deps, home, note, client))
                 except tasks.TaskBusy as exc:
                     self._json({"ok": False, "error": "server_busy",
@@ -309,7 +309,7 @@ class ResourcesRoutes:
                 client = self._client()
                 deps = self.deps
                 try:
-                    result, deferred = deps.tasks.run_or_defer(
+                    result, deferred = deps.core.tasks.run_or_defer(
                         "storage.restore",
                         lambda: _restore_work(deps, home, name, force, client))
                 except tasks.TaskBusy as exc:
@@ -351,12 +351,12 @@ class ResourcesRoutes:
 
         cors = self._cors_headers()
         sse = "text/event-stream" in (self.headers.get("Accept") or "").lower()
-        service = self.deps.note_ref["service"]
+        service = self.deps.core.note_ref["service"]
         if service is None:
             self._json({"jsonrpc": "2.0",
                         "id": body.get("id") if isinstance(body, dict) else None,
                         "error": {"code": -32603,
-                                  "message": f"笔记存储不可用：{self.deps.note_ref['error']}"}},
+                                  "message": f"笔记存储不可用：{self.deps.core.note_ref['error']}"}},
                        503, cors)
             return
         if isinstance(body, list):
@@ -412,7 +412,7 @@ class ResourcesRoutes:
         local = self._client() in ("127.0.0.1", "::1", "localhost")
         if method != "GET" and not local:
             token = (self.headers.get("X-Admin-Token") or "").strip()
-            if not (self.deps.pipe.settings.admin_token and safe_equal(token, self.deps.pipe.settings.admin_token)):
+            if not (self.deps.ask.pipe.settings.admin_token and safe_equal(token, self.deps.ask.pipe.settings.admin_token)):
                 self._json({"ok": False, "error": "forbidden",
                             "message": "设置只能在运行服务的这台电脑上修改"}, 403, cors)
                 return
@@ -440,49 +440,49 @@ class ResourcesRoutes:
         """读取/写入设置本身，以及首启引导。"""
         if path == "/api/settings/setup":
             if method == "GET":
-                self._json(self.deps._setup_state(), 200, cors)
+                self._json(self.deps.notes._setup_state(), 200, cors)
                 return
             if method == "POST":
-                payload, status = self.deps._apply_setup(str((body or {}).get("home") or ""),
+                payload, status = self.deps.notes._apply_setup(str((body or {}).get("home") or ""),
                                                self._client())
                 self._json(payload, status, cors)
                 return
         if path == "/api/settings":
             if method == "GET":
-                payload = self.deps._settings_payload()
+                payload = self.deps.notes._settings_payload()
                 # 这个接口是 open 级（Key 配错时的回退通道），所以「配了 Key 却没带
                 # 有效 Key」的调用方也能读。回退只需要知道当前配置长什么样，不需要
                 # 家目录、MCP 配置里的绝对路径——那会连用户名一起交出去。
                 # 开放模式（没配 Key）不脱敏：单机自用，设置页要显示路径。
-                if self.deps.api_keys.enabled and self._api_auth()[0] is None:
+                if self.deps.core.api_keys.enabled and self._api_auth()[0] is None:
                     payload = redact_settings(payload)
                 self._json(payload, 200, cors)
                 return
             if method == "POST":
-                before = str(self.deps.note_ref["service"].store.home) if self.deps.note_ref["service"] else ""
+                before = str(self.deps.core.note_ref["service"].store.home) if self.deps.core.note_ref["service"] else ""
                 appconfig.update(body or {})
                 # 配置一落盘就重载，面板上显示「已生效」才不是空话。
                 # 不重载的话 pipeline 还拿着启动时的快照：改了 MIN_SCORE，
                 # 面板显示新值，判域却仍按旧阈值走。
                 reload_error = ""
                 try:
-                    self.deps.pipe.reload_settings()
+                    self.deps.ask.pipe.reload_settings()
                 except Exception as exc:  # noqa: BLE001
                     # 重载失败不能让保存本身失败（配置已经写进去了），
                     # 但必须让调用方知道「这次没生效」，否则就是静默失败。
                     reload_error = f"配置已保存，但重载失败：{str(exc)[:200]}"
-                reopened = self.deps._reopen_notes()
-                payload = self.deps._settings_payload()
+                reopened = self.deps.notes._reopen_notes()
+                payload = self.deps.notes._settings_payload()
                 payload["notes_reloaded"] = reopened
                 if reload_error:
                     payload["reload_error"] = reload_error
-                after = str(self.deps.note_ref["service"].store.home) if self.deps.note_ref["service"] else ""
+                after = str(self.deps.core.note_ref["service"].store.home) if self.deps.core.note_ref["service"] else ""
                 if before and after and os.path.normcase(before) != os.path.normcase(after):
-                    count = self.deps._count_notes(before)
+                    count = self.deps.notes._count_notes(before)
                     if count:
                         # 只提示不自动搬：换个空目录是常规操作，替用户决定反而吓人
                         payload["pending_migration"] = {"from": before, "count": count}
-                self.deps.guards.audit.write("settings.update", client=self._client(),
+                self.deps.core.guards.audit.write("settings.update", client=self._client(),
                                    model=payload["llm"]["effective_model"],
                                    notes_home=payload["notes"]["home_effective"],
                                    store_chat=payload["notes"]["store_chat"])
@@ -495,11 +495,11 @@ class ResourcesRoutes:
                          cors: dict) -> None:
         """笔记存储：选目录与迁移旧位置。"""
         if path == "/api/settings/pick-folder" and method == "POST":
-            status, result = self.deps._pick_folder()
+            status, result = self.deps.notes._pick_folder()
             self._json(result, status, cors)
             return
         if path == "/api/settings/notes/migrate" and method == "POST":
-            service = self.deps.note_ref["service"]
+            service = self.deps.core.note_ref["service"]
             if service is None:
                 self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
                 return
@@ -517,11 +517,11 @@ class ResourcesRoutes:
                 self._json({"ok": False, "error": "invalid_argument",
                             "message": "旧位置里没有 notes 目录，没东西可搬"}, 400, cors)
                 return
-            result = self.deps._copy_notes(src, dst)
+            result = self.deps.notes._copy_notes(src, dst)
             # 复制改的是深层子目录，指纹里的根目录 mtime 看不出变化，
             # 这里显式作废，切回去立刻看到新位置的数字
             settings_ops.invalidate_storage()
-            self.deps.guards.audit.write("settings.notes_migrate", client=self._client(),
+            self.deps.core.guards.audit.write("settings.notes_migrate", client=self._client(),
                                from_path=src, to_path=dst, copied=result["copied"],
                                skipped=result["skipped"], failed=len(result["failed"]))
             self._json({"ok": True, "from": src, "to": dst, **result}, 200, cors)
@@ -544,16 +544,19 @@ class ResourcesRoutes:
                     return
             # 先把选择存下来：用户点的是「按 30 版保留」，下次开机也该按 30 版
             appconfig.update({"storage": {"keep_versions": str(keep)}})
-            service = self.deps.note_ref["service"]
+            service = self.deps.core.note_ref["service"]
             home = str(service.store.home) if service else ""
-            before = self.deps._storage_report(fresh=True)
-            removed = self.deps.store.prune_versions(keep) if self.deps.store is not None else []
+            before = self.deps.notes._storage_report(fresh=True)
+            removed = self.deps.ask.store.prune_versions(keep) if self.deps.ask.store is not None else []
             # 不在这里重建索引：重建会立刻把刚删的缓存写回来，用户看到的「释放 0 B」
             # 就是这个原因。下一次读笔记（列表或问答）时自然重建。
-            freed_index = self.deps._clear_index(home)
-            after = self.deps._storage_report(fresh=True)
-            freed = max(0, self.deps._total_bytes(before) - self.deps._total_bytes(after)) + freed_index
-            self.deps.guards.audit.write("settings.storage_clean", client=self._client(),
+            # 清理动作本身不需要依赖袋：两个都是 settings_ops 里的纯函数，
+            # 原来包一层闭包只是为了当年「所有外部能力都从 deps 拿」的一致性。
+            freed_index = settings_ops.clear_index(home) if home else 0
+            after = self.deps.notes._storage_report(fresh=True)
+            freed = max(0, settings_ops.total_bytes(before)
+                        - settings_ops.total_bytes(after)) + freed_index
+            self.deps.core.guards.audit.write("settings.storage_clean", client=self._client(),
                                keep=keep, removed=len(removed), freed_bytes=freed)
             self._json({"ok": True, "keep": keep, "removed": removed,
                         "freed_bytes": freed, "storage": after}, 200, cors)
@@ -573,18 +576,19 @@ class ResourcesRoutes:
                 # 页面回显的是掩码；留空表示「用已保存的那把钥匙」
                 "api_key": str(sent.get("api_key") or api_key()),
             }
-            self._json(self.deps._probe_llm(cfg), 200, cors)
+            self._json(settings_ops.probe_llm(cfg["base_url"], cfg["model"],
+                                              cfg["api_key"]), 200, cors)
             return
         if path == "/api/settings/mcp":
-            targets = self.deps._mcp_targets()
-            self._json({"ok": True, "config": self.deps._mcp_config(),
+            targets = self.deps.notes._mcp_targets()
+            self._json({"ok": True, "config": self.deps.notes._mcp_config(),
                         "targets": targets,
                         "target": next((t["path"] for t in targets if t["exists"]), "")},
                        200, cors)
             return
         if path == "/api/settings/mcp/install" and method == "POST":
             wanted = str((body or {}).get("client") or "claude").strip().lower()
-            known = {t["id"]: t for t in self.deps._mcp_targets()}
+            known = {t["id"]: t for t in self.deps.notes._mcp_targets()}
             item = known.get(wanted)
             if item is None:
                 # 只认已知客户端：允许调用方给路径，就等于允许往任意文件里写
@@ -606,16 +610,16 @@ class ResourcesRoutes:
                 shutil.copy2(target, backup)
             if not isinstance(data, dict):
                 data = {}
-            data.setdefault("mcpServers", {})["agent-notes"] = self.deps._mcp_config()["mcpServers"]["agent-notes"]
+            data.setdefault("mcpServers", {})["agent-notes"] = self.deps.notes._mcp_config()["mcpServers"]["agent-notes"]
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            self.deps.guards.audit.write("settings.mcp_install", client=self._client(),
+            self.deps.core.guards.audit.write("settings.mcp_install", client=self._client(),
                                target=str(target), app=wanted)
             self._json({"ok": True, "target": str(target), "client": wanted,
                         "message": f"已写入 {item['name']}。重启该客户端后生效"}, 200, cors)
             return
         if path == "/api/settings/open" and method == "POST":
-            service = self.deps.note_ref["service"]
+            service = self.deps.core.note_ref["service"]
             if service is None:
                 self._json({"ok": False, "error": "notes_unavailable"}, 503, cors)
                 return

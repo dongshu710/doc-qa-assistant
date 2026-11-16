@@ -64,13 +64,13 @@ def _cases_run_work(deps, scope: str, cases: list, sleep_s: float, client: str) 
     """
     started = time.monotonic()
     results, skipped = evaluator.run_cases(
-        deps.pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=deps.kb_dir())
+        deps.ask.pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=deps.ask.kb_dir())
     summary = evaluator.summarize(results, skipped)
     report = {
         "run_at": datetime.now(timezone.utc).isoformat(),
         "scope": scope,
-        "channel": deps.pipe.settings.channel,
-        "model": deps.pipe.settings.model,
+        "channel": deps.ask.pipe.settings.channel,
+        "model": deps.ask.pipe.settings.model,
         **summary,
         "duration_ms": int((time.monotonic() - started) * 1000),
         "results": results,
@@ -78,8 +78,8 @@ def _cases_run_work(deps, scope: str, cases: list, sleep_s: float, client: str) 
     # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
     # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
     # 管理面板「评测」组永久打不开。复用版本库的原子写。
-    kbstore._atomic_json(deps.run_report_path, report)
-    deps.guards.audit.write("cases.run", client=client, scope=scope,
+    kbstore._atomic_json(deps.ask.run_report_path, report)
+    deps.core.guards.audit.write("cases.run", client=client, scope=scope,
                             total=summary["total"], passed=summary["passed"],
                             duration_ms=report["duration_ms"])
     return {
@@ -235,12 +235,12 @@ class WriteRoutes:
                         "error_msg": str(exc)}, 400)
             return
         try:
-            items = dify.records(self.deps.pipe, query, top_k, threshold)
+            items = dify.records(self.deps.ask.pipe, query, top_k, threshold)
         except Exception as exc:  # noqa: BLE001 —— 索引损坏等：如实报错，不假装空结果
             self._json({"records": [], "error_code": 5000,
                         "error_msg": self._error_text(exc, "检索失败")}, 500)
             return
-        self.deps.metrics.inc("rag_dify_retrieval_total")
+        self.deps.core.metrics.inc("rag_dify_retrieval_total")
         # 没有命中就回空数组。Dify 的约定是「检索不到不算错」，它会把这条知识库
         # 当没有贡献继续走；这里回 404/500 反而会让整个应用报错。
         self._json({"records": items})
@@ -248,7 +248,7 @@ class WriteRoutes:
     def _compat_error(self, exc: "compat.CompatError",
                       extra_headers: dict | None = None) -> None:
         """OpenAI 形状的错误体。SDK 只读 `error.message`，回主协议会让它失明。"""
-        self.deps.metrics.inc("rag_openai_error_total", {"code": exc.code})
+        self.deps.core.metrics.inc("rag_openai_error_total", {"code": exc.code})
         self._json(exc.body(), exc.status, extra_headers=extra_headers)
 
     def _post_openai(self) -> None:
@@ -262,7 +262,7 @@ class WriteRoutes:
         if err:
             self._compat_error(compat.CompatError(err))
             return
-        model = str(body.get("model") or self.deps.pipe.settings.model or "jiyi")
+        model = str(body.get("model") or self.deps.ask.pipe.settings.model or "jiyi")
         try:
             for name in compat.UNSUPPORTED:
                 if body.get(name):
@@ -309,7 +309,7 @@ class WriteRoutes:
             return
 
         started = time.monotonic()
-        result = self.deps.pipe.ask(pre["query"], model=pre["model"],
+        result = self.deps.ask.pipe.ask(pre["query"], model=pre["model"],
                           force_extractive=pre["budget_blocked"],
                           session_id=pre["session_id"])
         self._annotate_result(result, pre)
@@ -359,7 +359,7 @@ class WriteRoutes:
 
         started = time.monotonic()
         outcome = sse.relay(
-            factory=lambda: self.deps.pipe.ask_stream(pre["query"], model=pre["model"],
+            factory=lambda: self.deps.ask.pipe.ask_stream(pre["query"], model=pre["model"],
                                             force_extractive=pre["budget_blocked"],
                                             session_id=pre["session_id"]),
             send=send, cancel=cancel, thread_name="openai-stream")
@@ -396,12 +396,12 @@ class WriteRoutes:
                 except (TypeError, ValueError):
                     self._json({"ok": False, "error": "canary_percent 需为 0-100 的整数"}, 400)
                     return
-            updated = self.deps.guards.runtime.update(
+            updated = self.deps.core.guards.runtime.update(
                 canary_percent=percent,
                 canary_model=payload.get("canary_model"),
                 note=str(payload.get("note") or "")[:200],
             )
-            self.deps.guards.audit.write("admin.config", client=self._client(), **updated)
+            self.deps.core.guards.audit.write("admin.config", client=self._client(), **updated)
             self._json({"ok": True, "runtime": updated})
             return
 
@@ -409,8 +409,8 @@ class WriteRoutes:
             if not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
-            res = self.deps.guards.runtime.rollback()
-            self.deps.guards.audit.write("admin.rollback", client=self._client(),
+            res = self.deps.core.guards.runtime.rollback()
+            self.deps.core.guards.audit.write("admin.rollback", client=self._client(),
                                rolled_back=res.get("rolled_back"), revision=res.get("revision"))
             self._json({"ok": True, **res})
             return
@@ -472,8 +472,8 @@ class WriteRoutes:
         files: dict[str, str] = {}
         skipped: list[str] = []
         existing = set()
-        if os.path.isdir(self.deps.kb_dir()):
-            existing = {n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
+        if os.path.isdir(self.deps.ask.kb_dir()):
+            existing = {n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
         for name in chosen["names"]:
             safe = _safe_name(name, ALLOWED_EXT, 120)
             if not safe:
@@ -491,7 +491,7 @@ class WriteRoutes:
             self._json({"ok": True, "template": key, "added": [], "skipped": skipped,
                         "message": "这些文档已经在知识库里了"})
             return
-        if self.deps.store is not None:
+        if self.deps.ask.store is not None:
             try:
                 _staged, change_id, approved, total = self._stage_and_maybe_approve(
                     files, note=f"空库模板：{chosen['title']}")
@@ -505,24 +505,24 @@ class WriteRoutes:
                 "ok": True, "template": key, "title": chosen["title"],
                 "added": sorted(files), "skipped": skipped,
                 "pending": approved is None, "change_id": change_id,
-                "version": self.deps.store.active_version(),
-                **self.deps.index_fields(),
+                "version": self.deps.ask.store.active_version(),
+                **self.deps.ask.index_fields(),
             })
-            self.deps.guards.audit.write("kb.seed", client=self._client(), template=key,
+            self.deps.core.guards.audit.write("kb.seed", client=self._client(), template=key,
                                files=len(files), pending=approved is None)
             return
         # 无版本库（KB_STORE=off）：直接落盘后重建
         for name, content in files.items():
-            with open(os.path.join(self.deps.kb_dir(), name), "w", encoding="utf-8") as f:
+            with open(os.path.join(self.deps.ask.kb_dir(), name), "w", encoding="utf-8") as f:
                 f.write(content)
         try:
-            total = self.deps.pipe.reload()
+            total = self.deps.ask.pipe.reload()
         except Exception as exc:  # noqa: BLE001
             self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
             return
         self._json({"ok": True, "template": key, "title": chosen["title"],
                     "added": sorted(files), "skipped": skipped, "chunks": total})
-        self.deps.guards.audit.write("kb.seed", client=self._client(), template=key,
+        self.deps.core.guards.audit.write("kb.seed", client=self._client(), template=key,
                            files=len(files), chunks=total)
 
     def _post_kb_upload(self, path: str, payload: dict) -> None:
@@ -537,7 +537,7 @@ class WriteRoutes:
                 self._json({"ok": False, "error": "文件内容为空"}, 400)
                 return
 
-            if self.deps.store is not None:
+            if self.deps.ask.store is not None:
                 try:
                     staged, change_id, approved, total = self._stage_and_maybe_approve(
                         {name: content}, note=str(payload.get("note") or "")[:200])
@@ -551,30 +551,30 @@ class WriteRoutes:
                     "ok": True, "name": name,
                     "pending": approved is None,
                     "change_id": change_id,
-                    "version": self.deps.store.active_version(),
-                    "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                    "version": self.deps.ask.store.active_version(),
+                    "files": len([n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
                     # 同名覆盖必须让上传的人看见：写入是真的，旧内容也是真的没了
                     # （只在历史版本里）。原来 warnings 只存在 changes 接口里，
                     # 上传的回复干干净净，用户对「我覆盖了什么」一无所知。
                     "warnings": staged["change"].get("warnings") or [],
-                    **self.deps.index_fields(),
+                    **self.deps.ask.index_fields(),
                 })
-                self.deps.guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
+                self.deps.core.guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
                                    chunks=total, chars=len(content),
-                                   change_id=change_id, version=self.deps.store.active_version(),
+                                   change_id=change_id, version=self.deps.ask.store.active_version(),
                                    auto_approved=approved is not None)
                 return
 
-            with open(os.path.join(self.deps.kb_dir(), name), "w", encoding="utf-8") as f:
+            with open(os.path.join(self.deps.ask.kb_dir(), name), "w", encoding="utf-8") as f:
                 f.write(content)
             try:
-                total = self.deps.pipe.reload()
+                total = self.deps.ask.pipe.reload()
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
                 return
             self._json({"ok": True, "name": name, "chunks": total,
-                        "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)])})
-            self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
+                        "files": len([n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)])})
+            self.deps.core.guards.audit.write("kb.upload", client=self._client(), name=name,
                                kind="text", chunks=total, chars=len(content))
             return
         # 组内条件互斥，走到这里说明分派给了不该给的路径。
@@ -619,7 +619,7 @@ class WriteRoutes:
                             "error": f"不是有效的 {ext.lstrip('.').upper()} 文件（文件头不匹配）"}, 400)
                 return
 
-            before = len(self.deps.pipe.chunks)
+            before = len(self.deps.ask.pipe.chunks)
             stage_dir = tempfile.mkdtemp(prefix="kb_stage_")
             try:
                 res = ingest.ingest_bytes(
@@ -637,14 +637,14 @@ class WriteRoutes:
                 return
 
             # 原始 PDF 只在校验通过后落盘，避免失败的上传在 data/raw 里堆垃圾
-            with open(os.path.join(self.deps.raw_dir, name), "wb") as f:
+            with open(os.path.join(self.deps.ask.raw_dir, name), "wb") as f:
                 f.write(data)
 
             md_path = os.path.join(stage_dir, res["md"])
             with open(md_path, "rb") as f:
                 md_bytes = f.read()
 
-            if self.deps.store is not None:
+            if self.deps.ask.store is not None:
                 try:
                     staged, change_id, approved, total = self._stage_and_maybe_approve(
                         {res["md"]: md_bytes},
@@ -673,24 +673,24 @@ class WriteRoutes:
                     "attachments": res.get("attachments"),
                     "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
                     "pending": approved is None, "change_id": change_id,
-                    "version": self.deps.store.active_version(),
+                    "version": self.deps.ask.store.active_version(),
                     "warnings": staged["change"].get("warnings") or [],
-                    "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
-                    **self.deps.index_fields(before),
+                    "files": len([n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                    **self.deps.ask.index_fields(before),
                 })
-                self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
+                self.deps.core.guards.audit.write("kb.upload", client=self._client(), name=name,
                                    kind=res.get("format") or ext.lstrip("."), chunks=total,
                                    bytes=len(data), engine=res.get("engine"),
-                                   change_id=change_id, version=self.deps.store.active_version(),
+                                   change_id=change_id, version=self.deps.ask.store.active_version(),
                                    auto_approved=approved is not None)
                 shutil.rmtree(stage_dir, ignore_errors=True)
                 return
 
-            with open(os.path.join(self.deps.kb_dir(), res["md"]), "wb") as f:
+            with open(os.path.join(self.deps.ask.kb_dir(), res["md"]), "wb") as f:
                 f.write(md_bytes)
             shutil.rmtree(stage_dir, ignore_errors=True)
             try:
-                total = self.deps.pipe.reload()
+                total = self.deps.ask.pipe.reload()
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"已转换但索引重建失败：{exc}"}, 500)
                 return
@@ -707,9 +707,9 @@ class WriteRoutes:
                 "note": res.get("note"),
                 "chunks": total,
                 "added_chunks": total - before,
-                "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                "files": len([n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
             })
-            self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
+            self.deps.core.guards.audit.write("kb.upload", client=self._client(), name=name,
                                kind=res.get("format") or ext.lstrip("."), chunks=total,
                                bytes=len(data), engine=res.get("engine"))
             return
@@ -720,16 +720,16 @@ class WriteRoutes:
         """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
         if path == "/api/knowledge/delete":
             name = _safe_name(payload.get("name"))
-            target = os.path.join(self.deps.kb_dir(), name) if name else ""
+            target = os.path.join(self.deps.ask.kb_dir(), name) if name else ""
             if not name or not os.path.exists(target):
                 self._json({"ok": False, "error": "文件不存在"}, 404)
                 return
-            remaining = [n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT) and n != name]
+            remaining = [n for n in os.listdir(self.deps.ask.kb_dir()) if n.lower().endswith(ALLOWED_EXT) and n != name]
             if not remaining:
                 self._json({"ok": False, "error": "知识库至少要保留一个文件"}, 400)
                 return
 
-            if self.deps.store is not None:
+            if self.deps.ask.store is not None:
                 try:
                     staged, change_id, approved, total = self._stage_and_maybe_approve(
                         {}, deletes=[name], note=f"删除 {name}")
@@ -737,66 +737,66 @@ class WriteRoutes:
                     self._json({"ok": False, "error": str(exc)}, 400)
                     return
                 self._json({"ok": True, "name": name, "pending": approved is None,
-                            "change_id": change_id, "version": self.deps.store.active_version(),
-                            **self.deps.index_fields()})
-                self.deps.guards.audit.write("kb.delete", client=self._client(), name=name,
+                            "change_id": change_id, "version": self.deps.ask.store.active_version(),
+                            **self.deps.ask.index_fields()})
+                self.deps.core.guards.audit.write("kb.delete", client=self._client(), name=name,
                                    chunks=total, change_id=change_id,
-                                   version=self.deps.store.active_version())
+                                   version=self.deps.ask.store.active_version())
                 return
 
             os.remove(target)
-            total = self.deps.pipe.reload()
-            self.deps.guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
+            total = self.deps.ask.pipe.reload()
+            self.deps.core.guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
             self._json({"ok": True, "name": name, "chunks": total})
             return
         if path == "/api/kb/approve":
-            if self.deps.store is None or not self._is_admin():
+            if self.deps.ask.store is None or not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
             change_id = str(payload.get("change_id") or "").strip()
             try:
-                res = self.deps.store.approve(change_id, approver=self._client(),
+                res = self.deps.ask.store.approve(change_id, approver=self._client(),
                                     note=str(payload.get("note") or "")[:200])
-                total = self.deps.reload_kb()
+                total = self.deps.ask.reload_kb()
             except kbstore.KnowledgeError as exc:
                 self._json({"ok": False, "error": str(exc)}, 409)
                 return
-            self.deps.guards.audit.write("kb.approve", client=self._client(), change_id=change_id,
+            self.deps.core.guards.audit.write("kb.approve", client=self._client(), change_id=change_id,
                                version=res["version"], chunks=total)
             self._json({"ok": True, "change_id": change_id, "version": res["version"],
-                        **self.deps.index_fields()})
+                        **self.deps.ask.index_fields()})
             return
         if path == "/api/kb/reject":
-            if self.deps.store is None or not self._is_admin():
+            if self.deps.ask.store is None or not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
             change_id = str(payload.get("change_id") or "").strip()
             try:
-                res = self.deps.store.reject(change_id, approver=self._client(),
+                res = self.deps.ask.store.reject(change_id, approver=self._client(),
                                    reason=str(payload.get("reason") or "")[:200])
             except kbstore.KnowledgeError as exc:
                 self._json({"ok": False, "error": str(exc)}, 409)
                 return
-            self.deps.guards.audit.write("kb.reject", client=self._client(), change_id=change_id)
+            self.deps.core.guards.audit.write("kb.reject", client=self._client(), change_id=change_id)
             self._json({"ok": True, **res})
             return
         if path == "/api/kb/rollback_doc":
-            if self.deps.store is None or not self._is_admin():
+            if self.deps.ask.store is None or not self._is_admin():
                 self._json({"error": "forbidden"}, 403)
                 return
             name = str(payload.get("name") or "").strip()
             to_version = str(payload.get("to_version") or "").strip()
             try:
-                res = self.deps.store.rollback_doc(name, to_version, author=self._client(),
+                res = self.deps.ask.store.rollback_doc(name, to_version, author=self._client(),
                                          note=str(payload.get("note") or "")[:200])
-                total = self.deps.reload_kb()
+                total = self.deps.ask.reload_kb()
             except kbstore.KnowledgeError as exc:
                 self._json({"ok": False, "error": str(exc)}, 409)
                 return
-            self.deps.guards.audit.write("kb.rollback_doc", client=self._client(), name=name,
+            self.deps.core.guards.audit.write("kb.rollback_doc", client=self._client(), name=name,
                                from_version=to_version, version=res["version"], chunks=total)
             self._json({"ok": True, "name": name, "from": to_version,
-                        "version": res["version"], **self.deps.index_fields()})
+                        "version": res["version"], **self.deps.ask.index_fields()})
             return
         # 组内条件互斥，走到这里说明分派给了不该给的路径。
         self._not_found(self.command, path)
@@ -818,7 +818,7 @@ class WriteRoutes:
                 self._json({"ok": False, "error": "请指定知识库里的 .md 文件名"}, 400)
                 return
             doc_id = name.rsplit(".", 1)[0]
-            chunks = [c for c in self.deps.pipe.chunks if c.doc_id == doc_id]
+            chunks = [c for c in self.deps.ask.pipe.chunks if c.doc_id == doc_id]
             if not chunks:
                 self._json({"ok": False, "error": f"文档 {name} 没有可用的知识块"}, 404)
                 return
@@ -827,7 +827,7 @@ class WriteRoutes:
             except (TypeError, ValueError):
                 n = 3
             res = casegen.generate_for_document(
-                doc_id, chunks, self.deps.doc_cases_path, n=n,
+                doc_id, chunks, self.deps.ask.doc_cases_path, n=n,
                 prefer_llm=bool(payload.get("use_llm", True)),
             )
             if not res["added"]:
@@ -859,7 +859,7 @@ class WriteRoutes:
             # 转后台之后这条连接可能已经关了，闭包里再摸 self 的任何属性都是竞态。
             deps = self.deps
             try:
-                outcome, deferred = deps.tasks.run_or_defer(
+                outcome, deferred = deps.core.tasks.run_or_defer(
                     "cases.run",
                     lambda: _cases_run_work(deps, scope, cases, sleep_s, client))
             except tasks.TaskBusy as exc:
@@ -881,7 +881,7 @@ class WriteRoutes:
             return
         if path == "/api/cases/from_feedback":
             trace_id = str(payload.get("trace_id", ""))
-            rows = list(reversed(_read_jsonl(self.deps.pipe.log_path, 5000)))
+            rows = list(reversed(_read_jsonl(self.deps.ask.pipe.log_path, 5000)))
             query = next((r.get("query", "") for r in rows if r.get("trace_id") == trace_id), "")
             if not query:
                 self._json({"ok": False, "error": "未找到该 trace 对应的问题"}, 400)
@@ -898,7 +898,7 @@ class WriteRoutes:
             # 序号按已有最大 id 递增而不是按条数：文件被截断或手工清理过时，
             # `len()+1` 会立刻撞号。
             with _CASE_ID_LOCK:
-                existing = _read_jsonl(self.deps.feedback_cases_path, 100000)
+                existing = _read_jsonl(self.deps.ask.feedback_cases_path, 100000)
                 max_seq = 0
                 for row in existing:
                     cid = str(row.get("id") or "")
@@ -915,8 +915,8 @@ class WriteRoutes:
                     "source_trace": trace_id,
                     "note": note,
                 }
-                os.makedirs(os.path.dirname(self.deps.feedback_cases_path), exist_ok=True)
-                with open(self.deps.feedback_cases_path, "a", encoding="utf-8") as f:
+                os.makedirs(os.path.dirname(self.deps.ask.feedback_cases_path), exist_ok=True)
+                with open(self.deps.ask.feedback_cases_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(case, ensure_ascii=False) + "\n")
             self._json({"ok": True, "case": case, "total": seq})
             return
@@ -960,7 +960,7 @@ class WriteRoutes:
                 # /kb 传文件名（带扩展名），引用卡片传 doc_id（不带）——两种都收
                 doc = candidate.rsplit(".", 1)[0] if "." in candidate else candidate
             try:
-                detail = self.deps.pipe.debug_search(query.strip(), top_k=top_k, doc=doc or None)
+                detail = self.deps.ask.pipe.debug_search(query.strip(), top_k=top_k, doc=doc or None)
             except Exception as exc:  # noqa: BLE001 —— 索引异常要如实报，不假装空结果
                 self._json({"ok": False, "error": "retrieval_error",
                             "message": self._error_text(exc, "检索失败")}, 500)
@@ -983,10 +983,10 @@ class WriteRoutes:
                 "session_id": str(payload.get("session_id") or "")[:64],
                 "kb_version": str(payload.get("kb_version") or "")[:32],
             }
-            jsonl.append_line(self.deps.feedback_path, json.dumps(record, ensure_ascii=False),
-                              int(self.deps.pipe.settings.log_max_bytes),
-                              int(self.deps.pipe.settings.log_keep))
-            self.deps.guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
+            jsonl.append_line(self.deps.ask.feedback_path, json.dumps(record, ensure_ascii=False),
+                              int(self.deps.ask.pipe.settings.log_max_bytes),
+                              int(self.deps.ask.pipe.settings.log_keep))
+            self.deps.core.guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
                                useful=record["useful"], behavior=record["behavior"],
                                has_expected=bool(record["expected"]),
                                document=record["document"])
@@ -997,24 +997,24 @@ class WriteRoutes:
                 self._json({"error": "forbidden"}, 403)
                 return
             try:
-                detail = self.deps.pipe.rebuild_keywords(enrich=True)
-                self.deps.guards.audit.write("keywords.rebuild", client=self._client(),
+                detail = self.deps.ask.pipe.rebuild_keywords(enrich=True)
+                self.deps.core.guards.audit.write("keywords.rebuild", client=self._client(),
                                    entries=detail.get("entries"), llm=detail.get("llm"))
                 self._json({"ok": True, "keywords": detail,
-                            "summary": self.deps.pipe.keywords.summary()})
+                            "summary": self.deps.ask.pipe.keywords.summary()})
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
         if path == "/api/session/clear":
             sid = str(payload.get("session_id") or "").strip()[:64]
-            self.deps.pipe.sessions.clear(sid)
-            self._json({"ok": True, "session_id": sid, "sessions": self.deps.pipe.sessions.status()})
+            self.deps.ask.pipe.sessions.clear(sid)
+            self._json({"ok": True, "session_id": sid, "sessions": self.deps.ask.pipe.sessions.status()})
             return
         if path == "/api/reload":
             try:
-                total = self.deps.reload_kb()
-                self.deps.guards.audit.write("kb.reload", client=self._client(), chunks=total)
-                self._json({"ok": True, **self.deps.index_fields()})
+                total = self.deps.ask.reload_kb()
+                self.deps.core.guards.audit.write("kb.reload", client=self._client(), chunks=total)
+                self._json({"ok": True, **self.deps.ask.index_fields()})
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": str(exc)}, 500)
             return
@@ -1056,8 +1056,8 @@ class WriteRoutes:
             self._json(body, code, extra_headers=headers)
             return
         if pre["cached"] is not None:
-            self.deps.metrics.inc("rag_idempotent_replay_total")
-            self.deps.guards.audit.write("ask.idempotent_replay", client=pre["client"],
+            self.deps.core.metrics.inc("rag_idempotent_replay_total")
+            self.deps.core.guards.audit.write("ask.idempotent_replay", client=pre["client"],
                                key=pre["idem_key"],
                                trace_id=pre["cached"].get("trace_id"),
                                request_id=pre["request_id"])
@@ -1066,14 +1066,14 @@ class WriteRoutes:
             return
 
         started = time.monotonic()
-        result = self.deps.pipe.ask(pre["query"], model=pre["model"],
+        result = self.deps.ask.pipe.ask(pre["query"], model=pre["model"],
                           force_extractive=pre["budget_blocked"],
                           session_id=pre["session_id"])
         self._annotate_result(result, pre)
         self._record_ask(result, pre, started, "/api/ask")
         self._json(result, extra_headers={
             "X-RateLimit-Remaining": pre["decision"].remaining,
-            "X-Retrieval": str(result.get("retrieval_mode") or self.deps.pipe.settings.retrieval),
+            "X-Retrieval": str(result.get("retrieval_mode") or self.deps.ask.pipe.settings.retrieval),
             "X-Request-Id": pre["request_id"],
             "X-Answer-Path": str(result.get("path") or "rag"),
         })
@@ -1107,8 +1107,8 @@ class WriteRoutes:
             self._sse_raw(f": {text}\n\n")
 
         if pre["cached"] is not None:
-            self.deps.metrics.inc("rag_idempotent_replay_total")
-            self.deps.guards.audit.write("ask.idempotent_replay", client=pre["client"],
+            self.deps.core.metrics.inc("rag_idempotent_replay_total")
+            self.deps.core.guards.audit.write("ask.idempotent_replay", client=pre["client"],
                                key=pre["idem_key"],
                                trace_id=pre["cached"].get("trace_id"),
                                request_id=pre["request_id"])
@@ -1119,7 +1119,7 @@ class WriteRoutes:
         started = time.monotonic()
         send_comment("connected")
         outcome = sse.relay(
-            factory=lambda: self.deps.pipe.ask_stream(pre["query"], model=pre["model"],
+            factory=lambda: self.deps.ask.pipe.ask_stream(pre["query"], model=pre["model"],
                                             force_extractive=pre["budget_blocked"],
                                             session_id=pre["session_id"]),
             send=send, cancel=cancel, heartbeat=lambda: send_comment("ping"),
@@ -1171,10 +1171,10 @@ class WriteRoutes:
 
         key_name, auth_err = self._api_auth()
         if auth_err:
-            self.deps.metrics.inc("rag_unauthorized_total")
-            self.deps.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "401"})
-            self.deps.guards.audit.write("ask.unauthorized", client=client, query=query[:200],
-                               reason=auth_err, key=self.deps.api_keys.mask(self._presented_key()),
+            self.deps.core.metrics.inc("rag_unauthorized_total")
+            self.deps.core.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "401"})
+            self.deps.core.guards.audit.write("ask.unauthorized", client=client, query=query[:200],
+                               reason=auth_err, key=self.deps.core.api_keys.mask(self._presented_key()),
                                request_id=request_id)
             return None, ({
                 "error": "unauthorized",
@@ -1184,11 +1184,11 @@ class WriteRoutes:
 
         # 配了 Key 就按 Key 限流与计成本；未配置时退回按 IP（本机/内网场景）
         identity = f"key:{key_name}" if key_name else client
-        decision = self.deps.guards.rate.allow(identity)
+        decision = self.deps.core.guards.rate.allow(identity)
         if not decision.allowed:
-            self.deps.metrics.inc("rag_rate_limited_total")
-            self.deps.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
-            self.deps.guards.audit.write("ask.rate_limited", client=client, query=query[:200],
+            self.deps.core.metrics.inc("rag_rate_limited_total")
+            self.deps.core.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
+            self.deps.core.guards.audit.write("ask.rate_limited", client=client, query=query[:200],
                                retry_after=decision.retry_after, request_id=request_id,
                                api_key=key_name)
             return None, ({"error": "rate limited", "retry_after": decision.retry_after,
@@ -1201,7 +1201,7 @@ class WriteRoutes:
         # 后果不是重复计费，而是静默给错答案——结果看起来完全正常，
         # 没有任何异常信号。调用方（重试层、脚本、复用一个 id 的前端）都会中招。
         # 不存原文而存哈希：键要进审计与指标标签，不能带用户问题。
-        model = self.deps.guards.runtime.pick_model(f"{identity}|{query}")
+        model = self.deps.core.guards.runtime.pick_model(f"{identity}|{query}")
         raw_idem = (self.headers.get("Idempotency-Key")
                     or str(payload.get("request_id") or "")).strip()
         idem_key = ""
@@ -1213,12 +1213,12 @@ class WriteRoutes:
             "query": query, "session_id": session_id, "client": client,
             "api_key": key_name, "identity": identity,
             "request_id": request_id, "decision": decision, "idem_key": idem_key,
-            "cached": self.deps.guards.idem.get(idem_key),
+            "cached": self.deps.core.guards.idem.get(idem_key),
             "model": model,
-            "budget_blocked": self.deps.guards.cost.blocked,
+            "budget_blocked": self.deps.core.guards.cost.blocked,
         }, None
     def _annotate_result(self, result: dict, pre: dict) -> None:
-        kb_version = self.deps.store.active_version() if self.deps.store is not None else None
+        kb_version = self.deps.ask.store.active_version() if self.deps.ask.store is not None else None
         result["kb_version"] = kb_version
         for citation in result.get("citations") or []:
             citation.setdefault("version", kb_version)
@@ -1229,17 +1229,17 @@ class WriteRoutes:
         llm_tokens = int((result.get("usage") or {}).get("total_tokens") or 0)
         embed_tokens = int(result.get("embedding_tokens") or 0)
         tokens = llm_tokens + embed_tokens
-        price = float(getattr(self.deps.pipe.settings, "token_price_per_1k", 0) or 0)
+        price = float(getattr(self.deps.ask.pipe.settings, "token_price_per_1k", 0) or 0)
         cost_usd = round(tokens / 1000 * price, 6) if price > 0 else 0.0
         result["cost_usd"] = cost_usd
-        self.deps.guards.cost.add(tokens)
-        self.deps.guards.idem.put(pre["idem_key"], result)
+        self.deps.core.guards.cost.add(tokens)
+        self.deps.core.guards.idem.put(pre["idem_key"], result)
 
-        if self.deps.tracer is not None:
+        if self.deps.tracing.tracer is not None:
             # 旁路：emit 只入队，永不抛、永不阻塞（队列满就丢并计数）。
             # 用 started 的单调钟换纳秒起点，保证 span 时长与 latency_ms 同一口径。
             elapsed_ns = int((time.monotonic() - started) * 1e9)
-            self.deps.tracer.emit("rag.ask", time.time_ns() - max(0, elapsed_ns), {
+            self.deps.tracing.tracer.emit("rag.ask", time.time_ns() - max(0, elapsed_ns), {
                 "rag.behavior": behavior_of(result),
                 "rag.path": str(result.get("path") or "rag"),
                 "rag.mode": str(result.get("mode") or ""),
@@ -1253,40 +1253,40 @@ class WriteRoutes:
         behavior = str(result.get("behavior") or "unknown")
         mode = str(result.get("mode") or "none")
         answer_path = str(result.get("path") or "rag")
-        self.deps.metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
-        self.deps.metrics.inc("rag_answer_path_total", {"path": answer_path})
+        self.deps.core.metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
+        self.deps.core.metrics.inc("rag_answer_path_total", {"path": answer_path})
         if answer_path == "keyword":
-            self.deps.metrics.inc("rag_keyword_hit_total")
+            self.deps.core.metrics.inc("rag_keyword_hit_total")
         for item in result.get("keyword_rejected") or []:
-            self.deps.metrics.inc("rag_keyword_rejected_total",
+            self.deps.core.metrics.inc("rag_keyword_rejected_total",
                         {"reason": str(item.get("reason") or "unknown")})
         if result.get("keyword_gate"):
-            self.deps.metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
+            self.deps.core.metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
         if not result.get("api_called"):
-            self.deps.metrics.inc("rag_local_answer_total")
-        self.deps.metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
-        self.deps.metrics.observe("rag_ask_duration_seconds",
+            self.deps.core.metrics.inc("rag_local_answer_total")
+        self.deps.core.metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
+        self.deps.core.metrics.observe("rag_ask_duration_seconds",
                         result.get("latency_ms", 0) / 1000.0 or (time.monotonic() - started))
-        self.deps.metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
-        self.deps.metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
+        self.deps.core.metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
+        self.deps.core.metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
         if cost_usd:
-            self.deps.metrics.inc("rag_cost_usd_total", value=cost_usd)
+            self.deps.core.metrics.inc("rag_cost_usd_total", value=cost_usd)
         if pre.get("api_key"):
             # 标签只放名字的哈希前缀：指标导出后可能被采集/转发，别把密钥名也带走
             key_label = hashlib.sha256(str(pre["api_key"]).encode("utf-8")).hexdigest()[:8]
-            self.deps.metrics.inc("rag_api_tokens_total", {"key": key_label}, tokens)
+            self.deps.core.metrics.inc("rag_api_tokens_total", {"key": key_label}, tokens)
             if cost_usd:
-                self.deps.metrics.inc("rag_api_cost_usd_total", {"key": key_label}, value=cost_usd)
+                self.deps.core.metrics.inc("rag_api_cost_usd_total", {"key": key_label}, value=cost_usd)
         if result.get("degraded"):
-            self.deps.metrics.inc("rag_retrieval_degraded_total",
+            self.deps.core.metrics.inc("rag_retrieval_degraded_total",
                         {"reason": str(result.get("degrade_reason") or "unknown")})
         # 引用支持度：编号合法但内容对不上时单独计数，别和「无出处」混在一起
         bad_citations = sum(1 for item in (result.get("citation_support") or [])
                             if not item.get("supported"))
         if bad_citations:
-            self.deps.metrics.inc("rag_citation_unsupported_total", value=bad_citations)
+            self.deps.core.metrics.inc("rag_citation_unsupported_total", value=bad_citations)
 
-        self.deps.guards.audit.write(
+        self.deps.core.guards.audit.write(
             "ask", client=pre["client"], query=pre["query"][:200],
             trace_id=result.get("trace_id"), request_id=pre["request_id"],
             behavior=behavior, mode=mode, session_id=pre["session_id"],

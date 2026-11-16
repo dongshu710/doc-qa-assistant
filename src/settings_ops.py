@@ -391,6 +391,16 @@ def storage_report(notes_home: str, kb_root: str, index_dir: str,
 
 
 
+def total_bytes(report: dict) -> int:
+    """存储区总占用。字段清单必须与 `storage_report()` 保持一致——
+
+    少列一项不会报错，只会让「清理前看到 200 MB、清理后还是 200 MB」这种
+    对不上的事情出现。`assets` 是 1.26.0 加的，这里漏过一次。
+    """
+    return sum(int((report.get(key) or {}).get("bytes") or 0)
+               for key in ("notes", "assets", "index", "kb", "config", "embedding"))
+
+
 def clear_index(home: str) -> int:
     """删掉笔记索引缓存，返回释放的字节数。
 

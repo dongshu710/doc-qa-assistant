@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable
 
 import atexit
 import os
@@ -47,61 +47,98 @@ from .write import make_write
 SCALE_WARN_CHUNKS = 20000
 
 
-@dataclass
-class AppDeps:
-    """组合根传给各路由模块的依赖。
+@dataclass(frozen=True)
+class CoreDeps:
+    """进程级公共设施：谁都要用、且整个进程只有一份的东西。
+
+    分组口径是「谁用」而不是「谁依赖谁」：`note_ref` 放在这里，是因为四个
+    路由模块都要读它判断笔记服务是否可用；`_repo_url` 放在这里，是因为它只
+    产出字符串、不碰业务状态。
 
     原来是 `SimpleNamespace`：拼错一个字段名不会报错，只在运行时 AttributeError，
     而症状是「某个接口 500」——离出错的地方隔着几层调用。dataclass 在构造时
     就校验全部字段，少给一个立即 TypeError，拼错一个也立即 TypeError。
-
-    带前导下划线的几个是被各模块当函数直接调用的闭包（`_reopen_notes` 等），
-    与普通数据字段放在一起是历史原因，不是刻意区分。
     """
 
     project_root: str
-    # 数据字段标真实类型（原来全是 Any）：写出 `deps.pipe` 时 IDE 能补全，
-    # 字段拼错也能被静态检查发现。运行时不校验，改错类型不会让服务起不来。
     settings: Settings
     metrics: Metrics
-    pipe: RAGPipeline
-    store: kbstore.KnowledgeStore | None
     log_dir: str
     guards: Guards
     api_keys: ApiKeyStore
     # 长任务登记表：慢接口（评测、备份）超时后转后台，前端轮询取结果
     tasks: tasks.TaskRegistry
+    # 笔记服务句柄。用 dict 是因为要能整体替换（换存储区时重建服务），
+    # 键固定为 service / error，见 `_reopen_notes`。
     note_ref: dict
+    # 版本页与下载入口：从 .git/config 读仓库地址，只读、有 mtime 缓存
+    _repo_url: Callable[[], str]
+    _downloads: Callable[[], dict]
+
+
+@dataclass(frozen=True)
+class AskDeps:
+    """问答与知识库：检索、索引换代、评测用例落点。"""
+
+    pipe: RAGPipeline
+    # 单目录模式（测试 / 批量导入）没有版本库，这个字段就是 None
+    store: kbstore.KnowledgeStore | None
+    kb_dir: Callable[[], str]
+    async_reload: Callable[[], bool]
+    reload_kb: Callable[[bool | None], int | None]
+    index_payload: Callable[[], dict]
+    index_fields: Callable[[int | None], dict]
+    raw_dir: str
     feedback_path: str
     feedback_cases_path: str
     doc_cases_path: str
     run_report_path: str
-    raw_dir: str
-    kb_dir: str
-    async_reload: bool
-    # 闭包字段：`Callable[..., Any]` 比光秃秃的 `Any` 多一条信息——
-    # 它们是「被当函数调的」，不是数据。具体签名在各自定义处。
-    reload_kb: Callable[..., Any]
-    index_payload: Callable[..., dict]
-    index_fields: Callable[..., Any]
-    _reopen_notes: Callable[..., Any]
-    _repo_url: Callable[..., Any]
-    _downloads: Callable[..., Any]
-    _mcp_config: Callable[..., Any]
-    _probe_llm: Callable[..., Any]
-    _storage_report: Callable[..., Any]
-    _clear_index: Callable[..., Any]
-    _total_bytes: Callable[..., Any]
-    _settings_payload: Callable[..., Any]
-    _runtime_warnings: Callable[..., Any]
-    _setup_state: Callable[..., Any]
-    _apply_setup: Callable[..., Any]
-    _mcp_targets: Callable[..., Any]
-    _picker_command: Callable[..., Any]
-    _pick_folder: Callable[..., Any]
-    _count_notes: Callable[..., Any]
-    _copy_notes: Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class NotesDeps:
+    """笔记存储、设置面板、存储运维。
+
+    这些字段大多是组合根里的闭包（`_settings_payload` 等）——它们需要同时看
+    笔记服务、知识库、配置三处状态，只有 app.py 那个位置看得全。签名写全
+    而不是 `Callable[..., Any]`：拼错参数个数是运行时 TypeError，但至少要
+    能静态看出「它收几个参数、返回什么」。
+    """
+
+    _reopen_notes: Callable[[], dict]
+    _mcp_config: Callable[[], dict]
+    _mcp_targets: Callable[[], list[dict]]
+    _settings_payload: Callable[[], dict]
+    _runtime_warnings: Callable[[], list[str]]
+    _setup_state: Callable[[], dict]
+    _apply_setup: Callable[[str, str], tuple[dict, int]]
+    _picker_command: Callable[[], list[str] | None]
+    _pick_folder: Callable[[], tuple[int, dict]]
+    _count_notes: Callable[[str], int]
+    _copy_notes: Callable[[str, str], dict]
+    _storage_report: Callable[[bool], dict]
+
+
+@dataclass(frozen=True)
+class Tracing:
+    """OTel 导出器。单独一组：它是可选的旁路，不该混进业务依赖里。"""
+
     tracer: TraceExporter | None
+
+
+@dataclass(frozen=True)
+class AppDeps:
+    """四组依赖的组合根。
+
+    字段不再平铺：`deps.ask.pipe` 从 37 个同级名字里找一个，改成 `deps.ask.pipe`
+    之后，看代码的人先知道「这是问答侧的东西」。分组也有硬收益——每组都有
+    上限（≤12 字段），再加字段时会先想「该归哪组」，而不是随手往袋子里塞。
+    """
+
+    core: CoreDeps
+    ask: AskDeps
+    notes: NotesDeps
+    tracing: Tracing
 
 
 def _env_int(name: str, default: int) -> int:
@@ -297,10 +334,6 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None, *,
         home = str(service.store.home) if service else str(pathlib.Path.home() / "agent-notes")
         return settings_ops.mcp_config(sys.executable, project_root, home)
 
-    def _probe_llm(cfg: dict) -> dict:
-        """真打一次 minimal 请求验证配置。实现见 settings_ops.probe_llm（可单测）。"""
-        return settings_ops.probe_llm(cfg.get("base_url"), cfg.get("model"), cfg.get("api_key"))
-
     def _storage_report(fresh: bool = False) -> dict:
         service = note_ref["service"]
         home = str(service.store.home) if service else ""
@@ -315,18 +348,6 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None, *,
             keep_versions=appconfig.keep_versions(),
             fresh=fresh,
         )
-
-    def _clear_index(home: str) -> int:
-        return settings_ops.clear_index(home) if home else 0
-
-    def _total_bytes(report: dict) -> int:
-        """存储区总占用。必须与 `storage_report()` 的字段保持同一份清单——
-
-        少列一项不会报错，只会让「清理前看到 200 MB、清理后还是 200 MB」这种
-        对不上的事情出现。`assets` 是 1.26.0 加的，这里漏过一次。
-        """
-        return sum(int((report.get(key) or {}).get("bytes") or 0)
-                   for key in ("notes", "assets", "index", "kb", "config", "embedding"))
 
     def _settings_payload() -> dict:
         live = load_settings()
@@ -543,22 +564,31 @@ def build_app(host: str, port: int, knowledge_dir: str | None = None, *,
         return settings_ops.copy_notes(src, dst)
 
 
+    # 四组分开构造：字段一多，一次写四十个关键字参数的构造函数既看不清
+    # 「谁属于哪块」，也没法只拿一半去测。分组之后每组都在 12 个字段以内。
     deps = AppDeps(
-        project_root=project_root, settings=settings, metrics=metrics, pipe=pipe,
-        store=store, log_dir=log_dir, guards=guards, api_keys=api_keys,
-        tasks=task_registry,
-        note_ref=note_ref, feedback_path=feedback_path,
-        feedback_cases_path=feedback_cases_path, doc_cases_path=doc_cases_path,
-        run_report_path=run_report_path, raw_dir=raw_dir, kb_dir=kb_dir,
-        async_reload=async_reload, reload_kb=reload_kb, index_payload=index_payload,
-        index_fields=index_fields, _reopen_notes=_reopen_notes, _repo_url=_repo_url,
-        _downloads=_downloads, _mcp_config=_mcp_config, _probe_llm=_probe_llm,
-        _storage_report=_storage_report, _clear_index=_clear_index,
-        _total_bytes=_total_bytes, _settings_payload=_settings_payload,
-        _runtime_warnings=_runtime_warnings, _setup_state=_setup_state,
-        _apply_setup=_apply_setup, _mcp_targets=_mcp_targets,
-        _picker_command=_picker_command, _pick_folder=_pick_folder,
-        _count_notes=_count_notes, _copy_notes=_copy_notes, tracer=tracer,
+        core=CoreDeps(
+            project_root=project_root, settings=settings, metrics=metrics,
+            log_dir=log_dir, guards=guards, api_keys=api_keys,
+            tasks=task_registry, note_ref=note_ref,
+            _repo_url=_repo_url, _downloads=_downloads,
+        ),
+        ask=AskDeps(
+            pipe=pipe, store=store, kb_dir=kb_dir, async_reload=async_reload,
+            reload_kb=reload_kb, index_payload=index_payload,
+            index_fields=index_fields, raw_dir=raw_dir,
+            feedback_path=feedback_path, feedback_cases_path=feedback_cases_path,
+            doc_cases_path=doc_cases_path, run_report_path=run_report_path,
+        ),
+        notes=NotesDeps(
+            _reopen_notes=_reopen_notes, _mcp_config=_mcp_config,
+            _mcp_targets=_mcp_targets, _settings_payload=_settings_payload,
+            _runtime_warnings=_runtime_warnings, _setup_state=_setup_state,
+            _apply_setup=_apply_setup, _picker_command=_picker_command,
+            _pick_folder=_pick_folder, _count_notes=_count_notes,
+            _copy_notes=_copy_notes, _storage_report=_storage_report,
+        ),
+        tracing=Tracing(tracer=tracer),
     )
     ReadRoutes = make_read(deps)
     WriteRoutes = make_write(deps)

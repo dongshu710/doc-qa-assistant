@@ -31,6 +31,29 @@ CLASS_HARD = 1300
 CLASS_SOFT = 600
 # 类体行数要能被看见：这两个类的位置是「结构层」的锚点，涨了要有人知道。
 CLASS_SHOW = 3
+# 依赖袋分组上限：v1.43.0 把 38 个字段拆成四组，每组 12 个以内。
+# 上限写进测试，是因为「再塞一个字段」是分分钟的事，而依赖袋一胖，
+# 每个 handler 的构造参数就跟着胖，最后没人说得清一个接口真正需要什么。
+DEPS_MAX_FIELDS = 12
+
+
+def check_deps_groups() -> None:
+    """依赖袋必须是组合（四组），且每组字段数受限。"""
+    tree = ast.parse((ROOT / "src" / "handlers" / "app.py").read_text(encoding="utf-8"))
+    groups = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    for name in ("CoreDeps", "AskDeps", "NotesDeps", "Tracing"):
+        node = groups.get(name)
+        check(f"{name} 存在", node is not None, str(sorted(groups)))
+        if node is None:
+            continue
+        fields = [n for n in node.body if isinstance(n, ast.AnnAssign)]
+        check(f"{name} 字段 ≤ {DEPS_MAX_FIELDS}", len(fields) <= DEPS_MAX_FIELDS,
+              f"{len(fields)} 个：{[f.target.id for f in fields]}")
+    root = groups.get("AppDeps")
+    if root is not None:
+        flat = [n for n in root.body if isinstance(n, ast.AnnAssign)]
+        check("AppDeps 只是四组的组合，不平铺字段", len(flat) == 4,
+              str([f.target.id for f in flat]))
 
 # 白名单：允许到 HARD_LIMIT * 1.3，且必须写明为什么。
 ALLOW = {
@@ -115,6 +138,8 @@ def main() -> int:
     check("没有类超过类体上限", not over_class,
           "\n     " + "\n     ".join(f"{rel}::{name} {size} 行（上限 {CLASS_HARD}）"
                                      for size, rel, name in over_class))
+
+    check_deps_groups()
 
     # 门禁本身要能被验证，而且不能只做算术：`201 > 200` 只是解释器在算数，
     # 完全没经过 measure()。真出问题的是「量长度的那条路」，所以让它真跑一遍。
