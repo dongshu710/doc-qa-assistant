@@ -4,6 +4,7 @@
 所以既要断言表本身（最长前缀、默认收紧），也要断言分发函数确实调了 `_guard`——
 否则表写得再对，绕过它一样等于没有。
 """
+import ast
 import http.client
 import json
 import re
@@ -118,18 +119,32 @@ def test_dispatch_guard() -> None:
     print("分发函数必须过闸")
     # 路由已经拆到 src/handlers/：六个 do_* 分散在 base / read / write 里，
     # 所以按目录扫，而不是只看 server.py。
-    sources = "\n\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted((ROOT / "src" / "handlers").glob("*.py")))
+    # 判据用 AST 而不是「八格缩进的正则」：v1.43.0 把路由类从工厂闭包里搬成
+    # 模块级类之后，方法从 8 格缩进变成 4 格，按缩进匹配的正则全线失配——
+    # 那不叫「路由丢了」，只是「写法变了」。门禁要盯语义，不盯排版。
+    found: dict[str, tuple[Path, ast.AST]] = {}
+    for path in sorted((ROOT / "src" / "handlers").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                    and node.name.startswith("do_"):
+                found.setdefault(node.name, (path, node))
     for verb in ("do_GET", "do_POST", "do_PUT", "do_PATCH", "do_DELETE", "do_OPTIONS"):
-        match = re.search(rf"        def {verb}\(self\).*?(?=\n        def |\n\n    return )",
-                          sources, re.S)
-        check(f"{verb} 存在", bool(match), verb)
-        if not match:
+        hit = found.get(verb)
+        check(f"{verb} 存在", hit is not None, verb)
+        if hit is None:
             continue
-        check(f"{verb} 第一句就是 _guard",
-              re.search(r"if self\._guard\(", match.group(0)) is not None,
-              match.group(0)[:60].replace("\n", " "))
+        path, node = hit
+        # 原判据是「函数体里出现过 `if self._guard(`」，这里保持同一强度：
+        # 找一个以 _guard 调用为条件的 if，不要求它是第一条语句
+        # （do_GET 会先 urlparse 一遍，那条 path 变量后面还要用）。
+        guarded = any(
+            isinstance(n, ast.If) and any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and c.func.attr == "_guard" for c in ast.walk(n.test))
+            for n in ast.walk(node))
+        check(f"{verb} 第一句就是 _guard", guarded,
+              f"{path.name}:{node.lineno}")
 
 
 def test_layout() -> None:

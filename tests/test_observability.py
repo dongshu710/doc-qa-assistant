@@ -72,14 +72,21 @@ def env_for(work: Path, **extra: str) -> dict:
 
 
 def wait_up(port: int, timeout: float = 30.0) -> bool:
+    """等到 /api/health 不再是 `state=starting`（v1.42.0 起启动期也占着端口）。"""
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         try:
             with NO_PROXY.open(f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
-                resp.read()
-                return True
+                body = resp.read()
         except Exception:  # noqa: BLE001 —— 还没起来
             time.sleep(0.2)
+            continue
+        try:
+            if json.loads(body).get("state") != "starting":
+                return True
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        time.sleep(0.2)
     return False
 
 

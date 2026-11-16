@@ -93,15 +93,26 @@ def _absolute_strings(obj, _path: str = "") -> list[str]:
 
 
 def wait_up(port: int, timeout: float = 30.0) -> bool:
-    """等 /api/health 能返回；超时说明服务没起来。"""
+    """等 /api/health 报「已就绪」；超时说明服务没起来。
+
+    只判 200 不够：v1.42.0 起服务先占端口再建索引，启动期的应答器同样回 200，
+    但正文是 `{"state":"starting"}`，此刻发业务请求一律 503。判 state 才叫就绪——
+    不判就会偶发地把「正在建索引」当成失败（真踩过：本文件三项断言随机红）。
+    """
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         try:
             with NO_PROXY.open(f"http://127.0.0.1:{port}/api/health", timeout=1) as r:
-                r.read()
-                return True
+                body = r.read()
         except Exception:  # noqa: BLE001 —— 还没起来
             time.sleep(0.2)
+            continue
+        try:
+            if json.loads(body).get("state") != "starting":
+                return True
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        time.sleep(0.2)
     return False
 
 

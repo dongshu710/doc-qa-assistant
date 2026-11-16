@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import traceback
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from .. import (accesslog, openai_compat as compat,
@@ -19,6 +20,9 @@ from .. import (accesslog, openai_compat as compat,
 from ..auth import READ_ONLY_POSTS, safe_equal
 from ..http_server import SlotAwareHandler
 from .common import redact_settings
+
+if TYPE_CHECKING:  # 只为注解存在：运行时导入 app 会形成环（app 反过来导入本模块）
+    from .app import AppDeps
 
 # 错误体统一形状：{"ok": false, "error": "<机器码>", "message": "<中文>"}。
 # 1.27.0 之前同一个服务里同时存在 5 种：`{"error":"not found"}`、
@@ -141,562 +145,563 @@ def sse_limit() -> int:
     return _SSE_LIMIT
 
 
-def make_base(deps):
-    # 原来这些名字是 create_server() 的闭包；拆开后由组合根显式传入。
-    settings = deps.settings
-    metrics = deps.metrics
-    pipe = deps.pipe
-    store = deps.store
-    guards = deps.guards
-    api_keys = deps.api_keys
-    reload_kb = deps.reload_kb
-    log_dir = deps.log_dir
+def make_base(deps: "AppDeps") -> type:
+    """薄壳：给模块级 BaseRoutes 注入依赖，返回可直接多重继承的类。
 
-    class BaseRoutes(SlotAwareHandler):
-        # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
-        # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
-        # 并发名额的扣减在 SlotAwareHandler 里做（读完请求行才扣），
-        # 空闲连接只占连接槽，不会把工作槽吃光。
-        protocol_version = "HTTP/1.1"
-        timeout = 20
+    为什么用 `type()` 造子类、而不是给 BaseRoutes.deps 赋值：测试里会反复起停服务，
+    同一个进程可能先后存在多套依赖。写类属性会让前一套被静默覆盖——已经在跑的
+    服务下一次请求读到的是别人家的 pipe。子类各持一份，互不可见。
+    """
+    return type("BaseRoutes", (BaseRoutes,), {"deps": deps, "__module__": __name__})
 
-        # 本次请求是否已经开始写响应。异常兜底靠它判断还能不能补一个 500：
-        # 已经发出 200 和部分正文之后再写一次响应，两段报文会粘在一起，
-        # 客户端解析直接失败——比不补更糟。
-        _responded = False
 
-        def send_response(self, code, message=None) -> None:  # noqa: D102 —— 见 _responded
-            self._responded = True
-            self._status = code
-            super().send_response(code, message)
+class BaseRoutes(SlotAwareHandler):
+    # 由 make_base() 注入（见上方薄壳）。模块级类不能自己去拿依赖：
+    # 拿成模块全局就会被第二个 build_app() 覆盖，起停服务会串账。
+    deps: AppDeps
 
-        def handle_one_request(self) -> None:
-            """请求边界兜底：未捕获异常必须变成 500，不能变成「无声断连」。
+    # HTTP/1.1 + 定长响应 = 连接可复用，省掉每请求一次 TCP 握手。
+    # timeout 必须有：keep-alive 下空闲连接会占住线程，不能无限等。
+    # 并发名额的扣减在 SlotAwareHandler 里做（读完请求行才扣），
+    # 空闲连接只占连接槽，不会把工作槽吃光。
+    protocol_version = "HTTP/1.1"
+    timeout = 20
 
-            为什么必须在这一层：各 handler 里漏掉的异常（典型是
-            `?limit=abc` 抛出的 ValueError）原来会一路冒到 socketserver，
-            客户端拿到的是 RemoteDisconnected——没有状态码、没有响应体。
-            监控里看到的是「客户端主动断开」而不是「服务端 500」，
-            排障方向直接被带偏；`_CODE_BY_STATUS` 里那个 internal_error
-            也永远生成不出来。
-            """
-            self._responded = False
-            self._status = 0
-            started = time.monotonic()
-            try:
-                super().handle_one_request()
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                # 对端先走了：关标签页、Ctrl-C 打断流式输出都会这样，属正常现象
-                self.close_connection = True
-            except Exception as exc:  # noqa: BLE001 —— 这一层就是最后的兜底
-                metrics.inc("rag_request_crash_total")
-                guards.audit.write("request.crash", client=self._client(),
-                                   path=self.path[:160],
-                                   error=type(exc).__name__)
-                traceback.print_exc()
-                if not self._responded:
-                    try:
-                        self._json({"ok": False, "error": "internal_error",
-                                    "message": self._error_text(exc)}, 500)
-                    except OSError:
-                        pass
-                self.close_connection = True
-            finally:
-                self._log_access(started)
+    # 本次请求是否已经开始写响应。异常兜底靠它判断还能不能补一个 500：
+    # 已经发出 200 和部分正文之后再写一次响应，两段报文会粘在一起，
+    # 客户端解析直接失败——比不补更糟。
+    _responded = False
 
-        def _log_access(self, started: float) -> None:
-            """一次请求一行。空连接（浏览器预连接、keep-alive 到期关闭、端口探活）不记：
-            `command` 是上一次请求留下的，`raw_requestline` 为空才说明这次真的没读到请求行。"""
-            if not getattr(self, "command", "") or not getattr(self, "raw_requestline", b""):
-                return
-            try:
-                req_id = (self.headers.get("X-Request-Id") or "") if self.headers else ""
-            except AttributeError:
-                req_id = ""
-            accesslog.emit(log_dir, method=self.command, path=self.path,
-                           status=getattr(self, "_status", 0),
-                           ms=(time.monotonic() - started) * 1000,
-                           client=self._client(), req_id=req_id)
+    def send_response(self, code, message=None) -> None:  # noqa: D102 —— 见 _responded
+        self._responded = True
+        self._status = code
+        super().send_response(code, message)
 
-        # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
-        COMPRESSIBLE = frozenset({
-            "text/html", "text/plain", "text/markdown", "text/css",
-            "application/json", "application/javascript", "text/javascript",
-            "image/svg+xml",
-        })
+    def handle_one_request(self) -> None:
+        """请求边界兜底：未捕获异常必须变成 500，不能变成「无声断连」。
 
-        def _sse_headers(self) -> None:
-            """流式响应的四行头，两条流式共用一个实现。
-
-            `Connection: close` 不是可选项：分块 + keep-alive 一起用会被代理层缓冲，
-            用户看到的是「答案憋到最后一次性出现」，而服务端日志里一切正常。
-            也不能发 Content-Length——长度在这时根本不知道。
-            """
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("X-Accel-Buffering", "no")
-            self.send_header("Connection", "close")
-            self.end_headers()
+        为什么必须在这一层：各 handler 里漏掉的异常（典型是
+        `?limit=abc` 抛出的 ValueError）原来会一路冒到 socketserver，
+        客户端拿到的是 RemoteDisconnected——没有状态码、没有响应体。
+        监控里看到的是「客户端主动断开」而不是「服务端 500」，
+        排障方向直接被带偏；`_CODE_BY_STATUS` 里那个 internal_error
+        也永远生成不出来。
+        """
+        self._responded = False
+        self._status = 0
+        started = time.monotonic()
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # 对端先走了：关标签页、Ctrl-C 打断流式输出都会这样，属正常现象
             self.close_connection = True
-
-        def _sse_raw(self, frame: str) -> bool:
-            """写一段已经编码好的 SSE 文本；返回 False 表示客户端已经走了。
-
-            收尾帧（结束、[DONE]、错误）用它：这时已经没什么可补救的，
-            再抛一次异常只会把「正常结束」记成 500。
-            """
-            try:
-                self.wfile.write(frame.encode("utf-8"))
-                self.wfile.flush()
-                return True
-            except OSError:
-                self.close_connection = True
-                return False
-
-        def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8",
-                  extra_headers: dict | None = None, cache: str = "no-cache") -> None:
-            """统一出口：gzip + ETag 协商 + 定长。
-
-            页面用 `cache="no-cache"`：可以存，但每次要带 ETag 回源校验，
-            内容没变就回 304（约 150 字节），部署后也不会拿到旧页面。
-            JSON 接口用 `no-store`，避免中间层缓存掉一次问答结果。
-            """
-            data = body.encode("utf-8")
-            extra = {key: str(value) for key, value in (extra_headers or {}).items()}
-            # 弱校验：gzip 后字节不同但内容相同，仍应命中同一个 ETag
-            etag = 'W/"' + hashlib.sha256(data).hexdigest()[:20] + '"'
-            mime = content_type.split(";")[0].strip().lower()
-            headers = {"ETag": etag, "Cache-Control": cache, "Vary": "Accept-Encoding",
-                       # 三件套：不许猜 MIME、不许被嵌进别人的 iframe、不外泄 Referer。
-                       # 本地应用也一样——恶意页面用 iframe 套住本服务就能诱导点击。
-                       "X-Content-Type-Options": "nosniff",
-                       "X-Frame-Options": "DENY",
-                       "Referrer-Policy": "no-referrer"}
-            if mime == "text/html":
-                # 页面全部资源都在本站：禁止外部脚本与表单提交，把注入后的利用面压到最小
-                headers["Content-Security-Policy"] = (
-                    "default-src 'self'; img-src 'self' data:; "
-                    "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
-                    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-                )
-
-            inm = (self.headers.get("If-None-Match") or "").strip()
-            if inm and inm.replace("W/", "") == etag.replace("W/", ""):
-                self.send_response(304)
-                for key, value in headers.items():
-                    self.send_header(key, value)
-                self.end_headers()
-                return
-
-            accepts = (self.headers.get("Accept-Encoding") or "").lower()
-            if "gzip" in accepts and mime in self.COMPRESSIBLE and len(data) >= 512:
-                data = gzip.compress(data, 6)
-                headers["Content-Encoding"] = "gzip"
-
-            self.send_response(code)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            for key, value in headers.items():
-                self.send_header(key, value)
-            for key, value in extra.items():
-                self.send_header(key, value)
-            self.end_headers()
-            if self.command != "HEAD":
+        except Exception as exc:  # noqa: BLE001 —— 这一层就是最后的兜底
+            self.deps.metrics.inc("rag_request_crash_total")
+            self.deps.guards.audit.write("request.crash", client=self._client(),
+                               path=self.path[:160],
+                               error=type(exc).__name__)
+            traceback.print_exc()
+            if not self._responded:
                 try:
-                    self.wfile.write(data)
-                except (BrokenPipeError, ConnectionResetError):
-                    self.close_connection = True
-        def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
-            # 设置类是 open 级接口（Key 配错时的回退通道）：配了 Key 却没带有效 Key
-            # 的调用方也能读。但「能看配置长什么样」不等于「能看家目录」——
-            # 原来只在 `/api/settings` 一处脱敏，`/api/settings/mcp` 与
-            # `/api/settings/setup` 会把解释器绝对路径、PYTHONPATH、NOTE_HOME
-            # 原样交出去（实测 200 且含 C:\Users\...）。
-            # 放在这个唯一出口上判断，以后新增 settings 子路由不会漏。
-            if (isinstance(obj, dict) and self.command in ("GET", "HEAD")
-                    and (self.path == "/api/settings"
-                         or self.path.startswith("/api/settings/"))
-                    and api_keys.enabled and self._api_auth()[0] is None
-                    and not obj.get("redacted")):
-                obj = redact_settings(obj)
-            self._send(code, json.dumps(normalize_error(obj, code), ensure_ascii=False),
-                       extra_headers=extra_headers, cache="no-store")
-
-        def _not_found(self, method: str, path: str,
-                       extra_headers: dict | None = None) -> None:
-            """没有命中任何路由时的统一出口：方法用错回 405，路径不认识回 404。
-
-            原来一律 404：客户端拿 `PUT /api/notes` 去调，被告知「路径不存在」，
-            第一反应是核对 URL 拼写，而真正的问题是方法。405 至少指向正确方向。
-            """
-            allowed = routing.allowed_methods(path)
-            if allowed and method.upper() not in allowed:
-                allow = ", ".join(sorted(allowed))
-                self._json({"ok": False, "error": "method_not_allowed",
-                            "message": f"{method.upper()} 不支持这个地址；允许 {allow}"},
-                           405, extra_headers={"Allow": allow})
-                return
-            self._json({"ok": False, "error": "not_found",
-                        "message": f"没有这个接口：{path}"}, 404)
-
-        def _send_bytes(self, code: int, data: bytes, content_type: str,
-                        extra_headers: dict | None = None,
-                        cache: str = "private, max-age=300") -> None:
-            """二进制响应。
-
-            不复用 `_send`：那条路径会把 body 当字符串做 UTF-8 编码、还要判断能否 gzip，
-            图片走一遍会直接坏掉。
-
-            SVG 单独加 CSP + sandbox：用户在地址栏直接打开 `/assets/x.svg` 时，
-            文件里的 `<script>` 是**同源**执行的——等于给了它调用本服务接口的权限。
-            `<img>` 里不会执行，但「直接在浏览器打开」是最常见的操作，必须挡住。
-            """
-            headers = {"Content-Type": content_type,
-                       "Content-Length": str(len(data)),
-                       "Cache-Control": cache,
-                       "X-Content-Type-Options": "nosniff"}
-            if content_type.startswith("image/svg"):
-                headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
-            for key, value in (extra_headers or {}).items():
-                headers[key] = str(value)
-            self.send_response(code)
-            for key, value in headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            if self.command != "HEAD":
-                try:
-                    self.wfile.write(data)
-                except (BrokenPipeError, ConnectionResetError):
-                    self.close_connection = True
-        def _no_content(self, code: int = 202) -> None:
-            """无正文响应。MCP 规范里通知类请求必须回 202 且不带 body，
-            编造成 `200 {}` 会让客户端以为收到了一条合法响应。
-            """
-            self.send_response(code)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        def _sse_open(self, hello: bool = True) -> bool:
-            """开一条 SSE 流：不带 Content-Length，靠关闭连接收尾。
-
-            流式响应的长度事先未知，用 chunked 又要客户端支持分块解析；
-            `Connection: close` 对本地单进程最简单且被所有客户端接受。
-            `hello=False` 用于「发一条就关」的短流：首帧注释是长连接保活用的，
-            短流里多这么一行只会让 strict 客户端多解析一次。
-            """
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "close")
-            for key, value in (self._cors_headers() or {}).items():
-                self.send_header(key, value)
-            self.end_headers()
+                    self._json({"ok": False, "error": "internal_error",
+                                "message": self._error_text(exc)}, 500)
+                except OSError:
+                    pass
             self.close_connection = True
-            return self._sse_raw(": connected\n\n") if hello else True
-        def _sse_raw(self, text: str) -> bool:
-            """写一段原始 SSE 文本；返回 False 表示对端已断开。
+        finally:
+            self._log_access(started)
 
-            断开只在写的时候才暴露，所以每个发送点都要看返回值立即退出——
-            否则循环会对着一个死连接继续跑满整个时长。
-            """
-            try:
-                self.wfile.write(text.encode("utf-8"))
-                self.wfile.flush()
-                return True
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
-                self.close_connection = True
-                return False
-        def _sse_event(self, payload, event: str = "message") -> bool:
-            """发一条 SSE 消息。JSON 一定单行（`ensure_ascii=False` 不引入换行），
-            否则 `data:` 后面的换行会被客户端当成帧结束。
-            """
-            data = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
-            return self._sse_raw(f"event: {event}\ndata: {data}\n\n")
-        def _redirect(self, location: str, code: int = 302) -> None:
-            """旧页面入口保留 302：书签与外部链接不 404，但不重复渲染两份内容。"""
-            self.send_response(code)
-            self.send_header("Location", location)
-            self.send_header("Content-Length", "0")
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-        def _client(self) -> str:
-            return self.client_address[0] if self.client_address else "unknown"
-        def _error_text(self, exc: Exception, prefix: str = "服务端异常") -> str:
-            """异常详情默认不回传：消息里常带绝对路径与内部端点。
+    def _log_access(self, started: float) -> None:
+        """一次请求一行。空连接（浏览器预连接、keep-alive 到期关闭、端口探活）不记：
+        `command` 是上一次请求留下的，`raw_requestline` 为空才说明这次真的没读到请求行。"""
+        if not getattr(self, "command", "") or not getattr(self, "raw_requestline", b""):
+            return
+        try:
+            req_id = (self.headers.get("X-Request-Id") or "") if self.headers else ""
+        except AttributeError:
+            req_id = ""
+        accesslog.emit(self.deps.log_dir, method=self.command, path=self.path,
+                       status=getattr(self, "_status", 0),
+                       ms=(time.monotonic() - started) * 1000,
+                       client=self._client(), req_id=req_id)
 
-            排查问题时设 `DEBUG=on` 才带上原文；平时只给异常类型，正文进服务端日志。
-            """
-            if pipe.settings.debug:
-                return f"{prefix}：{type(exc).__name__}: {exc}"
-            return f"{prefix}：{type(exc).__name__}（详情见服务端日志，设 DEBUG=on 可显示）"
-        def _key_scope(self) -> str:
-            """当前请求所用 Key 的作用域；没配 Key 或 Key 无效时返回空串。
+    # 只压缩文本类；已经在压缩格式里的（图片）再压是负收益
+    COMPRESSIBLE = frozenset({
+        "text/html", "text/plain", "text/markdown", "text/css",
+        "application/json", "application/javascript", "text/javascript",
+        "image/svg+xml",
+    })
 
-            「没配 Key」（单机开放）不能返回 rw 以外的东西，否则默认形态下
-            所有写接口都会被自己的作用域检查挡住。
-            """
-            if not api_keys.enabled:
-                return ""
-            _name, scope, err = api_keys.identify_scope(self._presented_key())
-            return "" if err else scope
+    def _sse_headers(self) -> None:
+        """流式响应的四行头，两条流式共用一个实现。
 
-        def _is_admin(self) -> bool:
-            token = pipe.settings.admin_token
-            if token:
-                # 显式配了管理员令牌时，它是唯一凭据：Admin Key 也不能绕过它。
-                # 否则「我设了令牌为什么别人还能审批」会变成一个安全盲区。
-                return safe_equal(self.headers.get("X-Admin-Token", ""), token)
-            if self._key_scope() == "admin":
-                # 作用域为 admin 的 Key 等同管理员。没有这条，`admin` 这个作用域
-                # 只是个标签，发出去的 Key 一样批不了、回滚不了。
-                return True
-            return self._client() in ("127.0.0.1", "::1")
+        `Connection: close` 不是可选项：分块 + keep-alive 一起用会被代理层缓冲，
+        用户看到的是「答案憋到最后一次性出现」，而服务端日志里一切正常。
+        也不能发 Content-Length——长度在这时根本不知道。
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
 
-        def _readonly_gate(self, verb: str, path: str) -> bool:
-            """只读 Key 的写操作闸门：拒绝并说明该换成什么 Key。
+    def _sse_raw(self, frame: str) -> bool:
+        """写一段已经编码好的 SSE 文本；返回 False 表示客户端已经走了。
 
-            为什么要单独一道而不是在 `_write_gate` 里判：那里判的是「有没有 Key」，
-            这里是「这把 Key 能不能写」。混在一起时，只读 Key 会收到
-            「需要 API Key」——而它明明带了 Key，用户会去反复核对密钥。
-            """
-            if verb in ("GET", "HEAD", "OPTIONS"):
-                return False
-            if self._key_scope() != "ro":
-                return False
-            if path in READ_ONLY_POSTS:
-                return False
-            metrics.inc("rag_readonly_rejected_total")
-            guards.audit.write("request.forbidden", client=self._client(),
-                               path=path[:160], reason="read_only_key",
-                               key=api_keys.mask(self._presented_key()))
-            self._json({"ok": False, "error": "read_only_key",
-                        "message": f"这把 API Key 是只读的，不能调用 {path}。"
-                                   "需要写入请换有写权限的 Key（或去掉配置里的 :ro 后缀）。"},
-                       403)
+        收尾帧（结束、[DONE]、错误）用它：这时已经没什么可补救的，
+        再抛一次异常只会把「正常结束」记成 500。
+        """
+        try:
+            self.wfile.write(frame.encode("utf-8"))
+            self.wfile.flush()
             return True
-        def _auto_approve(self) -> bool:
-            """KB_APPROVAL=off 全放行；on 全审批；auto 仅本机管理员直通。"""
-            mode = (pipe.settings.kb_approval or "auto").strip().lower()
-            if mode == "off":
-                return True
-            if mode == "on":
-                return False
-            return self._is_admin()
-
-        def _stage_and_maybe_approve(self, files, *, deletes=None, note: str = "",
-                                     author: str | None = None):
-            """入库一次变更，并按审批模式决定要不要立刻生效。
-
-            文本上传、文档解析上传、删除三个入口走的是同一套：stage →（自动审批）→ 重载。
-            以前这三段各写一遍，代价不是行数，而是「改一处漏两处」：
-            审批策略一调整，会有入口保持旧行为，用户看到的是「有时要审批有时不用」。
-            返回 (staged, change_id, approved, total)，approved 为 None 表示还在待审。
-            """
-            who = author or self._client()
-            staged = store.stage(files, author=who, note=note, deletes=deletes or [])
-            change_id = staged["change"]["change_id"]
-            approved = None
-            total = None
-            if self._auto_approve():
-                approved = store.approve(change_id, approver=who, note="auto-approve")
-                total = reload_kb()
-            return staged, change_id, approved, total
-        def _guard(self, method: str, path: str) -> bool:
-            """所有请求的唯一入口闸门：Host → 鉴权等级 → 来源/内容类型。
-
-            鉴权等级不再由各 handler 自己判断，统一查 `src/routing.py` 的表。
-            这样「新增接口忘了加鉴权」不会再发生——漏登记只会让接口默认要 Key。
-            OPTIONS 只校 Host：浏览器预检不带 Key，拦了就连正常跨域都做不了。
-            """
-            if self._host_gate():
-                return True
-            verb = method.upper()
-            if verb == "OPTIONS":
-                return False
-            level = routing.level_for(path)
-            if level == routing.ADMIN and not self._is_admin():
-                metrics.inc("rag_unauthorized_total")
-                guards.audit.write("request.forbidden", client=self._client(),
-                                   path=path[:160], reason="admin_required")
-                self._json({"ok": False, "error": "forbidden",
-                            "message": "需要管理员权限（本机访问或带 X-Admin-Token）"}, 403)
-                return True
-            if verb in ("GET", "HEAD"):
-                # 读请求同样按表：/api/source 返回整段原文、/api/trace 返回用户提问，
-                # 只因为方法是 GET 就放行，等于把语料和提问记录公开。
-                if level == routing.API and api_keys.enabled:
-                    return self._require_key(path, "read.unauthorized")
-                return False
-            if self._write_gate(path):
-                return True
-            return self._readonly_gate(verb, path)
-        def _require_key(self, path: str, action: str) -> bool:
-            """配了 API_KEYS 就必须带有效 Key；未配置时直接放行（单机默认形态）。
-
-            `/v1/*` 要用 OpenAI 的错误体：调这个端点的是 SDK，它只认
-            `error.message`。回主协议的形状时，SDK 一律显示「unexpected
-            response」，把「Key 不对」这个唯一有用的信息吞掉。
-            """
-            _name, err = self._api_auth()
-            if not err:
-                return False
-            metrics.inc("rag_unauthorized_total")
-            guards.audit.write(action, client=self._client(),
-                               path=path[:160], reason=err)
-            if path == "/v1" or path.startswith("/v1/"):
-                body = compat.CompatError(
-                    "缺少或无效的 API Key：Authorization: Bearer <key>",
-                    status=401, kind="authentication_error",
-                    code="invalid_api_key").body()
-                self._json(body, 401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
-                return True
-            self._json({"ok": False, "error": "unauthorized",
-                        "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
-                       401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
-            return True
-        def _host_gate(self) -> bool:
-            """Host 必须是本机：挡 DNS rebinding，也挡反代把外部请求伪装成本机。
-
-            为什么读请求也要拦：rebinding 之后页面与 API 同源，GET 的响应可以直接被读走，
-            只保护写请求会漏掉「整库原文被拖走」。
-            """
-            reason = security.read_problem(self.headers)
-            if not reason:
-                return False
-            metrics.inc("rag_host_rejected_total")
-            guards.audit.write("request.rejected", client=self._client(),
-                               path=self.path[:160], reason=reason)
-            self._json({"ok": False, "error": "host_not_allowed",
-                        "message": security.REASONS[reason]}, 403)
-            return True
-        def _write_gate(self, path: str) -> bool:
-            """写请求的第二道闸：来源 + 内容类型，再按配置决定是否要 Key。
-
-            `/api/ask*` 的鉴权留在 `_ask_preflight` 里做——那里还要记账与限流，
-            在这里拦会让审计日志少一半信息。
-            """
-            try:
-                has_body = int(self.headers.get("Content-Length") or 0) > 0
-            except ValueError:
-                has_body = True
-            reason = security.write_problem(self.headers, has_body)
-            if reason:
-                metrics.inc("rag_write_rejected_total", {"reason": reason})
-                guards.audit.write("write.rejected", client=self._client(),
-                                   path=path[:160], reason=reason)
-                self._json({"ok": False, "error": reason,
-                            "message": security.REASONS[reason]},
-                           415 if reason == "content_type" else 403)
-                return True
-            # 表里登记为 api 的写接口，配了 Key 就必须带。
-            # `/api/ask` 与 `/api/ask/stream` 例外：它们在 `_ask_preflight` 里鉴权，
-            # 那里还要记账与限流，提前拦会让审计日志少一半信息。
-            # 必须列全名而不是按前缀放过：写成 startswith("/api/ask") 的话，
-            # 将来新加一个没做 preflight 的 `/api/ask-batch` 就是裸接口。
-            if (routing.level_for(path) == routing.API
-                    and path not in ASK_PATHS_NO_KEY_GATE):
-                return self._require_key(path, "write.unauthorized")
+        except OSError:
+            self.close_connection = True
             return False
-        def _presented_key(self) -> str:
-            auth = (self.headers.get("Authorization") or "").strip()
-            if auth.lower().startswith("bearer "):
-                return auth[7:].strip()
-            return (self.headers.get("X-API-Key") or "").strip()
-        def _api_auth(self) -> tuple[str | None, str | None]:
-            """未配置 API_KEYS 时保持开放；配置后必须带有效 Key。"""
-            if not api_keys.enabled:
-                return None, None
-            return api_keys.identify(self._presented_key())
-        def _cors_headers(self) -> dict:
-            """跨域默认关闭；NOTES_CORS=* 或来源白名单才放行，个人笔记不该随便被网页读。"""
-            raw = (os.environ.get("NOTES_CORS") or "").strip()
-            if not raw:
-                return {}
-            origin = (self.headers.get("Origin") or "").strip()
-            if raw == "*":
-                allow = "*"
-            elif origin and origin in [item.strip() for item in raw.split(",") if item.strip()]:
-                allow = origin
-            else:
-                return {}
-            return {
-                "Access-Control-Allow-Origin": allow,
-                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
-                "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-                "Access-Control-Max-Age": "600",
-            }
-        def _api_target(self, parsed) -> str:
-            """把路径归到哪一组接口：notes / threads / files / settings，其余空串。"""
-            path = parsed.path
-            if path == "/api/notes" or path.startswith("/api/notes/"):
-                return "notes"
-            if path == "/api/threads" or path.startswith("/api/threads/"):
-                return "threads"
-            if path.startswith("/api/files/"):
-                return "files"
-            if path == "/api/settings" or path.startswith("/api/settings/"):
-                return "settings"
-            return ""
-        def do_PUT(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            target = self._api_target(parsed)
-            if self._guard("PUT", parsed.path):
-                return
-            if target not in ("threads", "files"):
-                self._not_found(self.command, parsed.path)
-                return
-            body, err = self._read_note_body()
-            if err:
-                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                return
-            handler = self._threads if target == "threads" else self._files
-            handler("PUT", parsed.path, parse_qs(parsed.query), body)
-        def do_PATCH(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            target = self._api_target(parsed)
-            if self._guard("PATCH", parsed.path):
-                return
-            if target not in ("notes", "threads"):
-                self._not_found(self.command, parsed.path)
-                return
-            body, err = self._read_note_body()
-            if err:
-                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                return
-            handler = self._notes if target == "notes" else self._threads
-            handler("PATCH", parsed.path, parse_qs(parsed.query), body)
-        def do_DELETE(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            target = self._api_target(parsed)
-            if self._guard("DELETE", parsed.path):
-                return
-            if target not in ("notes", "threads"):
-                self._not_found(self.command, parsed.path)
-                return
-            body = None
-            try:
-                length = int(self.headers.get("Content-Length", "0") or 0)
-            except ValueError:
-                length = 0
-            if length > 0:
-                body, err = self._read_note_body()
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-            handler = self._notes if target == "notes" else self._threads
-            handler("DELETE", parsed.path, parse_qs(parsed.query), body)
-        def do_OPTIONS(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            target = self._api_target(parsed)
-            if self._guard("OPTIONS", parsed.path):
-                return
-            if not target:
-                self._not_found(self.command, parsed.path)
-                return
-            handler = {"notes": self._notes, "threads": self._threads,
-                       "files": self._files, "settings": self._settings}[target]
-            handler("OPTIONS", parsed.path, parse_qs(parsed.query), None)
-        def log_message(self, fmt: str, *args) -> None:
-            pass
 
-    return BaseRoutes
+    def _send(self, code: int, body: str, content_type: str = "application/json; charset=utf-8",
+              extra_headers: dict | None = None, cache: str = "no-cache") -> None:
+        """统一出口：gzip + ETag 协商 + 定长。
+
+        页面用 `cache="no-cache"`：可以存，但每次要带 ETag 回源校验，
+        内容没变就回 304（约 150 字节），部署后也不会拿到旧页面。
+        JSON 接口用 `no-store`，避免中间层缓存掉一次问答结果。
+        """
+        data = body.encode("utf-8")
+        extra = {key: str(value) for key, value in (extra_headers or {}).items()}
+        # 弱校验：gzip 后字节不同但内容相同，仍应命中同一个 ETag
+        etag = 'W/"' + hashlib.sha256(data).hexdigest()[:20] + '"'
+        mime = content_type.split(";")[0].strip().lower()
+        headers = {"ETag": etag, "Cache-Control": cache, "Vary": "Accept-Encoding",
+                   # 三件套：不许猜 MIME、不许被嵌进别人的 iframe、不外泄 Referer。
+                   # 本地应用也一样——恶意页面用 iframe 套住本服务就能诱导点击。
+                   "X-Content-Type-Options": "nosniff",
+                   "X-Frame-Options": "DENY",
+                   "Referrer-Policy": "no-referrer"}
+        if mime == "text/html":
+            # 页面全部资源都在本站：禁止外部脚本与表单提交，把注入后的利用面压到最小
+            headers["Content-Security-Policy"] = (
+                "default-src 'self'; img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+                "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            )
+
+        inm = (self.headers.get("If-None-Match") or "").strip()
+        if inm and inm.replace("W/", "") == etag.replace("W/", ""):
+            self.send_response(304)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            return
+
+        accepts = (self.headers.get("Accept-Encoding") or "").lower()
+        if "gzip" in accepts and mime in self.COMPRESSIBLE and len(data) >= 512:
+            data = gzip.compress(data, 6)
+            headers["Content-Encoding"] = "gzip"
+
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        for key, value in headers.items():
+            self.send_header(key, value)
+        for key, value in extra.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+    def _json(self, obj, code: int = 200, extra_headers: dict | None = None) -> None:
+        # 设置类是 open 级接口（Key 配错时的回退通道）：配了 Key 却没带有效 Key
+        # 的调用方也能读。但「能看配置长什么样」不等于「能看家目录」——
+        # 原来只在 `/api/settings` 一处脱敏，`/api/settings/mcp` 与
+        # `/api/settings/setup` 会把解释器绝对路径、PYTHONPATH、NOTE_HOME
+        # 原样交出去（实测 200 且含 C:\Users\...）。
+        # 放在这个唯一出口上判断，以后新增 settings 子路由不会漏。
+        if (isinstance(obj, dict) and self.command in ("GET", "HEAD")
+                and (self.path == "/api/settings"
+                     or self.path.startswith("/api/settings/"))
+                and self.deps.api_keys.enabled and self._api_auth()[0] is None
+                and not obj.get("redacted")):
+            obj = redact_settings(obj)
+        self._send(code, json.dumps(normalize_error(obj, code), ensure_ascii=False),
+                   extra_headers=extra_headers, cache="no-store")
+
+    def _not_found(self, method: str, path: str,
+                   extra_headers: dict | None = None) -> None:
+        """没有命中任何路由时的统一出口：方法用错回 405，路径不认识回 404。
+
+        原来一律 404：客户端拿 `PUT /api/notes` 去调，被告知「路径不存在」，
+        第一反应是核对 URL 拼写，而真正的问题是方法。405 至少指向正确方向。
+        """
+        allowed = routing.allowed_methods(path)
+        if allowed and method.upper() not in allowed:
+            allow = ", ".join(sorted(allowed))
+            self._json({"ok": False, "error": "method_not_allowed",
+                        "message": f"{method.upper()} 不支持这个地址；允许 {allow}"},
+                       405, extra_headers={"Allow": allow})
+            return
+        self._json({"ok": False, "error": "not_found",
+                    "message": f"没有这个接口：{path}"}, 404)
+
+    def _send_bytes(self, code: int, data: bytes, content_type: str,
+                    extra_headers: dict | None = None,
+                    cache: str = "private, max-age=300") -> None:
+        """二进制响应。
+
+        不复用 `_send`：那条路径会把 body 当字符串做 UTF-8 编码、还要判断能否 gzip，
+        图片走一遍会直接坏掉。
+
+        SVG 单独加 CSP + sandbox：用户在地址栏直接打开 `/assets/x.svg` 时，
+        文件里的 `<script>` 是**同源**执行的——等于给了它调用本服务接口的权限。
+        `<img>` 里不会执行，但「直接在浏览器打开」是最常见的操作，必须挡住。
+        """
+        headers = {"Content-Type": content_type,
+                   "Content-Length": str(len(data)),
+                   "Cache-Control": cache,
+                   "X-Content-Type-Options": "nosniff"}
+        if content_type.startswith("image/svg"):
+            headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+        for key, value in (extra_headers or {}).items():
+            headers[key] = str(value)
+        self.send_response(code)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
+    def _no_content(self, code: int = 202) -> None:
+        """无正文响应。MCP 规范里通知类请求必须回 202 且不带 body，
+        编造成 `200 {}` 会让客户端以为收到了一条合法响应。
+        """
+        self.send_response(code)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+    def _sse_open(self, hello: bool = True) -> bool:
+        """开一条 SSE 流：不带 Content-Length，靠关闭连接收尾。
+
+        流式响应的长度事先未知，用 chunked 又要客户端支持分块解析；
+        `Connection: close` 对本地单进程最简单且被所有客户端接受。
+        `hello=False` 用于「发一条就关」的短流：首帧注释是长连接保活用的，
+        短流里多这么一行只会让 strict 客户端多解析一次。
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        for key, value in (self._cors_headers() or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.close_connection = True
+        return self._sse_raw(": connected\n\n") if hello else True
+    def _sse_raw(self, text: str) -> bool:
+        """写一段原始 SSE 文本；返回 False 表示对端已断开。
+
+        断开只在写的时候才暴露，所以每个发送点都要看返回值立即退出——
+        否则循环会对着一个死连接继续跑满整个时长。
+        """
+        try:
+            self.wfile.write(text.encode("utf-8"))
+            self.wfile.flush()
+            return True
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self.close_connection = True
+            return False
+    def _sse_event(self, payload, event: str = "message") -> bool:
+        """发一条 SSE 消息。JSON 一定单行（`ensure_ascii=False` 不引入换行），
+        否则 `data:` 后面的换行会被客户端当成帧结束。
+        """
+        data = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        return self._sse_raw(f"event: {event}\ndata: {data}\n\n")
+    def _redirect(self, location: str, code: int = 302) -> None:
+        """旧页面入口保留 302：书签与外部链接不 404，但不重复渲染两份内容。"""
+        self.send_response(code)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+    def _client(self) -> str:
+        return self.client_address[0] if self.client_address else "unknown"
+    def _error_text(self, exc: Exception, prefix: str = "服务端异常") -> str:
+        """异常详情默认不回传：消息里常带绝对路径与内部端点。
+
+        排查问题时设 `DEBUG=on` 才带上原文；平时只给异常类型，正文进服务端日志。
+        """
+        if self.deps.pipe.settings.debug:
+            return f"{prefix}：{type(exc).__name__}: {exc}"
+        return f"{prefix}：{type(exc).__name__}（详情见服务端日志，设 DEBUG=on 可显示）"
+    def _key_scope(self) -> str:
+        """当前请求所用 Key 的作用域；没配 Key 或 Key 无效时返回空串。
+
+        「没配 Key」（单机开放）不能返回 rw 以外的东西，否则默认形态下
+        所有写接口都会被自己的作用域检查挡住。
+        """
+        if not self.deps.api_keys.enabled:
+            return ""
+        _name, scope, err = self.deps.api_keys.identify_scope(self._presented_key())
+        return "" if err else scope
+
+    def _is_admin(self) -> bool:
+        token = self.deps.pipe.settings.admin_token
+        if token:
+            # 显式配了管理员令牌时，它是唯一凭据：Admin Key 也不能绕过它。
+            # 否则「我设了令牌为什么别人还能审批」会变成一个安全盲区。
+            return safe_equal(self.headers.get("X-Admin-Token", ""), token)
+        if self._key_scope() == "admin":
+            # 作用域为 admin 的 Key 等同管理员。没有这条，`admin` 这个作用域
+            # 只是个标签，发出去的 Key 一样批不了、回滚不了。
+            return True
+        return self._client() in ("127.0.0.1", "::1")
+
+    def _readonly_gate(self, verb: str, path: str) -> bool:
+        """只读 Key 的写操作闸门：拒绝并说明该换成什么 Key。
+
+        为什么要单独一道而不是在 `_write_gate` 里判：那里判的是「有没有 Key」，
+        这里是「这把 Key 能不能写」。混在一起时，只读 Key 会收到
+        「需要 API Key」——而它明明带了 Key，用户会去反复核对密钥。
+        """
+        if verb in ("GET", "HEAD", "OPTIONS"):
+            return False
+        if self._key_scope() != "ro":
+            return False
+        if path in READ_ONLY_POSTS:
+            return False
+        self.deps.metrics.inc("rag_readonly_rejected_total")
+        self.deps.guards.audit.write("request.forbidden", client=self._client(),
+                           path=path[:160], reason="read_only_key",
+                           key=self.deps.api_keys.mask(self._presented_key()))
+        self._json({"ok": False, "error": "read_only_key",
+                    "message": f"这把 API Key 是只读的，不能调用 {path}。"
+                               "需要写入请换有写权限的 Key（或去掉配置里的 :ro 后缀）。"},
+                   403)
+        return True
+    def _auto_approve(self) -> bool:
+        """KB_APPROVAL=off 全放行；on 全审批；auto 仅本机管理员直通。"""
+        mode = (self.deps.pipe.settings.kb_approval or "auto").strip().lower()
+        if mode == "off":
+            return True
+        if mode == "on":
+            return False
+        return self._is_admin()
+
+    def _stage_and_maybe_approve(self, files, *, deletes=None, note: str = "",
+                                 author: str | None = None):
+        """入库一次变更，并按审批模式决定要不要立刻生效。
+
+        文本上传、文档解析上传、删除三个入口走的是同一套：stage →（自动审批）→ 重载。
+        以前这三段各写一遍，代价不是行数，而是「改一处漏两处」：
+        审批策略一调整，会有入口保持旧行为，用户看到的是「有时要审批有时不用」。
+        返回 (staged, change_id, approved, total)，approved 为 None 表示还在待审。
+        """
+        who = author or self._client()
+        staged = self.deps.store.stage(files, author=who, note=note, deletes=deletes or [])
+        change_id = staged["change"]["change_id"]
+        approved = None
+        total = None
+        if self._auto_approve():
+            approved = self.deps.store.approve(change_id, approver=who, note="auto-approve")
+            total = self.deps.reload_kb()
+        return staged, change_id, approved, total
+    def _guard(self, method: str, path: str) -> bool:
+        """所有请求的唯一入口闸门：Host → 鉴权等级 → 来源/内容类型。
+
+        鉴权等级不再由各 handler 自己判断，统一查 `src/routing.py` 的表。
+        这样「新增接口忘了加鉴权」不会再发生——漏登记只会让接口默认要 Key。
+        OPTIONS 只校 Host：浏览器预检不带 Key，拦了就连正常跨域都做不了。
+        """
+        if self._host_gate():
+            return True
+        verb = method.upper()
+        if verb == "OPTIONS":
+            return False
+        level = routing.level_for(path)
+        if level == routing.ADMIN and not self._is_admin():
+            self.deps.metrics.inc("rag_unauthorized_total")
+            self.deps.guards.audit.write("request.forbidden", client=self._client(),
+                               path=path[:160], reason="admin_required")
+            self._json({"ok": False, "error": "forbidden",
+                        "message": "需要管理员权限（本机访问或带 X-Admin-Token）"}, 403)
+            return True
+        if verb in ("GET", "HEAD"):
+            # 读请求同样按表：/api/source 返回整段原文、/api/trace 返回用户提问，
+            # 只因为方法是 GET 就放行，等于把语料和提问记录公开。
+            if level == routing.API and self.deps.api_keys.enabled:
+                return self._require_key(path, "read.unauthorized")
+            return False
+        if self._write_gate(path):
+            return True
+        return self._readonly_gate(verb, path)
+    def _require_key(self, path: str, action: str) -> bool:
+        """配了 API_KEYS 就必须带有效 Key；未配置时直接放行（单机默认形态）。
+
+        `/v1/*` 要用 OpenAI 的错误体：调这个端点的是 SDK，它只认
+        `error.message`。回主协议的形状时，SDK 一律显示「unexpected
+        response」，把「Key 不对」这个唯一有用的信息吞掉。
+        """
+        _name, err = self._api_auth()
+        if not err:
+            return False
+        self.deps.metrics.inc("rag_unauthorized_total")
+        self.deps.guards.audit.write(action, client=self._client(),
+                           path=path[:160], reason=err)
+        if path == "/v1" or path.startswith("/v1/"):
+            body = compat.CompatError(
+                "缺少或无效的 API Key：Authorization: Bearer <key>",
+                status=401, kind="authentication_error",
+                code="invalid_api_key").body()
+            self._json(body, 401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
+            return True
+        self._json({"ok": False, "error": "unauthorized",
+                    "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key"},
+                   401, {"WWW-Authenticate": 'Bearer realm="jiyi"'})
+        return True
+    def _host_gate(self) -> bool:
+        """Host 必须是本机：挡 DNS rebinding，也挡反代把外部请求伪装成本机。
+
+        为什么读请求也要拦：rebinding 之后页面与 API 同源，GET 的响应可以直接被读走，
+        只保护写请求会漏掉「整库原文被拖走」。
+        """
+        reason = security.read_problem(self.headers)
+        if not reason:
+            return False
+        self.deps.metrics.inc("rag_host_rejected_total")
+        self.deps.guards.audit.write("request.rejected", client=self._client(),
+                           path=self.path[:160], reason=reason)
+        self._json({"ok": False, "error": "host_not_allowed",
+                    "message": security.REASONS[reason]}, 403)
+        return True
+    def _write_gate(self, path: str) -> bool:
+        """写请求的第二道闸：来源 + 内容类型，再按配置决定是否要 Key。
+
+        `/api/ask*` 的鉴权留在 `_ask_preflight` 里做——那里还要记账与限流，
+        在这里拦会让审计日志少一半信息。
+        """
+        try:
+            has_body = int(self.headers.get("Content-Length") or 0) > 0
+        except ValueError:
+            has_body = True
+        reason = security.write_problem(self.headers, has_body)
+        if reason:
+            self.deps.metrics.inc("rag_write_rejected_total", {"reason": reason})
+            self.deps.guards.audit.write("write.rejected", client=self._client(),
+                               path=path[:160], reason=reason)
+            self._json({"ok": False, "error": reason,
+                        "message": security.REASONS[reason]},
+                       415 if reason == "content_type" else 403)
+            return True
+        # 表里登记为 api 的写接口，配了 Key 就必须带。
+        # `/api/ask` 与 `/api/ask/stream` 例外：它们在 `_ask_preflight` 里鉴权，
+        # 那里还要记账与限流，提前拦会让审计日志少一半信息。
+        # 必须列全名而不是按前缀放过：写成 startswith("/api/ask") 的话，
+        # 将来新加一个没做 preflight 的 `/api/ask-batch` 就是裸接口。
+        if (routing.level_for(path) == routing.API
+                and path not in ASK_PATHS_NO_KEY_GATE):
+            return self._require_key(path, "write.unauthorized")
+        return False
+    def _presented_key(self) -> str:
+        auth = (self.headers.get("Authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        return (self.headers.get("X-API-Key") or "").strip()
+    def _api_auth(self) -> tuple[str | None, str | None]:
+        """未配置 API_KEYS 时保持开放；配置后必须带有效 Key。"""
+        if not self.deps.api_keys.enabled:
+            return None, None
+        return self.deps.api_keys.identify(self._presented_key())
+    def _cors_headers(self) -> dict:
+        """跨域默认关闭；NOTES_CORS=* 或来源白名单才放行，个人笔记不该随便被网页读。"""
+        raw = (os.environ.get("NOTES_CORS") or "").strip()
+        if not raw:
+            return {}
+        origin = (self.headers.get("Origin") or "").strip()
+        if raw == "*":
+            allow = "*"
+        elif origin and origin in [item.strip() for item in raw.split(",") if item.strip()]:
+            allow = origin
+        else:
+            return {}
+        return {
+            "Access-Control-Allow-Origin": allow,
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+            "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+            "Access-Control-Max-Age": "600",
+        }
+    def _api_target(self, parsed) -> str:
+        """把路径归到哪一组接口：notes / threads / files / settings，其余空串。"""
+        path = parsed.path
+        if path == "/api/notes" or path.startswith("/api/notes/"):
+            return "notes"
+        if path == "/api/threads" or path.startswith("/api/threads/"):
+            return "threads"
+        if path.startswith("/api/files/"):
+            return "files"
+        if path == "/api/settings" or path.startswith("/api/settings/"):
+            return "settings"
+        return ""
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        target = self._api_target(parsed)
+        if self._guard("PUT", parsed.path):
+            return
+        if target not in ("threads", "files"):
+            self._not_found(self.command, parsed.path)
+            return
+        body, err = self._read_note_body()
+        if err:
+            self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+            return
+        handler = self._threads if target == "threads" else self._files
+        handler("PUT", parsed.path, parse_qs(parsed.query), body)
+    def do_PATCH(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        target = self._api_target(parsed)
+        if self._guard("PATCH", parsed.path):
+            return
+        if target not in ("notes", "threads"):
+            self._not_found(self.command, parsed.path)
+            return
+        body, err = self._read_note_body()
+        if err:
+            self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+            return
+        handler = self._notes if target == "notes" else self._threads
+        handler("PATCH", parsed.path, parse_qs(parsed.query), body)
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        target = self._api_target(parsed)
+        if self._guard("DELETE", parsed.path):
+            return
+        if target not in ("notes", "threads"):
+            self._not_found(self.command, parsed.path)
+            return
+        body = None
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = 0
+        if length > 0:
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
+                return
+        handler = self._notes if target == "notes" else self._threads
+        handler("DELETE", parsed.path, parse_qs(parsed.query), body)
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        target = self._api_target(parsed)
+        if self._guard("OPTIONS", parsed.path):
+            return
+        if not target:
+            self._not_found(self.command, parsed.path)
+            return
+        handler = {"notes": self._notes, "threads": self._threads,
+                   "files": self._files, "settings": self._settings}[target]
+        handler("OPTIONS", parsed.path, parse_qs(parsed.query), None)
+    def log_message(self, fmt: str, *args) -> None:
+        pass

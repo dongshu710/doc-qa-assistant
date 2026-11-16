@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from .. import (casegen, dify, evaluator, ingest, jsonl, kbstore, openai_compat as compat,
@@ -30,6 +31,9 @@ from .common import (ALLOWED_EXT, ASK_MAX_BYTES, ASSET_BODY_MAX, DOC_B64_MAX_BYT
 # 之前这里没接，`_SSE_LIMIT` 只护住了 MCP，问答流是完全不受限的。
 from .base import sse_acquire, sse_limit, sse_release
 
+if TYPE_CHECKING:  # 只为注解存在：运行时导入 app 会形成环
+    from .app import AppDeps
+
 
 # 「从反馈生成用例」的序号分配锁。必须是模块级：handler 每个连接一个实例，
 # 实例锁根本挡不住并发请求。
@@ -41,462 +45,502 @@ def behavior_of(result: dict) -> str:
     return str((result or {}).get("behavior") or "unknown")[:24]
 
 
-def make_write(deps):
-    # 原来这些名字是 create_server() 的闭包；拆开后由组合根显式传入。
-    settings = deps.settings
-    metrics = deps.metrics
-    pipe = deps.pipe
-    store = deps.store
-    guards = deps.guards
-    api_keys = deps.api_keys
-    feedback_path = deps.feedback_path
-    feedback_cases_path = deps.feedback_cases_path
-    doc_cases_path = deps.doc_cases_path
-    run_report_path = deps.run_report_path
-    raw_dir = deps.raw_dir
-    kb_dir = deps.kb_dir
-    reload_kb = deps.reload_kb
-    index_fields = deps.index_fields
-    task_registry = deps.tasks
-    tracer = deps.tracer
+def make_write(deps: "AppDeps") -> type:
+    """薄壳：给模块级 WriteRoutes 注入依赖，返回可直接多重继承的类。
 
-    def _cases_run_work(scope: str, cases: list, sleep_s: float, client: str) -> dict:
-        """跑一遍评测用例并落盘报告。同步路径与后台任务跑的是同一个函数。
+    为什么用 `type()` 造子类、而不是给 WriteRoutes.deps 赋值：测试里会反复起停服务，
+    同一个进程可能先后存在多套依赖。写类属性会让前一套被静默覆盖——已经在跑的
+    服务下一次请求读到的是别人家的 pipe。子类各持一份，互不可见。
+    """
+    return type("WriteRoutes", (WriteRoutes,), {"deps": deps, "__module__": __name__})
 
-        写成闭包而不是方法，是为了让它**不持有 `self`**：超过 grace 之后这段
-        跑在另一个线程里，而 `self` 属于某条连接——连接关了再去读它的
-        headers 就是竞态。这里只接纯参数。
-        """
-        started = time.monotonic()
-        results, skipped = evaluator.run_cases(
-            pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=kb_dir())
-        summary = evaluator.summarize(results, skipped)
-        report = {
-            "run_at": datetime.now(timezone.utc).isoformat(),
-            "scope": scope,
-            "channel": pipe.settings.channel,
-            "model": pipe.settings.model,
-            **summary,
-            "duration_ms": int((time.monotonic() - started) * 1000),
-            "results": results,
-        }
-        # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
-        # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
-        # 管理面板「评测」组永久打不开。复用版本库的原子写。
-        kbstore._atomic_json(run_report_path, report)
-        guards.audit.write("cases.run", client=client, scope=scope,
-                           total=summary["total"], passed=summary["passed"],
-                           duration_ms=report["duration_ms"])
-        return {
-            "ok": True,
-            "scope": scope,
-            "total": summary["total"],
-            "passed": summary["passed"],
-            "pass_rate": summary["pass_rate"],
-            "by_category": summary["by_category"],
-            "skipped": summary["skipped"],
-            "failed": [{"id": r["id"], "input": r["input"], "failures": r["failures"]}
-                       for r in results if not r["passed"]],
-            "duration_ms": report["duration_ms"],
-            "run_at": report["run_at"],
-        }
 
-    class WriteRoutes:
-        # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
-        # 这四个类通过 MRO 组合成一个 Handler，重复定义时生效的永远是最左边那份，
-        # 改另一份会静默不生效——比没有更糟。
+def _cases_run_work(deps, scope: str, cases: list, sleep_s: float, client: str) -> dict:
+    """跑一遍评测用例并落盘报告。同步路径与后台任务跑的是同一个函数。
 
-        def do_POST(self) -> None:  # noqa: N802
-            path = urlparse(self.path).path
-            if self._guard("POST", path):
-                return
-            if path == "/v1/chat/completions":
-                # OpenAI 兼容面：给 SDK / LiteLLM / LangChain 用。
-                # 放在最前面是因为它不在 `/api/` 下，下面那张白名单与体积表
-                # 都是按 /api 组织的，混进去会把两套语义搅在一起。
-                self._post_openai()
-                return
-            if path == "/mcp":
-                # MCP over HTTP：JSON-RPC 直接 POST，复用同一份 tools 与 NoteService
-                body, err = self._read_note_body(allow_list=True)
-                if err:
-                    self._json({"jsonrpc": "2.0", "id": None,
-                                "error": {"code": -32700, "message": err}}, 400)
-                    return
-                self._mcp_http(body)
-                return
-            if path.startswith("/api/storage/"):
-                body, err = self._read_note_body()
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-                self._storage("POST", path, parse_qs(urlparse(self.path).query), body)
-                return
-            if path == "/api/settings" or path.startswith("/api/settings/"):
-                body, err = self._read_note_body()
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-                self._settings("POST", path, parse_qs(urlparse(self.path).query), body)
-                return
-            if path == "/api/notes" or path.startswith("/api/notes/"):
-                # 上传附件走 base64，请求体会比普通笔记大一个数量级；
-                # 只有这条路径放宽，其它笔记接口仍按 2 MB 卡。
-                wide = "/assets" in path
-                body, err = self._read_note_body(max_bytes=ASSET_BODY_MAX if wide else None)
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-                self._notes("POST", path, parse_qs(urlparse(self.path).query), body)
-                return
-            if path == "/api/threads" or path.startswith("/api/threads/"):
-                body, err = self._read_note_body()
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-                self._threads("POST", path, parse_qs(urlparse(self.path).query), body)
-                return
-            if path.startswith("/api/files/"):
-                body, err = self._read_note_body()
-                if err:
-                    self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
-                    return
-                self._files("POST", path, parse_qs(urlparse(self.path).query), body)
-                return
-            if path not in ("/api/ask", "/api/ask/stream", "/api/feedback", "/api/reload",
-                            "/api/cases/from_feedback",
-                            "/api/knowledge/upload", "/api/knowledge/upload_pdf",
-                            "/api/knowledge/upload_file", "/api/knowledge/delete",
-                            "/api/cases/from_doc", "/api/cases/run",
-                            "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
-                            "/api/kb/seed",
-                            "/api/keywords/rebuild", "/api/session/clear",
-                            "/api/search/debug",
-                            "/api/admin/config", "/api/admin/rollback",
-                            "/dify/retrieval"):
-                self._not_found(self.command, path)
-                return
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json({"error": "invalid content-length"}, 400)
-                return
-            if path == "/api/knowledge/upload":
-                limit = UPLOAD_MAX_BYTES
-            elif path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
-                limit = DOC_B64_MAX_BYTES
-            elif path in ("/api/ask", "/api/ask/stream"):
-                limit = ASK_MAX_BYTES
-            else:
-                limit = MAX_BODY_BYTES
-            if length <= 0:
-                self._json({"ok": False, "error": "invalid_argument",
-                            "message": "请求体为空"}, 400)
-                return
-            if length > limit:
-                self._json({"ok": False, "error": "payload_too_large",
-                            "message": f"请求体 {length} 字节，超过该接口上限 {limit // 1024} KB"},
-                           413)
-                return
-            try:
-                payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
-                self._json({"ok": False, "error": "invalid_json",
-                            "message": "请求体不是合法 JSON"}, 400)
-                return
+    保持模块级函数而不是方法，是为了让它**不持有 `self`**：超过 grace 之后这段
+    跑在另一个线程里，而 `self` 属于某条连接——连接关了再去读它的
+    headers 就是竞态。依赖走参数里的 `deps`（纯数据袋，无连接状态）。
+    """
+    started = time.monotonic()
+    results, skipped = evaluator.run_cases(
+        deps.pipe, cases, sleep=sleep_s, skip_missing_doc=True, kb_dir=deps.kb_dir())
+    summary = evaluator.summarize(results, skipped)
+    report = {
+        "run_at": datetime.now(timezone.utc).isoformat(),
+        "scope": scope,
+        "channel": deps.pipe.settings.channel,
+        "model": deps.pipe.settings.model,
+        **summary,
+        "duration_ms": int((time.monotonic() - started) * 1000),
+        "results": results,
+    }
+    # 非原子写 + 无保护的读是致命组合：进程在写一半时退出，
+    # 会留下截断的 JSON，之后 /api/cases 每次都抛 JSONDecodeError，
+    # 管理面板「评测」组永久打不开。复用版本库的原子写。
+    kbstore._atomic_json(deps.run_report_path, report)
+    deps.guards.audit.write("cases.run", client=client, scope=scope,
+                            total=summary["total"], passed=summary["passed"],
+                            duration_ms=report["duration_ms"])
+    return {
+        "ok": True,
+        "scope": scope,
+        "total": summary["total"],
+        "passed": summary["passed"],
+        "pass_rate": summary["pass_rate"],
+        "by_category": summary["by_category"],
+        "skipped": summary["skipped"],
+        "failed": [{"id": r["id"], "input": r["input"], "failures": r["failures"]}
+                   for r in results if not r["passed"]],
+        "duration_ms": report["duration_ms"],
+        "run_at": report["run_at"],
+    }
 
-            # 按资源转交。原来是 641 行的 if 链，改任何一处都要在这条链上找位置，
-            # 且分支顺序隐含语义（谁先匹配）。现在只留这一层分派，
-            # 每组内部的顺序与条件原样保留。
-            if path.startswith("/api/admin/"):
-                self._post_admin(path, payload)
-            elif path.startswith(("/api/knowledge/", "/api/kb/")):
-                self._post_kb(path, payload)
-            elif (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
-                  or path in ("/api/feedback", "/api/reload", "/api/search/debug")):
-                self._post_data(path, payload)
-            elif path == "/dify/retrieval":
-                # Dify 会把配置的端点名后面拼上 /retrieval，所以这里就这一个路径。
-                # 它不在 /api/ 下：那是本项目的接口面，这是给外部平台用的适配面。
-                self._post_dify(payload)
-            else:
-                self._post_ask(path, payload)
+class WriteRoutes:
+    # 由 make_write() 注入（见上方薄壳）。模块级类不自己拿依赖。
+    deps: AppDeps
+
+    # protocol_version / timeout / COMPRESSIBLE 只在 base.py 定义一次。
+    # 这四个类通过 MRO 组合成一个 Handler，重复定义时生效的永远是最左边那份，
+    # 改另一份会静默不生效——比没有更糟。
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if self._guard("POST", path):
             return
-
-        def _post_dify(self, payload: dict) -> None:
-            """Dify 外部知识库：检索 → records。生成交给 Dify，这里绝不碰模型。
-
-            错误按 Dify 约定的 `{error_code, error_msg}` 返回。它只看 HTTP 状态码，
-            非 200 一律变成界面上一句「外部知识库调用失败」——真正的原因不写进 body
-            就等于没写，排障的人只能去翻服务端日志。
-            """
-            try:
-                query, top_k, threshold = dify.parse_request(payload)
-            except dify.DifyError as exc:
-                self._json({"records": [], "error_code": exc.code,
-                            "error_msg": str(exc)}, 400)
-                return
-            try:
-                items = dify.records(pipe, query, top_k, threshold)
-            except Exception as exc:  # noqa: BLE001 —— 索引损坏等：如实报错，不假装空结果
-                self._json({"records": [], "error_code": 5000,
-                            "error_msg": self._error_text(exc, "检索失败")}, 500)
-                return
-            metrics.inc("rag_dify_retrieval_total")
-            # 没有命中就回空数组。Dify 的约定是「检索不到不算错」，它会把这条知识库
-            # 当没有贡献继续走；这里回 404/500 反而会让整个应用报错。
-            self._json({"records": items})
-
-        def _compat_error(self, exc: "compat.CompatError",
-                          extra_headers: dict | None = None) -> None:
-            """OpenAI 形状的错误体。SDK 只读 `error.message`，回主协议会让它失明。"""
-            metrics.inc("rag_openai_error_total", {"code": exc.code})
-            self._json(exc.body(), exc.status, extra_headers=extra_headers)
-
-        def _post_openai(self) -> None:
-            """OpenAI 兼容的 chat.completions：非流式与流式两条路。
-
-            复用 `_ask_preflight`：鉴权、限流、幂等、灰度、预算五件事一套口径。
-            另起一套的话，同一个 Key 在 `/api/ask` 与 `/v1` 上会有两种限额，
-            用户看到的是「有时 429 有时不限」。
-            """
-            body, err = self._read_note_body(max_bytes=ASK_MAX_BYTES)
+        if path == "/v1/chat/completions":
+            # OpenAI 兼容面：给 SDK / LiteLLM / LangChain 用。
+            # 放在最前面是因为它不在 `/api/` 下，下面那张白名单与体积表
+            # 都是按 /api 组织的，混进去会把两套语义搅在一起。
+            self._post_openai()
+            return
+        if path == "/mcp":
+            # MCP over HTTP：JSON-RPC 直接 POST，复用同一份 tools 与 NoteService
+            body, err = self._read_note_body(allow_list=True)
             if err:
-                self._compat_error(compat.CompatError(err))
+                self._json({"jsonrpc": "2.0", "id": None,
+                            "error": {"code": -32700, "message": err}}, 400)
                 return
-            model = str(body.get("model") or pipe.settings.model or "jiyi")
-            try:
-                for name in compat.UNSUPPORTED:
-                    if body.get(name):
-                        raise compat.CompatError(
-                            f"不支持 {name}：本服务只依据资料作答，不做工具调用",
-                            code="unsupported_parameter")
-                try:
-                    if int(body.get("n") or 1) != 1:
-                        raise compat.CompatError("只支持 n=1（一次检索只有一份证据）",
-                                                 code="unsupported_parameter")
-                except (TypeError, ValueError):
-                    raise compat.CompatError("n 必须是整数", code="invalid_parameter")
-                query, ignored = compat.messages_to_query(body.get("messages"))
-            except compat.CompatError as exc:
-                self._compat_error(exc)
+            self._mcp_http(body)
+            return
+        if path.startswith("/api/storage/"):
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-
-            pre, fail = self._ask_preflight({"query": query,
-                                             "session_id": body.get("session_id")})
-            if fail:
-                payload, code, headers = fail
-                kind = {401: "authentication_error", 429: "rate_limit_error"}.get(
-                    int(code), "invalid_request_error")
-                self._compat_error(compat.CompatError(
-                    str(payload.get("message") or "请求被拒绝"), status=int(code),
-                    kind=kind, code=str(payload.get("error") or "request_rejected")),
-                    headers)
+            self._storage("POST", path, parse_qs(urlparse(self.path).query), body)
+            return
+        if path == "/api/settings" or path.startswith("/api/settings/"):
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-
-            if body.get("stream"):
-                # 长连接名额与 /api/ask/stream、/mcp 共用一套，断开必须还回去。
-                if not sse_acquire():
-                    self._compat_error(compat.CompatError(
-                        f"同时进行的流式回答已达上限（{sse_limit()} 条）", status=429,
-                        kind="rate_limit_error", code="too_many_streams"),
-                        {"Retry-After": "2"})
-                    return
-                cancel = threading.Event()
-                try:
-                    self._openai_stream(pre, model, cancel, ignored)
-                finally:
-                    cancel.set()
-                    sse_release()
+            self._settings("POST", path, parse_qs(urlparse(self.path).query), body)
+            return
+        if path == "/api/notes" or path.startswith("/api/notes/"):
+            # 上传附件走 base64，请求体会比普通笔记大一个数量级；
+            # 只有这条路径放宽，其它笔记接口仍按 2 MB 卡。
+            wide = "/assets" in path
+            body, err = self._read_note_body(max_bytes=ASSET_BODY_MAX if wide else None)
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-
-            started = time.monotonic()
-            result = pipe.ask(pre["query"], model=pre["model"],
-                              force_extractive=pre["budget_blocked"],
-                              session_id=pre["session_id"])
-            self._annotate_result(result, pre)
-            self._record_ask(result, pre, started, "/v1/chat/completions")
-            payload = compat.to_chat_completion(result, model, pre["request_id"])
-            if ignored:
-                payload["x_ignored_parts"] = ignored
-            self._json(payload, extra_headers={
-                "X-Request-Id": pre["request_id"],
-                "X-Answer-Path": str(result.get("path") or "rag"),
-            })
-
-        def _openai_stream(self, pre: dict, model: str,
-                           cancel: threading.Event, ignored: int = 0) -> None:
-            """把内部事件流翻译成 `chat.completion.chunk`。
-
-            与 `/api/ask/stream` 的差别只有协议格式：内部是 `delta/replace/final`
-            三种语义，OpenAI 只有「追加」。`replace` 用 `suffix_for` 折算成追加，
-            折算不掉的极端情况（生成被整段改写）会在结尾用 final 再补一次差量。
-            时序（生产线程、心跳、总时长、断连取消）统一交给 `sse.relay`。
-            """
-            self._sse_headers()
-            completion = compat.completion_id()
-            created = int(time.time())
-            sent = [""]
-
-            def raw(frame: str) -> None:
-                # 故意不吞 OSError：relay 靠它判断「客户端走了」。这里吞掉，
-                # 下游会继续把整轮 token 跑完，钱照记、线程照占。
-                self.wfile.write(frame.encode("utf-8"))
-                self.wfile.flush()
-
-            try:
-                raw(compat.to_sse_chunk("", model, completion, created, role=True))
-            except OSError:
-                self.close_connection = True
+            self._notes("POST", path, parse_qs(urlparse(self.path).query), body)
+            return
+        if path == "/api/threads" or path.startswith("/api/threads/"):
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-
-            def send(event: str, data) -> None:
-                text = (str((data or {}).get("answer") or "") if event == "final"
-                        else str(data or ""))
-                piece = compat.suffix_for(sent[0], text)
-                if not piece:
-                    return          # 空差量不发帧：客户端会收到一堆空 chunk
-                sent[0] += piece
-                raw(compat.to_sse_chunk(piece, model, completion, created))
-
-            started = time.monotonic()
-            outcome = sse.relay(
-                factory=lambda: pipe.ask_stream(pre["query"], model=pre["model"],
-                                                force_extractive=pre["budget_blocked"],
-                                                session_id=pre["session_id"]),
-                send=send, cancel=cancel, thread_name="openai-stream")
-
-            if outcome.broken:
-                return              # 客户端走了：不是错误，别记进审计
-            if outcome.timed_out:
-                self._sse_raw(compat.error_frame(
-                    f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断", "timeout_error", "timeout"))
+            self._threads("POST", path, parse_qs(urlparse(self.path).query), body)
+            return
+        if path.startswith("/api/files/"):
+            body, err = self._read_note_body()
+            if err:
+                self._json({"ok": False, "error": "invalid_argument", "message": err}, 400)
                 return
-            if outcome.error:
-                self._sse_raw(compat.error_frame(outcome.error))
-                return
-
-            final = outcome.final
-            if final is not None:
-                self._annotate_result(final, pre)
-                self._record_ask(final, pre, started, "/v1/chat/completions")
-            usage = compat.usage_of(final or {})
-            self._sse_raw(compat.to_sse_chunk("", model, completion, created,
-                                              finish="stop", usage=usage))
-            self._sse_raw(compat.sse_done())
-
-        def _post_admin(self, path: str, payload: dict) -> None:
-            """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""
-            if path == "/api/admin/config":
-                if not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                percent = payload.get("canary_percent")
-                if percent is not None:
-                    try:
-                        percent = max(0, min(100, int(percent)))
-                    except (TypeError, ValueError):
-                        self._json({"ok": False, "error": "canary_percent 需为 0-100 的整数"}, 400)
-                        return
-                updated = guards.runtime.update(
-                    canary_percent=percent,
-                    canary_model=payload.get("canary_model"),
-                    note=str(payload.get("note") or "")[:200],
-                )
-                guards.audit.write("admin.config", client=self._client(), **updated)
-                self._json({"ok": True, "runtime": updated})
-                return
-
-            if path == "/api/admin/rollback":
-                if not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                res = guards.runtime.rollback()
-                guards.audit.write("admin.rollback", client=self._client(),
-                                   rolled_back=res.get("rolled_back"), revision=res.get("revision"))
-                self._json({"ok": True, **res})
-                return
-            # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
-            # 不能让请求挂在一个没有 response 的方法里。
+            self._files("POST", path, parse_qs(urlparse(self.path).query), body)
+            return
+        if path not in ("/api/ask", "/api/ask/stream", "/api/feedback", "/api/reload",
+                        "/api/cases/from_feedback",
+                        "/api/knowledge/upload", "/api/knowledge/upload_pdf",
+                        "/api/knowledge/upload_file", "/api/knowledge/delete",
+                        "/api/cases/from_doc", "/api/cases/run",
+                        "/api/kb/approve", "/api/kb/reject", "/api/kb/rollback_doc",
+                        "/api/kb/seed",
+                        "/api/keywords/rebuild", "/api/session/clear",
+                        "/api/search/debug",
+                        "/api/admin/config", "/api/admin/rollback",
+                        "/dify/retrieval"):
             self._not_found(self.command, path)
-
-        def _post_kb(self, path: str, payload: dict) -> None:
-            """按路径再分一层，具体处理见下面的方法。"""
-            if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
-                self._post_kb_doc(path, payload)
-            elif path == "/api/knowledge/upload":
-                self._post_kb_upload(path, payload)
-            elif path == "/api/kb/seed":
-                self._post_kb_seed(payload)
-            else:
-                self._post_kb_review(path, payload)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._json({"error": "invalid content-length"}, 400)
+            return
+        if path == "/api/knowledge/upload":
+            limit = UPLOAD_MAX_BYTES
+        elif path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
+            limit = DOC_B64_MAX_BYTES
+        elif path in ("/api/ask", "/api/ask/stream"):
+            limit = ASK_MAX_BYTES
+        else:
+            limit = MAX_BODY_BYTES
+        if length <= 0:
+            self._json({"ok": False, "error": "invalid_argument",
+                        "message": "请求体为空"}, 400)
+            return
+        if length > limit:
+            self._json({"ok": False, "error": "payload_too_large",
+                        "message": f"请求体 {length} 字节，超过该接口上限 {limit // 1024} KB"},
+                       413)
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._json({"ok": False, "error": "invalid_json",
+                        "message": "请求体不是合法 JSON"}, 400)
             return
 
-        def _post_kb_seed(self, payload: dict) -> None:
-            """空库引导：把仓库自带的演示文档一键导入。
+        # 按资源转交。原来是 641 行的 if 链，改任何一处都要在这条链上找位置，
+        # 且分支顺序隐含语义（谁先匹配）。现在只留这一层分派，
+        # 每组内部的顺序与条件原样保留。
+        if path.startswith("/api/admin/"):
+            self._post_admin(path, payload)
+        elif path.startswith(("/api/knowledge/", "/api/kb/")):
+            self._post_kb(path, payload)
+        elif (path.startswith(("/api/cases/", "/api/keywords/", "/api/session/"))
+              or path in ("/api/feedback", "/api/reload", "/api/search/debug")):
+            self._post_data(path, payload)
+        elif path == "/dify/retrieval":
+            # Dify 会把配置的端点名后面拼上 /retrieval，所以这里就这一个路径。
+            # 它不在 /api/ 下：那是本项目的接口面，这是给外部平台用的适配面。
+            self._post_dify(payload)
+        else:
+            self._post_ask(path, payload)
+        return
 
-            为什么不直接内嵌示例文本：示例必须和 `data/knowledge/` 里那份**是同一份**，
-            否则演示文档改了、种子数据没跟着改，用户装完看到的是一套过期内容。
-            所以这里只做「读仓库里的文件 → 走正常入库链路」。
+    def _post_dify(self, payload: dict) -> None:
+        """Dify 外部知识库：检索 → records。生成交给 Dify，这里绝不碰模型。
 
-            不造「客服问答对」这一类模板：仓库里没有对应的示范文档，
-            凭空写一份假的问答对进去，只会让人以为系统自带的语料就长这样。
-            """
-            templates = {
-                "policy": {
-                    "title": "制度办法",
-                    "names": ["02_客户适当性管理制度.md",
-                              "pdf_演示制度_信息披露与消费者权益保护办法.md",
-                              "pdf_演示制度_销售适当性管理实施细则.md"],
-                },
-                "product": {
-                    "title": "产品要素",
-                    "names": ["01_理财产品要素说明.md", "03_大额存单与定期存款.md"],
-                },
-                "regulatory": {
-                    "title": "监管摘录",
-                    "names": ["pdf_监管摘录_商业银行理财业务监督管理办法.md"],
-                },
-            }
-            key = str(payload.get("template") or "").strip()
-            chosen = templates.get(key)
-            if chosen is None:
-                self._json({"ok": False, "error": "invalid_argument",
-                            "message": "template 只能是 " + " / ".join(templates)}, 400)
+        错误按 Dify 约定的 `{error_code, error_msg}` 返回。它只看 HTTP 状态码，
+        非 200 一律变成界面上一句「外部知识库调用失败」——真正的原因不写进 body
+        就等于没写，排障的人只能去翻服务端日志。
+        """
+        try:
+            query, top_k, threshold = dify.parse_request(payload)
+        except dify.DifyError as exc:
+            self._json({"records": [], "error_code": exc.code,
+                        "error_msg": str(exc)}, 400)
+            return
+        try:
+            items = dify.records(self.deps.pipe, query, top_k, threshold)
+        except Exception as exc:  # noqa: BLE001 —— 索引损坏等：如实报错，不假装空结果
+            self._json({"records": [], "error_code": 5000,
+                        "error_msg": self._error_text(exc, "检索失败")}, 500)
+            return
+        self.deps.metrics.inc("rag_dify_retrieval_total")
+        # 没有命中就回空数组。Dify 的约定是「检索不到不算错」，它会把这条知识库
+        # 当没有贡献继续走；这里回 404/500 反而会让整个应用报错。
+        self._json({"records": items})
+
+    def _compat_error(self, exc: "compat.CompatError",
+                      extra_headers: dict | None = None) -> None:
+        """OpenAI 形状的错误体。SDK 只读 `error.message`，回主协议会让它失明。"""
+        self.deps.metrics.inc("rag_openai_error_total", {"code": exc.code})
+        self._json(exc.body(), exc.status, extra_headers=extra_headers)
+
+    def _post_openai(self) -> None:
+        """OpenAI 兼容的 chat.completions：非流式与流式两条路。
+
+        复用 `_ask_preflight`：鉴权、限流、幂等、灰度、预算五件事一套口径。
+        另起一套的话，同一个 Key 在 `/api/ask` 与 `/v1` 上会有两种限额，
+        用户看到的是「有时 429 有时不限」。
+        """
+        body, err = self._read_note_body(max_bytes=ASK_MAX_BYTES)
+        if err:
+            self._compat_error(compat.CompatError(err))
+            return
+        model = str(body.get("model") or self.deps.pipe.settings.model or "jiyi")
+        try:
+            for name in compat.UNSUPPORTED:
+                if body.get(name):
+                    raise compat.CompatError(
+                        f"不支持 {name}：本服务只依据资料作答，不做工具调用",
+                        code="unsupported_parameter")
+            try:
+                if int(body.get("n") or 1) != 1:
+                    raise compat.CompatError("只支持 n=1（一次检索只有一份证据）",
+                                             code="unsupported_parameter")
+            except (TypeError, ValueError):
+                raise compat.CompatError("n 必须是整数", code="invalid_parameter")
+            query, ignored = compat.messages_to_query(body.get("messages"))
+        except compat.CompatError as exc:
+            self._compat_error(exc)
+            return
+
+        pre, fail = self._ask_preflight({"query": query,
+                                         "session_id": body.get("session_id")})
+        if fail:
+            payload, code, headers = fail
+            kind = {401: "authentication_error", 429: "rate_limit_error"}.get(
+                int(code), "invalid_request_error")
+            self._compat_error(compat.CompatError(
+                str(payload.get("message") or "请求被拒绝"), status=int(code),
+                kind=kind, code=str(payload.get("error") or "request_rejected")),
+                headers)
+            return
+
+        if body.get("stream"):
+            # 长连接名额与 /api/ask/stream、/mcp 共用一套，断开必须还回去。
+            if not sse_acquire():
+                self._compat_error(compat.CompatError(
+                    f"同时进行的流式回答已达上限（{sse_limit()} 条）", status=429,
+                    kind="rate_limit_error", code="too_many_streams"),
+                    {"Retry-After": "2"})
                 return
-            source_dir = os.path.join(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__)))), "data", "knowledge")
-            if not os.path.isdir(source_dir):
-                self._json({"ok": False, "error": "seed_missing",
-                            "message": "找不到内置演示文档（data/knowledge），"
-                                       "请直接把文件拖进上传框"}, 404)
+            cancel = threading.Event()
+            try:
+                self._openai_stream(pre, model, cancel, ignored)
+            finally:
+                cancel.set()
+                sse_release()
+            return
+
+        started = time.monotonic()
+        result = self.deps.pipe.ask(pre["query"], model=pre["model"],
+                          force_extractive=pre["budget_blocked"],
+                          session_id=pre["session_id"])
+        self._annotate_result(result, pre)
+        self._record_ask(result, pre, started, "/v1/chat/completions")
+        payload = compat.to_chat_completion(result, model, pre["request_id"])
+        if ignored:
+            payload["x_ignored_parts"] = ignored
+        self._json(payload, extra_headers={
+            "X-Request-Id": pre["request_id"],
+            "X-Answer-Path": str(result.get("path") or "rag"),
+        })
+
+    def _openai_stream(self, pre: dict, model: str,
+                       cancel: threading.Event, ignored: int = 0) -> None:
+        """把内部事件流翻译成 `chat.completion.chunk`。
+
+        与 `/api/ask/stream` 的差别只有协议格式：内部是 `delta/replace/final`
+        三种语义，OpenAI 只有「追加」。`replace` 用 `suffix_for` 折算成追加，
+        折算不掉的极端情况（生成被整段改写）会在结尾用 final 再补一次差量。
+        时序（生产线程、心跳、总时长、断连取消）统一交给 `sse.relay`。
+        """
+        self._sse_headers()
+        completion = compat.completion_id()
+        created = int(time.time())
+        sent = [""]
+
+        def raw(frame: str) -> None:
+            # 故意不吞 OSError：relay 靠它判断「客户端走了」。这里吞掉，
+            # 下游会继续把整轮 token 跑完，钱照记、线程照占。
+            self.wfile.write(frame.encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            raw(compat.to_sse_chunk("", model, completion, created, role=True))
+        except OSError:
+            self.close_connection = True
+            return
+
+        def send(event: str, data) -> None:
+            text = (str((data or {}).get("answer") or "") if event == "final"
+                    else str(data or ""))
+            piece = compat.suffix_for(sent[0], text)
+            if not piece:
+                return          # 空差量不发帧：客户端会收到一堆空 chunk
+            sent[0] += piece
+            raw(compat.to_sse_chunk(piece, model, completion, created))
+
+        started = time.monotonic()
+        outcome = sse.relay(
+            factory=lambda: self.deps.pipe.ask_stream(pre["query"], model=pre["model"],
+                                            force_extractive=pre["budget_blocked"],
+                                            session_id=pre["session_id"]),
+            send=send, cancel=cancel, thread_name="openai-stream")
+
+        if outcome.broken:
+            return              # 客户端走了：不是错误，别记进审计
+        if outcome.timed_out:
+            self._sse_raw(compat.error_frame(
+                f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断", "timeout_error", "timeout"))
+            return
+        if outcome.error:
+            self._sse_raw(compat.error_frame(outcome.error))
+            return
+
+        final = outcome.final
+        if final is not None:
+            self._annotate_result(final, pre)
+            self._record_ask(final, pre, started, "/v1/chat/completions")
+        usage = compat.usage_of(final or {})
+        self._sse_raw(compat.to_sse_chunk("", model, completion, created,
+                                          finish="stop", usage=usage))
+        self._sse_raw(compat.sse_done())
+
+    def _post_admin(self, path: str, payload: dict) -> None:
+        """管理员动作：灰度比例与运行时回滚。两条都先过管理员校验。"""
+        if path == "/api/admin/config":
+            if not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
                 return
-            files: dict[str, str] = {}
-            skipped: list[str] = []
-            existing = set()
-            if os.path.isdir(kb_dir()):
-                existing = {n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
-            for name in chosen["names"]:
-                safe = _safe_name(name, ALLOWED_EXT, 120)
-                if not safe:
-                    continue
-                if safe in existing:
-                    # 幂等：重复点不会生成同名覆盖的那条「旧内容没了」告警
-                    skipped.append(safe)
-                    continue
+            percent = payload.get("canary_percent")
+            if percent is not None:
                 try:
-                    with open(os.path.join(source_dir, safe), encoding="utf-8") as f:
-                        files[safe] = f.read()
-                except OSError:
-                    continue
-            if not files:
-                self._json({"ok": True, "template": key, "added": [], "skipped": skipped,
-                            "message": "这些文档已经在知识库里了"})
+                    percent = max(0, min(100, int(percent)))
+                except (TypeError, ValueError):
+                    self._json({"ok": False, "error": "canary_percent 需为 0-100 的整数"}, 400)
+                    return
+            updated = self.deps.guards.runtime.update(
+                canary_percent=percent,
+                canary_model=payload.get("canary_model"),
+                note=str(payload.get("note") or "")[:200],
+            )
+            self.deps.guards.audit.write("admin.config", client=self._client(), **updated)
+            self._json({"ok": True, "runtime": updated})
+            return
+
+        if path == "/api/admin/rollback":
+            if not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
                 return
-            if store is not None:
+            res = self.deps.guards.runtime.rollback()
+            self.deps.guards.audit.write("admin.rollback", client=self._client(),
+                               rolled_back=res.get("rolled_back"), revision=res.get("revision"))
+            self._json({"ok": True, **res})
+            return
+        # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
+        # 不能让请求挂在一个没有 response 的方法里。
+        self._not_found(self.command, path)
+
+    def _post_kb(self, path: str, payload: dict) -> None:
+        """按路径再分一层，具体处理见下面的方法。"""
+        if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
+            self._post_kb_doc(path, payload)
+        elif path == "/api/knowledge/upload":
+            self._post_kb_upload(path, payload)
+        elif path == "/api/kb/seed":
+            self._post_kb_seed(payload)
+        else:
+            self._post_kb_review(path, payload)
+        return
+
+    def _post_kb_seed(self, payload: dict) -> None:
+        """空库引导：把仓库自带的演示文档一键导入。
+
+        为什么不直接内嵌示例文本：示例必须和 `data/knowledge/` 里那份**是同一份**，
+        否则演示文档改了、种子数据没跟着改，用户装完看到的是一套过期内容。
+        所以这里只做「读仓库里的文件 → 走正常入库链路」。
+
+        不造「客服问答对」这一类模板：仓库里没有对应的示范文档，
+        凭空写一份假的问答对进去，只会让人以为系统自带的语料就长这样。
+        """
+        templates = {
+            "policy": {
+                "title": "制度办法",
+                "names": ["02_客户适当性管理制度.md",
+                          "pdf_演示制度_信息披露与消费者权益保护办法.md",
+                          "pdf_演示制度_销售适当性管理实施细则.md"],
+            },
+            "product": {
+                "title": "产品要素",
+                "names": ["01_理财产品要素说明.md", "03_大额存单与定期存款.md"],
+            },
+            "regulatory": {
+                "title": "监管摘录",
+                "names": ["pdf_监管摘录_商业银行理财业务监督管理办法.md"],
+            },
+        }
+        key = str(payload.get("template") or "").strip()
+        chosen = templates.get(key)
+        if chosen is None:
+            self._json({"ok": False, "error": "invalid_argument",
+                        "message": "template 只能是 " + " / ".join(templates)}, 400)
+            return
+        source_dir = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), "data", "knowledge")
+        if not os.path.isdir(source_dir):
+            self._json({"ok": False, "error": "seed_missing",
+                        "message": "找不到内置演示文档（data/knowledge），"
+                                   "请直接把文件拖进上传框"}, 404)
+            return
+        files: dict[str, str] = {}
+        skipped: list[str] = []
+        existing = set()
+        if os.path.isdir(self.deps.kb_dir()):
+            existing = {n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)}
+        for name in chosen["names"]:
+            safe = _safe_name(name, ALLOWED_EXT, 120)
+            if not safe:
+                continue
+            if safe in existing:
+                # 幂等：重复点不会生成同名覆盖的那条「旧内容没了」告警
+                skipped.append(safe)
+                continue
+            try:
+                with open(os.path.join(source_dir, safe), encoding="utf-8") as f:
+                    files[safe] = f.read()
+            except OSError:
+                continue
+        if not files:
+            self._json({"ok": True, "template": key, "added": [], "skipped": skipped,
+                        "message": "这些文档已经在知识库里了"})
+            return
+        if self.deps.store is not None:
+            try:
+                _staged, change_id, approved, total = self._stage_and_maybe_approve(
+                    files, note=f"空库模板：{chosen['title']}")
+            except (kbstore.KnowledgeError, ValueError) as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
+                return
+            self._json({
+                "ok": True, "template": key, "title": chosen["title"],
+                "added": sorted(files), "skipped": skipped,
+                "pending": approved is None, "change_id": change_id,
+                "version": self.deps.store.active_version(),
+                **self.deps.index_fields(),
+            })
+            self.deps.guards.audit.write("kb.seed", client=self._client(), template=key,
+                               files=len(files), pending=approved is None)
+            return
+        # 无版本库（KB_STORE=off）：直接落盘后重建
+        for name, content in files.items():
+            with open(os.path.join(self.deps.kb_dir(), name), "w", encoding="utf-8") as f:
+                f.write(content)
+        try:
+            total = self.deps.pipe.reload()
+        except Exception as exc:  # noqa: BLE001
+            self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
+            return
+        self._json({"ok": True, "template": key, "title": chosen["title"],
+                    "added": sorted(files), "skipped": skipped, "chunks": total})
+        self.deps.guards.audit.write("kb.seed", client=self._client(), template=key,
+                           files=len(files), chunks=total)
+
+    def _post_kb_upload(self, path: str, payload: dict) -> None:
+        """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
+        if path == "/api/knowledge/upload":
+            name = _safe_name(payload.get("name"))
+            content = str(payload.get("content") or "")
+            if not name:
+                self._json({"ok": False, "error": "只支持 .md / .txt，文件名不合法"}, 400)
+                return
+            if not content.strip():
+                self._json({"ok": False, "error": "文件内容为空"}, 400)
+                return
+
+            if self.deps.store is not None:
                 try:
-                    _staged, change_id, approved, total = self._stage_and_maybe_approve(
-                        files, note=f"空库模板：{chosen['title']}")
+                    staged, change_id, approved, total = self._stage_and_maybe_approve(
+                        {name: content}, note=str(payload.get("note") or "")[:200])
                 except (kbstore.KnowledgeError, ValueError) as exc:
                     self._json({"ok": False, "error": str(exc)}, 400)
                     return
@@ -504,803 +548,758 @@ def make_write(deps):
                     self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
                     return
                 self._json({
-                    "ok": True, "template": key, "title": chosen["title"],
-                    "added": sorted(files), "skipped": skipped,
-                    "pending": approved is None, "change_id": change_id,
-                    "version": store.active_version(),
-                    **index_fields(),
+                    "ok": True, "name": name,
+                    "pending": approved is None,
+                    "change_id": change_id,
+                    "version": self.deps.store.active_version(),
+                    "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                    # 同名覆盖必须让上传的人看见：写入是真的，旧内容也是真的没了
+                    # （只在历史版本里）。原来 warnings 只存在 changes 接口里，
+                    # 上传的回复干干净净，用户对「我覆盖了什么」一无所知。
+                    "warnings": staged["change"].get("warnings") or [],
+                    **self.deps.index_fields(),
                 })
-                guards.audit.write("kb.seed", client=self._client(), template=key,
-                                   files=len(files), pending=approved is None)
+                self.deps.guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
+                                   chunks=total, chars=len(content),
+                                   change_id=change_id, version=self.deps.store.active_version(),
+                                   auto_approved=approved is not None)
                 return
-            # 无版本库（KB_STORE=off）：直接落盘后重建
-            for name, content in files.items():
-                with open(os.path.join(kb_dir(), name), "w", encoding="utf-8") as f:
-                    f.write(content)
+
+            with open(os.path.join(self.deps.kb_dir(), name), "w", encoding="utf-8") as f:
+                f.write(content)
             try:
-                total = pipe.reload()
+                total = self.deps.pipe.reload()
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
                 return
-            self._json({"ok": True, "template": key, "title": chosen["title"],
-                        "added": sorted(files), "skipped": skipped, "chunks": total})
-            guards.audit.write("kb.seed", client=self._client(), template=key,
-                               files=len(files), chunks=total)
+            self._json({"ok": True, "name": name, "chunks": total,
+                        "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)])})
+            self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
+                               kind="text", chunks=total, chars=len(content))
+            return
+        # 组内条件互斥，走到这里说明分派给了不该给的路径。
+        self._not_found(self.command, path)
 
-        def _post_kb_upload(self, path: str, payload: dict) -> None:
-            """单份文本入库：走版本库暂存，按 KB_APPROVAL 决定是否直接生效。"""
-            if path == "/api/knowledge/upload":
-                name = _safe_name(payload.get("name"))
-                content = str(payload.get("content") or "")
-                if not name:
-                    self._json({"ok": False, "error": "只支持 .md / .txt，文件名不合法"}, 400)
-                    return
-                if not content.strip():
-                    self._json({"ok": False, "error": "文件内容为空"}, 400)
-                    return
+    def _post_kb_doc(self, path: str, payload: dict) -> None:
+        """文档上传：解码、解析、暂存，与文本走同一条审批链。
 
-                if store is not None:
-                    try:
-                        staged, change_id, approved, total = self._stage_and_maybe_approve(
-                            {name: content}, note=str(payload.get("note") or "")[:200])
-                    except (kbstore.KnowledgeError, ValueError) as exc:
-                        self._json({"ok": False, "error": str(exc)}, 400)
-                        return
-                    except Exception as exc:  # noqa: BLE001
-                        self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
-                        return
-                    self._json({
-                        "ok": True, "name": name,
-                        "pending": approved is None,
-                        "change_id": change_id,
-                        "version": store.active_version(),
-                        "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
-                        # 同名覆盖必须让上传的人看见：写入是真的，旧内容也是真的没了
-                        # （只在历史版本里）。原来 warnings 只存在 changes 接口里，
-                        # 上传的回复干干净净，用户对「我覆盖了什么」一无所知。
-                        "warnings": staged["change"].get("warnings") or [],
-                        **index_fields(),
-                    })
-                    guards.audit.write("kb.upload", client=self._client(), name=name, kind="text",
-                                       chunks=total, chars=len(content),
-                                       change_id=change_id, version=store.active_version(),
-                                       auto_approved=approved is not None)
-                    return
-
-                with open(os.path.join(kb_dir(), name), "w", encoding="utf-8") as f:
-                    f.write(content)
-                try:
-                    total = pipe.reload()
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": f"已写入但重载失败：{exc}"}, 500)
-                    return
-                self._json({"ok": True, "name": name, "chunks": total,
-                            "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)])})
-                guards.audit.write("kb.upload", client=self._client(), name=name,
-                                   kind="text", chunks=total, chars=len(content))
+        支持 PDF / DOCX / PPTX / XLSX / CSV / TSV / HTML / EML，全部由
+        `ingest` 按扩展名分派；解析结果统一成 Markdown 才进知识库，
+        所以下游（切分、检索、引用、审批）完全不需要知道原始格式。
+        """
+        if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
+            name = _safe_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
+            if not name:
+                self._json({"ok": False,
+                            "error": "只接受纯文件名的 " + " / ".join(
+                                e.lstrip(".").upper() for e in ingest.SUPPORTED_EXT) + " 文件"}, 400)
                 return
-            # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._not_found(self.command, path)
+            blob = payload.get("data_b64") or payload.get("file") or ""
+            if not isinstance(blob, str) or not blob.strip():
+                self._json({"ok": False, "error": "文件内容为空"}, 400)
+                return
+            try:
+                data = base64.b64decode(blob, validate=False)
+            except (binascii.Error, ValueError):
+                self._json({"ok": False, "error": "base64 解码失败，请重试"}, 400)
+                return
+            if len(data) > DOC_MAX_BYTES:
+                self._json({"ok": False,
+                            "error": f"文件超过 {DOC_MAX_BYTES // 1024 // 1024} MB 上限"}, 413)
+                return
+            # 文件头先校验：改后缀的假文件属于「请求有问题」（400），
+            # 真文件解析失败（加密/扫描件）才是「内容不可用」（422）。
+            ext = os.path.splitext(name)[1].lower()
+            # csv/tsv/html/eml 是纯文本，没有魔数可校验；
+            # docx/pptx/xlsx 都是 ZIP（PK\x03\x04），PDF 有自己的头。
+            magic = {".pdf": b"%PDF", ".docx": b"PK", ".pptx": b"PK",
+                     ".xlsx": b"PK"}.get(ext, b"")
+            if magic and not data.startswith(magic):
+                self._json({"ok": False,
+                            "error": f"不是有效的 {ext.lstrip('.').upper()} 文件（文件头不匹配）"}, 400)
+                return
 
-        def _post_kb_doc(self, path: str, payload: dict) -> None:
-            """文档上传：解码、解析、暂存，与文本走同一条审批链。
+            before = len(self.deps.pipe.chunks)
+            stage_dir = tempfile.mkdtemp(prefix="kb_stage_")
+            try:
+                res = ingest.ingest_bytes(
+                    data, name, stage_dir,
+                    engine=os.getenv("PDF_ENGINE", "auto"),
+                )
+            except Exception as exc:  # noqa: BLE001 —— 任何解析异常都要回给用户，不能 500 空响应
+                shutil.rmtree(stage_dir, ignore_errors=True)
+                self._json({"ok": False, "error": f"解析异常：{type(exc).__name__}: {exc}"}, 422)
+                return
+            if not res.get("ok"):
+                shutil.rmtree(stage_dir, ignore_errors=True)
+                self._json({"ok": False, "error": res.get("error"),
+                            "need_ocr": res.get("need_ocr")}, 422)
+                return
 
-            支持 PDF / DOCX / PPTX / XLSX / CSV / TSV / HTML / EML，全部由
-            `ingest` 按扩展名分派；解析结果统一成 Markdown 才进知识库，
-            所以下游（切分、检索、引用、审批）完全不需要知道原始格式。
-            """
-            if path in ("/api/knowledge/upload_pdf", "/api/knowledge/upload_file"):
-                name = _safe_name(payload.get("name"), ingest.SUPPORTED_EXT, 120)
-                if not name:
-                    self._json({"ok": False,
-                                "error": "只接受纯文件名的 " + " / ".join(
-                                    e.lstrip(".").upper() for e in ingest.SUPPORTED_EXT) + " 文件"}, 400)
-                    return
-                blob = payload.get("data_b64") or payload.get("file") or ""
-                if not isinstance(blob, str) or not blob.strip():
-                    self._json({"ok": False, "error": "文件内容为空"}, 400)
-                    return
+            # 原始 PDF 只在校验通过后落盘，避免失败的上传在 data/raw 里堆垃圾
+            with open(os.path.join(self.deps.raw_dir, name), "wb") as f:
+                f.write(data)
+
+            md_path = os.path.join(stage_dir, res["md"])
+            with open(md_path, "rb") as f:
+                md_bytes = f.read()
+
+            if self.deps.store is not None:
                 try:
-                    data = base64.b64decode(blob, validate=False)
-                except (binascii.Error, ValueError):
-                    self._json({"ok": False, "error": "base64 解码失败，请重试"}, 400)
-                    return
-                if len(data) > DOC_MAX_BYTES:
-                    self._json({"ok": False,
-                                "error": f"文件超过 {DOC_MAX_BYTES // 1024 // 1024} MB 上限"}, 413)
-                    return
-                # 文件头先校验：改后缀的假文件属于「请求有问题」（400），
-                # 真文件解析失败（加密/扫描件）才是「内容不可用」（422）。
-                ext = os.path.splitext(name)[1].lower()
-                # csv/tsv/html/eml 是纯文本，没有魔数可校验；
-                # docx/pptx/xlsx 都是 ZIP（PK\x03\x04），PDF 有自己的头。
-                magic = {".pdf": b"%PDF", ".docx": b"PK", ".pptx": b"PK",
-                         ".xlsx": b"PK"}.get(ext, b"")
-                if magic and not data.startswith(magic):
-                    self._json({"ok": False,
-                                "error": f"不是有效的 {ext.lstrip('.').upper()} 文件（文件头不匹配）"}, 400)
-                    return
-
-                before = len(pipe.chunks)
-                stage_dir = tempfile.mkdtemp(prefix="kb_stage_")
-                try:
-                    res = ingest.ingest_bytes(
-                        data, name, stage_dir,
-                        engine=os.getenv("PDF_ENGINE", "auto"),
-                    )
-                except Exception as exc:  # noqa: BLE001 —— 任何解析异常都要回给用户，不能 500 空响应
+                    staged, change_id, approved, total = self._stage_and_maybe_approve(
+                        {res["md"]: md_bytes},
+                        note=f"由 {name} 解析（{res.get('engine')}）")
+                except (kbstore.KnowledgeError, ValueError) as exc:
                     shutil.rmtree(stage_dir, ignore_errors=True)
-                    self._json({"ok": False, "error": f"解析异常：{type(exc).__name__}: {exc}"}, 422)
+                    self._json({"ok": False, "error": str(exc)}, 400)
                     return
-                if not res.get("ok"):
+                except Exception as exc:  # noqa: BLE001
                     shutil.rmtree(stage_dir, ignore_errors=True)
-                    self._json({"ok": False, "error": res.get("error"),
-                                "need_ocr": res.get("need_ocr")}, 422)
+                    self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
                     return
-
-                # 原始 PDF 只在校验通过后落盘，避免失败的上传在 data/raw 里堆垃圾
-                with open(os.path.join(raw_dir, name), "wb") as f:
-                    f.write(data)
-
-                md_path = os.path.join(stage_dir, res["md"])
-                with open(md_path, "rb") as f:
-                    md_bytes = f.read()
-
-                if store is not None:
-                    try:
-                        staged, change_id, approved, total = self._stage_and_maybe_approve(
-                            {res["md"]: md_bytes},
-                            note=f"由 {name} 解析（{res.get('engine')}）")
-                    except (kbstore.KnowledgeError, ValueError) as exc:
-                        shutil.rmtree(stage_dir, ignore_errors=True)
-                        self._json({"ok": False, "error": str(exc)}, 400)
-                        return
-                    except Exception as exc:  # noqa: BLE001
-                        shutil.rmtree(stage_dir, ignore_errors=True)
-                        self._json({"ok": False, "error": f"入库失败：{exc}"}, 500)
-                        return
-                    self._json({
-                        "ok": True, "name": name, "md": res["md"], "chars": res["chars"],
-                        "engine": res["engine"], "format": res.get("format"),
-                        "pages": res.get("pages"), "paragraphs": res.get("paragraphs"),
-                        "tables": res.get("tables"), "note": res.get("note"),
-                        "sheets": res.get("sheets"), "rows": res.get("rows"),
+                self._json({
+                    "ok": True, "name": name, "md": res["md"], "chars": res["chars"],
+                    "engine": res["engine"], "format": res.get("format"),
+                    "pages": res.get("pages"), "paragraphs": res.get("paragraphs"),
+                    "tables": res.get("tables"), "note": res.get("note"),
+                    "sheets": res.get("sheets"), "rows": res.get("rows"),
+                "slides": res.get("slides"),
+                "slides_empty": res.get("slides_empty"),
+                "attachments": res.get("attachments"),
+                    # 新增格式的统计：PPT 页数、邮件附件数。不回传的话
+                    # 用户看不到「这 3 页里 2 页是图」这种关键信息。
                     "slides": res.get("slides"),
                     "slides_empty": res.get("slides_empty"),
                     "attachments": res.get("attachments"),
-                        # 新增格式的统计：PPT 页数、邮件附件数。不回传的话
-                        # 用户看不到「这 3 页里 2 页是图」这种关键信息。
-                        "slides": res.get("slides"),
-                        "slides_empty": res.get("slides_empty"),
-                        "attachments": res.get("attachments"),
-                        "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
-                        "pending": approved is None, "change_id": change_id,
-                        "version": store.active_version(),
-                        "warnings": staged["change"].get("warnings") or [],
-                        "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
-                        **index_fields(before),
-                    })
-                    guards.audit.write("kb.upload", client=self._client(), name=name,
-                                       kind=res.get("format") or ext.lstrip("."), chunks=total,
-                                       bytes=len(data), engine=res.get("engine"),
-                                       change_id=change_id, version=store.active_version(),
-                                       auto_approved=approved is not None)
-                    shutil.rmtree(stage_dir, ignore_errors=True)
-                    return
-
-                with open(os.path.join(kb_dir(), res["md"]), "wb") as f:
-                    f.write(md_bytes)
-                shutil.rmtree(stage_dir, ignore_errors=True)
-                try:
-                    total = pipe.reload()
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": f"已转换但索引重建失败：{exc}"}, 500)
-                    return
-                self._json({
-                    "ok": True,
-                    "name": name,
-                    "md": res["md"],
-                    "chars": res["chars"],
-                    "engine": res["engine"],
-                    "format": res.get("format"),
-                    "pages": res.get("pages"),
-                    "paragraphs": res.get("paragraphs"),
-                    "tables": res.get("tables"),
-                    "note": res.get("note"),
-                    "chunks": total,
-                    "added_chunks": total - before,
-                    "files": len([n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                    "need_ocr": res.get("need_ocr"), "truncated": res.get("truncated"),
+                    "pending": approved is None, "change_id": change_id,
+                    "version": self.deps.store.active_version(),
+                    "warnings": staged["change"].get("warnings") or [],
+                    "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+                    **self.deps.index_fields(before),
                 })
-                guards.audit.write("kb.upload", client=self._client(), name=name,
+                self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
                                    kind=res.get("format") or ext.lstrip("."), chunks=total,
-                                   bytes=len(data), engine=res.get("engine"))
+                                   bytes=len(data), engine=res.get("engine"),
+                                   change_id=change_id, version=self.deps.store.active_version(),
+                                   auto_approved=approved is not None)
+                shutil.rmtree(stage_dir, ignore_errors=True)
                 return
-            # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._not_found(self.command, path)
 
-        def _post_kb_review(self, path: str, payload: dict) -> None:
-            """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
-            if path == "/api/knowledge/delete":
-                name = _safe_name(payload.get("name"))
-                target = os.path.join(kb_dir(), name) if name else ""
-                if not name or not os.path.exists(target):
-                    self._json({"ok": False, "error": "文件不存在"}, 404)
-                    return
-                remaining = [n for n in os.listdir(kb_dir()) if n.lower().endswith(ALLOWED_EXT) and n != name]
-                if not remaining:
-                    self._json({"ok": False, "error": "知识库至少要保留一个文件"}, 400)
-                    return
-
-                if store is not None:
-                    try:
-                        staged, change_id, approved, total = self._stage_and_maybe_approve(
-                            {}, deletes=[name], note=f"删除 {name}")
-                    except (kbstore.KnowledgeError, ValueError) as exc:
-                        self._json({"ok": False, "error": str(exc)}, 400)
-                        return
-                    self._json({"ok": True, "name": name, "pending": approved is None,
-                                "change_id": change_id, "version": store.active_version(),
-                                **index_fields()})
-                    guards.audit.write("kb.delete", client=self._client(), name=name,
-                                       chunks=total, change_id=change_id,
-                                       version=store.active_version())
-                    return
-
-                os.remove(target)
-                total = pipe.reload()
-                guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
-                self._json({"ok": True, "name": name, "chunks": total})
+            with open(os.path.join(self.deps.kb_dir(), res["md"]), "wb") as f:
+                f.write(md_bytes)
+            shutil.rmtree(stage_dir, ignore_errors=True)
+            try:
+                total = self.deps.pipe.reload()
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"已转换但索引重建失败：{exc}"}, 500)
                 return
-            if path == "/api/kb/approve":
-                if store is None or not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                change_id = str(payload.get("change_id") or "").strip()
-                try:
-                    res = store.approve(change_id, approver=self._client(),
-                                        note=str(payload.get("note") or "")[:200])
-                    total = reload_kb()
-                except kbstore.KnowledgeError as exc:
-                    self._json({"ok": False, "error": str(exc)}, 409)
-                    return
-                guards.audit.write("kb.approve", client=self._client(), change_id=change_id,
-                                   version=res["version"], chunks=total)
-                self._json({"ok": True, "change_id": change_id, "version": res["version"],
-                            **index_fields()})
-                return
-            if path == "/api/kb/reject":
-                if store is None or not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                change_id = str(payload.get("change_id") or "").strip()
-                try:
-                    res = store.reject(change_id, approver=self._client(),
-                                       reason=str(payload.get("reason") or "")[:200])
-                except kbstore.KnowledgeError as exc:
-                    self._json({"ok": False, "error": str(exc)}, 409)
-                    return
-                guards.audit.write("kb.reject", client=self._client(), change_id=change_id)
-                self._json({"ok": True, **res})
-                return
-            if path == "/api/kb/rollback_doc":
-                if store is None or not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
-                name = str(payload.get("name") or "").strip()
-                to_version = str(payload.get("to_version") or "").strip()
-                try:
-                    res = store.rollback_doc(name, to_version, author=self._client(),
-                                             note=str(payload.get("note") or "")[:200])
-                    total = reload_kb()
-                except kbstore.KnowledgeError as exc:
-                    self._json({"ok": False, "error": str(exc)}, 409)
-                    return
-                guards.audit.write("kb.rollback_doc", client=self._client(), name=name,
-                                   from_version=to_version, version=res["version"], chunks=total)
-                self._json({"ok": True, "name": name, "from": to_version,
-                            "version": res["version"], **index_fields()})
-                return
-            # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._not_found(self.command, path)
-
-
-        def _post_data(self, path: str, payload: dict) -> None:
-            """按路径再分一层，具体处理见下面的方法。"""
-            if path.startswith("/api/cases/"):
-                self._post_cases(path, payload)
-            else:
-                self._post_ops(path, payload)
+            self._json({
+                "ok": True,
+                "name": name,
+                "md": res["md"],
+                "chars": res["chars"],
+                "engine": res["engine"],
+                "format": res.get("format"),
+                "pages": res.get("pages"),
+                "paragraphs": res.get("paragraphs"),
+                "tables": res.get("tables"),
+                "note": res.get("note"),
+                "chunks": total,
+                "added_chunks": total - before,
+                "files": len([n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT)]),
+            })
+            self.deps.guards.audit.write("kb.upload", client=self._client(), name=name,
+                               kind=res.get("format") or ext.lstrip("."), chunks=total,
+                               bytes=len(data), engine=res.get("engine"))
             return
+        # 组内条件互斥，走到这里说明分派给了不该给的路径。
+        self._not_found(self.command, path)
 
-        def _post_cases(self, path: str, payload: dict) -> None:
-            """用例集：从文档/反馈生成，以及跑一遍评测。"""
-            if path == "/api/cases/from_doc":
-                name = _safe_name(payload.get("name"))
-                if not name:
-                    self._json({"ok": False, "error": "请指定知识库里的 .md 文件名"}, 400)
-                    return
-                doc_id = name.rsplit(".", 1)[0]
-                chunks = [c for c in pipe.chunks if c.doc_id == doc_id]
-                if not chunks:
-                    self._json({"ok": False, "error": f"文档 {name} 没有可用的知识块"}, 404)
-                    return
-                try:
-                    n = max(1, min(8, int(payload.get("n") or 3)))
-                except (TypeError, ValueError):
-                    n = 3
-                res = casegen.generate_for_document(
-                    doc_id, chunks, doc_cases_path, n=n,
-                    prefer_llm=bool(payload.get("use_llm", True)),
-                )
-                if not res["added"]:
-                    self._json({"ok": False, "error": res.get("reason") or "未能生成用例",
-                                "mode": res.get("mode")}, 422)
-                    return
-                self._json({"ok": True, "doc": name, **res})
+    def _post_kb_review(self, path: str, payload: dict) -> None:
+        """删除与审批：approve 生成新版本，reject 留痕，rollback_doc 只退一份文档。"""
+        if path == "/api/knowledge/delete":
+            name = _safe_name(payload.get("name"))
+            target = os.path.join(self.deps.kb_dir(), name) if name else ""
+            if not name or not os.path.exists(target):
+                self._json({"ok": False, "error": "文件不存在"}, 404)
                 return
-            if path == "/api/cases/run":
-                scope = str(payload.get("scope") or "docs")
-                docs_file = evaluator.docs_path()
-                files = (evaluator.default_case_files() if scope == "all"
-                         else ([docs_file] if docs_file.exists() else []))
-                cases = evaluator.load_cases(files)
-                if not cases:
-                    self._json({"ok": True, "scope": scope, "total": 0, "passed": 0,
-                                "pass_rate": 0.0, "by_category": {}, "failed": [],
-                                "skipped": [], "run_at": datetime.now(timezone.utc).isoformat(),
-                                "error": "没有可运行的用例"})
-                    return
-                try:
-                    sleep_s = max(0.0, min(10.0, float(payload.get("sleep") or 0)))
-                except (TypeError, ValueError):
-                    sleep_s = 0.0
-                client = self._client()
-                # 真模型跑 36 条要几十秒到几分钟。超过 grace 就转后台：
-                # 继续占着工作槽、又被代理 60s 掐断，是「白跑 + 用户看到失败」的双输。
-                try:
-                    outcome, deferred = task_registry.run_or_defer(
-                        "cases.run",
-                        lambda: _cases_run_work(scope, cases, sleep_s, client))
-                except tasks.TaskBusy as exc:
-                    self._json({"ok": False, "error": "server_busy", "message": str(exc)},
-                               503, extra_headers={"Retry-After": "5"})
-                    return
-                except tasks.TaskError as exc:
-                    self._json(exc.payload, exc.status)
-                    return
-                except Exception as exc:  # noqa: BLE001 —— 评测失败要带原因回给界面
-                    self._json({"ok": False, "error": "cases_run_failed",
-                                "message": self._error_text(exc)}, 500)
-                    return
-                if deferred:
-                    self._json(outcome, 202,
-                               extra_headers={"Location": f"/api/tasks/{outcome['id']}"})
-                    return
-                self._json(outcome)
+            remaining = [n for n in os.listdir(self.deps.kb_dir()) if n.lower().endswith(ALLOWED_EXT) and n != name]
+            if not remaining:
+                self._json({"ok": False, "error": "知识库至少要保留一个文件"}, 400)
                 return
-            if path == "/api/cases/from_feedback":
-                trace_id = str(payload.get("trace_id", ""))
-                rows = list(reversed(_read_jsonl(pipe.log_path, 5000)))
-                query = next((r.get("query", "") for r in rows if r.get("trace_id") == trace_id), "")
-                if not query:
-                    self._json({"ok": False, "error": "未找到该 trace 对应的问题"}, 400)
-                    return
-                keywords = [str(k).strip() for k in (payload.get("keywords") or []) if str(k).strip()]
-                behavior = str(payload.get("behavior") or "answer")
-                note = str(payload.get("note") or "")[:200]
-                expect = {"behavior": behavior}
-                if keywords:
-                    expect["output_contains"] = keywords
-                # 读序号 + 追加必须在同一把锁里：两个并发请求各自 `len(existing)+1`
-                # 会拿到同一个 F001，evaluator 按 id 建索引时静默丢一条——
-                # 用户看到的是「生成成功」，实际少了一条用例。
-                # 序号按已有最大 id 递增而不是按条数：文件被截断或手工清理过时，
-                # `len()+1` 会立刻撞号。
-                with _CASE_ID_LOCK:
-                    existing = _read_jsonl(feedback_cases_path, 100000)
-                    max_seq = 0
-                    for row in existing:
-                        cid = str(row.get("id") or "")
-                        if cid[:1] == "F" and cid[1:].isdigit():
-                            max_seq = max(max_seq, int(cid[1:]))
-                    seq = max_seq + 1
-                    case_id = f"F{seq:03d}"
-                    case = {
-                        "id": case_id,
-                        "category": "regression",
-                        "input": query,
-                        "expect": expect,
-                        "source": "feedback",
-                        "source_trace": trace_id,
-                        "note": note,
-                    }
-                    os.makedirs(os.path.dirname(feedback_cases_path), exist_ok=True)
-                    with open(feedback_cases_path, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(case, ensure_ascii=False) + "\n")
-                self._json({"ok": True, "case": case, "total": seq})
-                return
-            # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._not_found(self.command, path)
 
-        def _post_ops(self, path: str, payload: dict) -> None:
-            """运维动作：反馈落盘、关键词重建、清会话、索引热载、检索调试。"""
-            if path == "/api/search/debug":
-                # 只读动作，但用 POST：query 可能很长，放 query string 会被
-                # 各种代理截断，中文还要再过一层编码，排障时最难查的就是这个。
-                query = payload.get("query")
-                if not isinstance(query, str) or not query.strip():
-                    self._json({"ok": False, "error": "invalid_argument",
-                                "message": "需要 query（要调试的检索问题）"}, 400)
-                    return
-                top_k = payload.get("top_k")
-                if top_k is not None:
-                    try:
-                        top_k = int(top_k)
-                    except (TypeError, ValueError):
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "top_k 必须是整数"}, 400)
-                        return
-                # 只认文件名/文档 id 两种写法：带路径或控制字符一律 400，避免有人
-                # 拿它当文件读取口（检索只按 doc_id 过滤，本来就不碰磁盘，但边界要守住）
-                raw_doc = payload.get("doc")
-                doc = ""
-                if raw_doc not in (None, ""):
-                    if not isinstance(raw_doc, str):
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "doc 必须是字符串"}, 400)
-                        return
-                    candidate = raw_doc.strip()
-                    if (not candidate or len(candidate) > 120 or "/" in candidate
-                            or "\\" in candidate or ".." in candidate
-                            or any(ch in candidate for ch in '<>:"|?*\x00')):
-                        self._json({"ok": False, "error": "invalid_argument",
-                                    "message": "doc 只能是文件名，不能带路径"}, 400)
-                        return
-                    # /kb 传文件名（带扩展名），引用卡片传 doc_id（不带）——两种都收
-                    doc = candidate.rsplit(".", 1)[0] if "." in candidate else candidate
+            if self.deps.store is not None:
                 try:
-                    detail = pipe.debug_search(query.strip(), top_k=top_k, doc=doc or None)
-                except Exception as exc:  # noqa: BLE001 —— 索引异常要如实报，不假装空结果
-                    self._json({"ok": False, "error": "retrieval_error",
-                                "message": self._error_text(exc, "检索失败")}, 500)
+                    staged, change_id, approved, total = self._stage_and_maybe_approve(
+                        {}, deletes=[name], note=f"删除 {name}")
+                except (kbstore.KnowledgeError, ValueError) as exc:
+                    self._json({"ok": False, "error": str(exc)}, 400)
                     return
-                detail["ok"] = True
-                self._json(detail)
+                self._json({"ok": True, "name": name, "pending": approved is None,
+                            "change_id": change_id, "version": self.deps.store.active_version(),
+                            **self.deps.index_fields()})
+                self.deps.guards.audit.write("kb.delete", client=self._client(), name=name,
+                                   chunks=total, change_id=change_id,
+                                   version=self.deps.store.active_version())
                 return
-            if path == "/api/feedback":
-                # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
-                # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
-                record = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "trace_id": str(payload.get("trace_id", ""))[:64],
-                    "useful": bool(payload.get("useful")),
-                    "comment": str(payload.get("comment", ""))[:500],
-                    "behavior": str(payload.get("behavior") or "")[:32],
-                    "query": str(payload.get("query") or "")[:300],
-                    "expected": str(payload.get("expected") or "")[:500],
-                    "document": str(payload.get("document") or "")[:200],
-                    "session_id": str(payload.get("session_id") or "")[:64],
-                    "kb_version": str(payload.get("kb_version") or "")[:32],
+
+            os.remove(target)
+            total = self.deps.pipe.reload()
+            self.deps.guards.audit.write("kb.delete", client=self._client(), name=name, chunks=total)
+            self._json({"ok": True, "name": name, "chunks": total})
+            return
+        if path == "/api/kb/approve":
+            if self.deps.store is None or not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
+                return
+            change_id = str(payload.get("change_id") or "").strip()
+            try:
+                res = self.deps.store.approve(change_id, approver=self._client(),
+                                    note=str(payload.get("note") or "")[:200])
+                total = self.deps.reload_kb()
+            except kbstore.KnowledgeError as exc:
+                self._json({"ok": False, "error": str(exc)}, 409)
+                return
+            self.deps.guards.audit.write("kb.approve", client=self._client(), change_id=change_id,
+                               version=res["version"], chunks=total)
+            self._json({"ok": True, "change_id": change_id, "version": res["version"],
+                        **self.deps.index_fields()})
+            return
+        if path == "/api/kb/reject":
+            if self.deps.store is None or not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
+                return
+            change_id = str(payload.get("change_id") or "").strip()
+            try:
+                res = self.deps.store.reject(change_id, approver=self._client(),
+                                   reason=str(payload.get("reason") or "")[:200])
+            except kbstore.KnowledgeError as exc:
+                self._json({"ok": False, "error": str(exc)}, 409)
+                return
+            self.deps.guards.audit.write("kb.reject", client=self._client(), change_id=change_id)
+            self._json({"ok": True, **res})
+            return
+        if path == "/api/kb/rollback_doc":
+            if self.deps.store is None or not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
+                return
+            name = str(payload.get("name") or "").strip()
+            to_version = str(payload.get("to_version") or "").strip()
+            try:
+                res = self.deps.store.rollback_doc(name, to_version, author=self._client(),
+                                         note=str(payload.get("note") or "")[:200])
+                total = self.deps.reload_kb()
+            except kbstore.KnowledgeError as exc:
+                self._json({"ok": False, "error": str(exc)}, 409)
+                return
+            self.deps.guards.audit.write("kb.rollback_doc", client=self._client(), name=name,
+                               from_version=to_version, version=res["version"], chunks=total)
+            self._json({"ok": True, "name": name, "from": to_version,
+                        "version": res["version"], **self.deps.index_fields()})
+            return
+        # 组内条件互斥，走到这里说明分派给了不该给的路径。
+        self._not_found(self.command, path)
+
+
+    def _post_data(self, path: str, payload: dict) -> None:
+        """按路径再分一层，具体处理见下面的方法。"""
+        if path.startswith("/api/cases/"):
+            self._post_cases(path, payload)
+        else:
+            self._post_ops(path, payload)
+        return
+
+    def _post_cases(self, path: str, payload: dict) -> None:
+        """用例集：从文档/反馈生成，以及跑一遍评测。"""
+        if path == "/api/cases/from_doc":
+            name = _safe_name(payload.get("name"))
+            if not name:
+                self._json({"ok": False, "error": "请指定知识库里的 .md 文件名"}, 400)
+                return
+            doc_id = name.rsplit(".", 1)[0]
+            chunks = [c for c in self.deps.pipe.chunks if c.doc_id == doc_id]
+            if not chunks:
+                self._json({"ok": False, "error": f"文档 {name} 没有可用的知识块"}, 404)
+                return
+            try:
+                n = max(1, min(8, int(payload.get("n") or 3)))
+            except (TypeError, ValueError):
+                n = 3
+            res = casegen.generate_for_document(
+                doc_id, chunks, self.deps.doc_cases_path, n=n,
+                prefer_llm=bool(payload.get("use_llm", True)),
+            )
+            if not res["added"]:
+                self._json({"ok": False, "error": res.get("reason") or "未能生成用例",
+                            "mode": res.get("mode")}, 422)
+                return
+            self._json({"ok": True, "doc": name, **res})
+            return
+        if path == "/api/cases/run":
+            scope = str(payload.get("scope") or "docs")
+            docs_file = evaluator.docs_path()
+            files = (evaluator.default_case_files() if scope == "all"
+                     else ([docs_file] if docs_file.exists() else []))
+            cases = evaluator.load_cases(files)
+            if not cases:
+                self._json({"ok": True, "scope": scope, "total": 0, "passed": 0,
+                            "pass_rate": 0.0, "by_category": {}, "failed": [],
+                            "skipped": [], "run_at": datetime.now(timezone.utc).isoformat(),
+                            "error": "没有可运行的用例"})
+                return
+            try:
+                sleep_s = max(0.0, min(10.0, float(payload.get("sleep") or 0)))
+            except (TypeError, ValueError):
+                sleep_s = 0.0
+            client = self._client()
+            # 真模型跑 36 条要几十秒到几分钟。超过 grace 就转后台：
+            # 继续占着工作槽、又被代理 60s 掐断，是「白跑 + 用户看到失败」的双输。
+            # 先把依赖袋取成局部变量再进 lambda：lambda 只捕获 deps，不捕获 self。
+            # 转后台之后这条连接可能已经关了，闭包里再摸 self 的任何属性都是竞态。
+            deps = self.deps
+            try:
+                outcome, deferred = deps.tasks.run_or_defer(
+                    "cases.run",
+                    lambda: _cases_run_work(deps, scope, cases, sleep_s, client))
+            except tasks.TaskBusy as exc:
+                self._json({"ok": False, "error": "server_busy", "message": str(exc)},
+                           503, extra_headers={"Retry-After": "5"})
+                return
+            except tasks.TaskError as exc:
+                self._json(exc.payload, exc.status)
+                return
+            except Exception as exc:  # noqa: BLE001 —— 评测失败要带原因回给界面
+                self._json({"ok": False, "error": "cases_run_failed",
+                            "message": self._error_text(exc)}, 500)
+                return
+            if deferred:
+                self._json(outcome, 202,
+                           extra_headers={"Location": f"/api/tasks/{outcome['id']}"})
+                return
+            self._json(outcome)
+            return
+        if path == "/api/cases/from_feedback":
+            trace_id = str(payload.get("trace_id", ""))
+            rows = list(reversed(_read_jsonl(self.deps.pipe.log_path, 5000)))
+            query = next((r.get("query", "") for r in rows if r.get("trace_id") == trace_id), "")
+            if not query:
+                self._json({"ok": False, "error": "未找到该 trace 对应的问题"}, 400)
+                return
+            keywords = [str(k).strip() for k in (payload.get("keywords") or []) if str(k).strip()]
+            behavior = str(payload.get("behavior") or "answer")
+            note = str(payload.get("note") or "")[:200]
+            expect = {"behavior": behavior}
+            if keywords:
+                expect["output_contains"] = keywords
+            # 读序号 + 追加必须在同一把锁里：两个并发请求各自 `len(existing)+1`
+            # 会拿到同一个 F001，evaluator 按 id 建索引时静默丢一条——
+            # 用户看到的是「生成成功」，实际少了一条用例。
+            # 序号按已有最大 id 递增而不是按条数：文件被截断或手工清理过时，
+            # `len()+1` 会立刻撞号。
+            with _CASE_ID_LOCK:
+                existing = _read_jsonl(self.deps.feedback_cases_path, 100000)
+                max_seq = 0
+                for row in existing:
+                    cid = str(row.get("id") or "")
+                    if cid[:1] == "F" and cid[1:].isdigit():
+                        max_seq = max(max_seq, int(cid[1:]))
+                seq = max_seq + 1
+                case_id = f"F{seq:03d}"
+                case = {
+                    "id": case_id,
+                    "category": "regression",
+                    "input": query,
+                    "expect": expect,
+                    "source": "feedback",
+                    "source_trace": trace_id,
+                    "note": note,
                 }
-                jsonl.append_line(feedback_path, json.dumps(record, ensure_ascii=False),
-                                  int(pipe.settings.log_max_bytes),
-                                  int(pipe.settings.log_keep))
-                guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
-                                   useful=record["useful"], behavior=record["behavior"],
-                                   has_expected=bool(record["expected"]),
-                                   document=record["document"])
-                self._json({"ok": True, "need": not record["useful"]})
+                os.makedirs(os.path.dirname(self.deps.feedback_cases_path), exist_ok=True)
+                with open(self.deps.feedback_cases_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(case, ensure_ascii=False) + "\n")
+            self._json({"ok": True, "case": case, "total": seq})
+            return
+        # 组内条件互斥，走到这里说明分派给了不该给的路径。
+        self._not_found(self.command, path)
+
+    def _post_ops(self, path: str, payload: dict) -> None:
+        """运维动作：反馈落盘、关键词重建、清会话、索引热载、检索调试。"""
+        if path == "/api/search/debug":
+            # 只读动作，但用 POST：query 可能很长，放 query string 会被
+            # 各种代理截断，中文还要再过一层编码，排障时最难查的就是这个。
+            query = payload.get("query")
+            if not isinstance(query, str) or not query.strip():
+                self._json({"ok": False, "error": "invalid_argument",
+                            "message": "需要 query（要调试的检索问题）"}, 400)
                 return
-            if path == "/api/keywords/rebuild":
-                if not self._is_admin():
-                    self._json({"error": "forbidden"}, 403)
-                    return
+            top_k = payload.get("top_k")
+            if top_k is not None:
                 try:
-                    detail = pipe.rebuild_keywords(enrich=True)
-                    guards.audit.write("keywords.rebuild", client=self._client(),
-                                       entries=detail.get("entries"), llm=detail.get("llm"))
-                    self._json({"ok": True, "keywords": detail,
-                                "summary": pipe.keywords.summary()})
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": str(exc)}, 500)
-                return
-            if path == "/api/session/clear":
-                sid = str(payload.get("session_id") or "").strip()[:64]
-                pipe.sessions.clear(sid)
-                self._json({"ok": True, "session_id": sid, "sessions": pipe.sessions.status()})
-                return
-            if path == "/api/reload":
-                try:
-                    total = reload_kb()
-                    guards.audit.write("kb.reload", client=self._client(), chunks=total)
-                    self._json({"ok": True, **index_fields()})
-                except Exception as exc:  # noqa: BLE001
-                    self._json({"ok": False, "error": str(exc)}, 500)
-                return
-            # 组内条件互斥，走到这里说明分派给了不该给的路径。
-            self._not_found(self.command, path)
-
-
-        def _post_ask(self, path: str, payload: dict) -> None:
-            """问答：流式与非流式共用 `_ask_preflight`，鉴权/限流/幂等一套口径。"""
-            if path == "/api/ask/stream":
-                pre, err = self._ask_preflight(payload)
-                if err:
-                    body, code, headers = err
-                    self._json(body, code, extra_headers=headers)
+                    top_k = int(top_k)
+                except (TypeError, ValueError):
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "top_k 必须是整数"}, 400)
                     return
-
-                # 长连接名额与 /mcp 共用一套。之前这里没接，64 个线程全被慢流占满时
-                # 全站不响应，而调用方拿到的只是「超时」——看起来像服务挂了。
-                if not sse_acquire():
-                    self._json({"ok": False, "error": "too_many_streams",
-                                "message": f"同时进行的流式回答已达上限（{sse_limit()} 条），"
-                                           "请改用非流式接口或稍后重试"},
-                               429, extra_headers={"Retry-After": "2"})
+            # 只认文件名/文档 id 两种写法：带路径或控制字符一律 400，避免有人
+            # 拿它当文件读取口（检索只按 doc_id 过滤，本来就不碰磁盘，但边界要守住）
+            raw_doc = payload.get("doc")
+            doc = ""
+            if raw_doc not in (None, ""):
+                if not isinstance(raw_doc, str):
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "doc 必须是字符串"}, 400)
                     return
-
-                cancel = threading.Event()
-                try:
-                    self._stream_answer(pre, cancel)
-                finally:
-                    # 正常结束、超时、客户端断开，三条路都要把名额还回去。
-                    # 漏还的后果是「出过一次异常之后永久 429」，比不限流更难查。
-                    cancel.set()
-                    sse_release()
+                candidate = raw_doc.strip()
+                if (not candidate or len(candidate) > 120 or "/" in candidate
+                        or "\\" in candidate or ".." in candidate
+                        or any(ch in candidate for ch in '<>:"|?*\x00')):
+                    self._json({"ok": False, "error": "invalid_argument",
+                                "message": "doc 只能是文件名，不能带路径"}, 400)
+                    return
+                # /kb 传文件名（带扩展名），引用卡片传 doc_id（不带）——两种都收
+                doc = candidate.rsplit(".", 1)[0] if "." in candidate else candidate
+            try:
+                detail = self.deps.pipe.debug_search(query.strip(), top_k=top_k, doc=doc or None)
+            except Exception as exc:  # noqa: BLE001 —— 索引异常要如实报，不假装空结果
+                self._json({"ok": False, "error": "retrieval_error",
+                            "message": self._error_text(exc, "检索失败")}, 500)
                 return
+            detail["ok"] = True
+            self._json(detail)
+            return
+        if path == "/api/feedback":
+            # no_answer 的反馈比正答更有价值：它直接告诉我们要补哪份资料。
+            # 因此除了「有用/没用」，还收「期望答案」与「缺失文档」两个字段。
+            record = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "trace_id": str(payload.get("trace_id", ""))[:64],
+                "useful": bool(payload.get("useful")),
+                "comment": str(payload.get("comment", ""))[:500],
+                "behavior": str(payload.get("behavior") or "")[:32],
+                "query": str(payload.get("query") or "")[:300],
+                "expected": str(payload.get("expected") or "")[:500],
+                "document": str(payload.get("document") or "")[:200],
+                "session_id": str(payload.get("session_id") or "")[:64],
+                "kb_version": str(payload.get("kb_version") or "")[:32],
+            }
+            jsonl.append_line(self.deps.feedback_path, json.dumps(record, ensure_ascii=False),
+                              int(self.deps.pipe.settings.log_max_bytes),
+                              int(self.deps.pipe.settings.log_keep))
+            self.deps.guards.audit.write("feedback", client=self._client(), trace_id=record["trace_id"],
+                               useful=record["useful"], behavior=record["behavior"],
+                               has_expected=bool(record["expected"]),
+                               document=record["document"])
+            self._json({"ok": True, "need": not record["useful"]})
+            return
+        if path == "/api/keywords/rebuild":
+            if not self._is_admin():
+                self._json({"error": "forbidden"}, 403)
+                return
+            try:
+                detail = self.deps.pipe.rebuild_keywords(enrich=True)
+                self.deps.guards.audit.write("keywords.rebuild", client=self._client(),
+                                   entries=detail.get("entries"), llm=detail.get("llm"))
+                self._json({"ok": True, "keywords": detail,
+                            "summary": self.deps.pipe.keywords.summary()})
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        if path == "/api/session/clear":
+            sid = str(payload.get("session_id") or "").strip()[:64]
+            self.deps.pipe.sessions.clear(sid)
+            self._json({"ok": True, "session_id": sid, "sessions": self.deps.pipe.sessions.status()})
+            return
+        if path == "/api/reload":
+            try:
+                total = self.deps.reload_kb()
+                self.deps.guards.audit.write("kb.reload", client=self._client(), chunks=total)
+                self._json({"ok": True, **self.deps.index_fields()})
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)}, 500)
+            return
+        # 组内条件互斥，走到这里说明分派给了不该给的路径。
+        self._not_found(self.command, path)
 
+
+    def _post_ask(self, path: str, payload: dict) -> None:
+        """问答：流式与非流式共用 `_ask_preflight`，鉴权/限流/幂等一套口径。"""
+        if path == "/api/ask/stream":
             pre, err = self._ask_preflight(payload)
             if err:
                 body, code, headers = err
                 self._json(body, code, extra_headers=headers)
                 return
-            if pre["cached"] is not None:
-                metrics.inc("rag_idempotent_replay_total")
-                guards.audit.write("ask.idempotent_replay", client=pre["client"],
-                                   key=pre["idem_key"],
-                                   trace_id=pre["cached"].get("trace_id"),
-                                   request_id=pre["request_id"])
-                self._json(pre["cached"], extra_headers={"X-Idempotent-Replay": "true",
-                                                          "X-Request-Id": pre["request_id"]})
+
+            # 长连接名额与 /mcp 共用一套。之前这里没接，64 个线程全被慢流占满时
+            # 全站不响应，而调用方拿到的只是「超时」——看起来像服务挂了。
+            if not sse_acquire():
+                self._json({"ok": False, "error": "too_many_streams",
+                            "message": f"同时进行的流式回答已达上限（{sse_limit()} 条），"
+                                       "请改用非流式接口或稍后重试"},
+                           429, extra_headers={"Retry-After": "2"})
                 return
 
-            started = time.monotonic()
-            result = pipe.ask(pre["query"], model=pre["model"],
-                              force_extractive=pre["budget_blocked"],
-                              session_id=pre["session_id"])
-            self._annotate_result(result, pre)
-            self._record_ask(result, pre, started, "/api/ask")
-            self._json(result, extra_headers={
-                "X-RateLimit-Remaining": pre["decision"].remaining,
-                "X-Retrieval": str(result.get("retrieval_mode") or pipe.settings.retrieval),
-                "X-Request-Id": pre["request_id"],
-                "X-Answer-Path": str(result.get("path") or "rag"),
-            })
+            cancel = threading.Event()
+            try:
+                self._stream_answer(pre, cancel)
+            finally:
+                # 正常结束、超时、客户端断开，三条路都要把名额还回去。
+                # 漏还的后果是「出过一次异常之后永久 429」，比不限流更难查。
+                cancel.set()
+                sse_release()
             return
-            # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
-            # 不能让请求挂在一个没有 response 的方法里。
-            self._not_found(self.command, path)
 
-        def _stream_answer(self, pre: dict, cancel: threading.Event) -> None:
-            """把一次问答渲染成 SSE。
+        pre, err = self._ask_preflight(payload)
+        if err:
+            body, code, headers = err
+            self._json(body, code, extra_headers=headers)
+            return
+        if pre["cached"] is not None:
+            self.deps.metrics.inc("rag_idempotent_replay_total")
+            self.deps.guards.audit.write("ask.idempotent_replay", client=pre["client"],
+                               key=pre["idem_key"],
+                               trace_id=pre["cached"].get("trace_id"),
+                               request_id=pre["request_id"])
+            self._json(pre["cached"], extra_headers={"X-Idempotent-Replay": "true",
+                                                      "X-Request-Id": pre["request_id"]})
+            return
 
-            `cancel` 由调用方在收尾时置位，也覆盖「客户端中途断开」。
-            时序交给 `sse.relay`：生成线程每出一块检查一次取消，取消就关掉生成器——
-            不关的话，模型那一轮 token 会照常跑完，只是没人收，成本却照记。
-            """
-            self._sse_headers()
+        started = time.monotonic()
+        result = self.deps.pipe.ask(pre["query"], model=pre["model"],
+                          force_extractive=pre["budget_blocked"],
+                          session_id=pre["session_id"])
+        self._annotate_result(result, pre)
+        self._record_ask(result, pre, started, "/api/ask")
+        self._json(result, extra_headers={
+            "X-RateLimit-Remaining": pre["decision"].remaining,
+            "X-Retrieval": str(result.get("retrieval_mode") or self.deps.pipe.settings.retrieval),
+            "X-Request-Id": pre["request_id"],
+            "X-Answer-Path": str(result.get("path") or "rag"),
+        })
+        return
+        # 分派层只把本组的路径交进来；真有不认识的也从这里回 404，
+        # 不能让请求挂在一个没有 response 的方法里。
+        self._not_found(self.command, path)
 
-            def send(event: str, data) -> None:
-                # 增量统一包成 {"text": ...}：前端按这个字段取文本，
-                # 直接发裸字符串会让 `d.text` 变成 undefined（答案一片空白）。
-                payload = {"text": data} if event in ("delta", "replace") else data
-                chunk = (f"event: {event}\ndata: "
-                         + json.dumps(payload, ensure_ascii=False) + "\n\n")
-                # 不吞 OSError：relay 靠它判断断开（见 _openai_stream 的同类说明）
-                self.wfile.write(chunk.encode("utf-8"))
-                self.wfile.flush()
+    def _stream_answer(self, pre: dict, cancel: threading.Event) -> None:
+        """把一次问答渲染成 SSE。
 
-            def send_comment(text: str) -> None:
-                # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着。
-                # 这条必须吞异常——心跳失败只意味着该结束了，收尾帧还要继续走。
-                self._sse_raw(f": {text}\n\n")
+        `cancel` 由调用方在收尾时置位，也覆盖「客户端中途断开」。
+        时序交给 `sse.relay`：生成线程每出一块检查一次取消，取消就关掉生成器——
+        不关的话，模型那一轮 token 会照常跑完，只是没人收，成本却照记。
+        """
+        self._sse_headers()
 
-            if pre["cached"] is not None:
-                metrics.inc("rag_idempotent_replay_total")
-                guards.audit.write("ask.idempotent_replay", client=pre["client"],
-                                   key=pre["idem_key"],
-                                   trace_id=pre["cached"].get("trace_id"),
-                                   request_id=pre["request_id"])
-                self._sse_raw("event: final\ndata: "
-                              + json.dumps(pre["cached"], ensure_ascii=False) + "\n\n")
-                return
+        def send(event: str, data) -> None:
+            # 增量统一包成 {"text": ...}：前端按这个字段取文本，
+            # 直接发裸字符串会让 `d.text` 变成 undefined（答案一片空白）。
+            payload = {"text": data} if event in ("delta", "replace") else data
+            chunk = (f"event: {event}\ndata: "
+                     + json.dumps(payload, ensure_ascii=False) + "\n\n")
+            # 不吞 OSError：relay 靠它判断断开（见 _openai_stream 的同类说明）
+            self.wfile.write(chunk.encode("utf-8"))
+            self.wfile.flush()
 
-            started = time.monotonic()
-            send_comment("connected")
-            outcome = sse.relay(
-                factory=lambda: pipe.ask_stream(pre["query"], model=pre["model"],
-                                                force_extractive=pre["budget_blocked"],
-                                                session_id=pre["session_id"]),
-                send=send, cancel=cancel, heartbeat=lambda: send_comment("ping"),
-                thread_name="ask-stream")
+        def send_comment(text: str) -> None:
+            # SSE 注释行：心跳，客户端会忽略，但代理与浏览器知道连接还活着。
+            # 这条必须吞异常——心跳失败只意味着该结束了，收尾帧还要继续走。
+            self._sse_raw(f": {text}\n\n")
 
-            if outcome.broken:
-                # 客户端走了：用户拿不到答案，也就不该再为它烧 token
-                # （产品口径：断开即取消，不按已生成部分计费）。
-                return
-            if outcome.timed_out:
-                self._sse_raw("event: error\ndata: "
-                              + json.dumps({"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"},
-                                           ensure_ascii=False) + "\n\n")
-                return
-            if outcome.error:
-                self._sse_raw("event: error\ndata: "
-                              + json.dumps({"error": outcome.error},
-                                           ensure_ascii=False) + "\n\n")
-                return
-            if outcome.final is not None:
-                # 顺序不能换：先标注引用与成本，再把 final 发给客户端。
-                # 发完再记账的话，客户端可能在记账前就断开（用户已看到答案），
-                # 这一轮成本就丢了。
-                self._annotate_result(outcome.final, pre)
-                self._record_ask(outcome.final, pre, started, "/api/ask/stream")
-                self._sse_raw("event: final\ndata: "
-                              + json.dumps(outcome.final, ensure_ascii=False) + "\n\n")
+        if pre["cached"] is not None:
+            self.deps.metrics.inc("rag_idempotent_replay_total")
+            self.deps.guards.audit.write("ask.idempotent_replay", client=pre["client"],
+                               key=pre["idem_key"],
+                               trace_id=pre["cached"].get("trace_id"),
+                               request_id=pre["request_id"])
+            self._sse_raw("event: final\ndata: "
+                          + json.dumps(pre["cached"], ensure_ascii=False) + "\n\n")
+            return
 
-        # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
-        # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。
-        def _ask_preflight(self, payload: dict):
-            """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
-            # 字段缺失与「给了空串」是两件事：
-            #   空串 → 澄清（聊天场景里用户按了回车，回一句"请说明具体问题"是对的）；
-            #   缺字段 → 400（调用方把 query 写成了 question，回澄清等于把
-            #   参数名写错伪装成用户没输入，是最难自查的一类静默失败）。
-            if not isinstance(payload, dict) or "query" not in payload:
-                return None, ({"ok": False, "error": "invalid_argument",
-                               "message": "缺少 query 字段；请求体应形如 {\"query\": \"你的问题\"}"},
-                              400, {})
-            if not isinstance(payload["query"], str):
-                return None, ({"ok": False, "error": "invalid_argument",
-                               "message": f"query 必须是字符串，收到 {type(payload['query']).__name__}"},
-                              400, {})
-            query = payload["query"]
-            session_id = str(payload.get("session_id") or "").strip()[:64] or None
-            client = self._client()
-            request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]
+        started = time.monotonic()
+        send_comment("connected")
+        outcome = sse.relay(
+            factory=lambda: self.deps.pipe.ask_stream(pre["query"], model=pre["model"],
+                                            force_extractive=pre["budget_blocked"],
+                                            session_id=pre["session_id"]),
+            send=send, cancel=cancel, heartbeat=lambda: send_comment("ping"),
+            thread_name="ask-stream")
 
-            key_name, auth_err = self._api_auth()
-            if auth_err:
-                metrics.inc("rag_unauthorized_total")
-                metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "401"})
-                guards.audit.write("ask.unauthorized", client=client, query=query[:200],
-                                   reason=auth_err, key=api_keys.mask(self._presented_key()),
-                                   request_id=request_id)
-                return None, ({
-                    "error": "unauthorized",
-                    "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key",
-                    "request_id": request_id,
-                }, 401, {"WWW-Authenticate": 'Bearer realm="rag"', "X-Request-Id": request_id})
+        if outcome.broken:
+            # 客户端走了：用户拿不到答案，也就不该再为它烧 token
+            # （产品口径：断开即取消，不按已生成部分计费）。
+            return
+        if outcome.timed_out:
+            self._sse_raw("event: error\ndata: "
+                          + json.dumps({"error": f"回答超过 {int(SSE_MAX_SECONDS)} 秒，已中断"},
+                                       ensure_ascii=False) + "\n\n")
+            return
+        if outcome.error:
+            self._sse_raw("event: error\ndata: "
+                          + json.dumps({"error": outcome.error},
+                                       ensure_ascii=False) + "\n\n")
+            return
+        if outcome.final is not None:
+            # 顺序不能换：先标注引用与成本，再把 final 发给客户端。
+            # 发完再记账的话，客户端可能在记账前就断开（用户已看到答案），
+            # 这一轮成本就丢了。
+            self._annotate_result(outcome.final, pre)
+            self._record_ask(outcome.final, pre, started, "/api/ask/stream")
+            self._sse_raw("event: final\ndata: "
+                          + json.dumps(outcome.final, ensure_ascii=False) + "\n\n")
 
-            # 配了 Key 就按 Key 限流与计成本；未配置时退回按 IP（本机/内网场景）
-            identity = f"key:{key_name}" if key_name else client
-            decision = guards.rate.allow(identity)
-            if not decision.allowed:
-                metrics.inc("rag_rate_limited_total")
-                metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
-                guards.audit.write("ask.rate_limited", client=client, query=query[:200],
-                                   retry_after=decision.retry_after, request_id=request_id,
-                                   api_key=key_name)
-                return None, ({"error": "rate limited", "retry_after": decision.retry_after,
-                               "request_id": request_id}, 429,
-                              {"Retry-After": decision.retry_after, "X-Request-Id": request_id})
-            # 幂等键必须绑定「谁问的 + 问了什么 + 用哪个模型」。
-            # 只按 header 取值时，同一个键换一个问题会原样返回上一题的答案：
-            # 实测先问「稳盈系列起购金额是多少」、再问「大额存单的期限是多久」，
-            # 第二次拿到的是第一题的 query 与 answer，还带 X-Idempotent-Replay。
-            # 后果不是重复计费，而是静默给错答案——结果看起来完全正常，
-            # 没有任何异常信号。调用方（重试层、脚本、复用一个 id 的前端）都会中招。
-            # 不存原文而存哈希：键要进审计与指标标签，不能带用户问题。
-            model = guards.runtime.pick_model(f"{identity}|{query}")
-            raw_idem = (self.headers.get("Idempotency-Key")
-                        or str(payload.get("request_id") or "")).strip()
-            idem_key = ""
-            if raw_idem:
-                idem_key = hashlib.sha256(
-                    f"{identity}\x00{query}\x00{model}\x00{raw_idem}".encode("utf-8")
-                ).hexdigest()
-            return {
-                "query": query, "session_id": session_id, "client": client,
-                "api_key": key_name, "identity": identity,
-                "request_id": request_id, "decision": decision, "idem_key": idem_key,
-                "cached": guards.idem.get(idem_key),
-                "model": model,
-                "budget_blocked": guards.cost.blocked,
-            }, None
-        def _annotate_result(self, result: dict, pre: dict) -> None:
-            kb_version = store.active_version() if store is not None else None
-            result["kb_version"] = kb_version
-            for citation in result.get("citations") or []:
-                citation.setdefault("version", kb_version)
-            result["canary"] = bool(pre["model"])
-            result["budget_blocked"] = pre["budget_blocked"]
-            result["request_id"] = pre["request_id"]
-        def _record_ask(self, result: dict, pre: dict, started: float, path_label: str) -> None:
-            llm_tokens = int((result.get("usage") or {}).get("total_tokens") or 0)
-            embed_tokens = int(result.get("embedding_tokens") or 0)
-            tokens = llm_tokens + embed_tokens
-            price = float(getattr(pipe.settings, "token_price_per_1k", 0) or 0)
-            cost_usd = round(tokens / 1000 * price, 6) if price > 0 else 0.0
-            result["cost_usd"] = cost_usd
-            guards.cost.add(tokens)
-            guards.idem.put(pre["idem_key"], result)
+    # HEAD 复用 GET 的路由：_send 已经按 command 跳过响应体。
+    # 不实现会返回 501，而 HTTP/1.1 的监控探针与部分代理默认先发 HEAD。
+    def _ask_preflight(self, payload: dict):
+        """问答前置：鉴权、限流、幂等、灰度与预算。JSON 与流式共用，避免两套口径。"""
+        # 字段缺失与「给了空串」是两件事：
+        #   空串 → 澄清（聊天场景里用户按了回车，回一句"请说明具体问题"是对的）；
+        #   缺字段 → 400（调用方把 query 写成了 question，回澄清等于把
+        #   参数名写错伪装成用户没输入，是最难自查的一类静默失败）。
+        if not isinstance(payload, dict) or "query" not in payload:
+            return None, ({"ok": False, "error": "invalid_argument",
+                           "message": "缺少 query 字段；请求体应形如 {\"query\": \"你的问题\"}"},
+                          400, {})
+        if not isinstance(payload["query"], str):
+            return None, ({"ok": False, "error": "invalid_argument",
+                           "message": f"query 必须是字符串，收到 {type(payload['query']).__name__}"},
+                          400, {})
+        query = payload["query"]
+        session_id = str(payload.get("session_id") or "").strip()[:64] or None
+        client = self._client()
+        request_id = (self.headers.get("X-Request-Id") or uuid.uuid4().hex[:16]).strip()[:64]
 
-            if tracer is not None:
-                # 旁路：emit 只入队，永不抛、永不阻塞（队列满就丢并计数）。
-                # 用 started 的单调钟换纳秒起点，保证 span 时长与 latency_ms 同一口径。
-                elapsed_ns = int((time.monotonic() - started) * 1e9)
-                tracer.emit("rag.ask", time.time_ns() - max(0, elapsed_ns), {
-                    "rag.behavior": behavior_of(result),
-                    "rag.path": str(result.get("path") or "rag"),
-                    "rag.mode": str(result.get("mode") or ""),
-                    "rag.latency_ms": int(result.get("latency_ms") or 0),
-                    "rag.citations": len(result.get("citations") or []),
-                    "rag.tokens": tokens,
-                    "rag.api_called": bool(result.get("api_called")),
-                    "http.route": path_label,
-                })
+        key_name, auth_err = self._api_auth()
+        if auth_err:
+            self.deps.metrics.inc("rag_unauthorized_total")
+            self.deps.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "401"})
+            self.deps.guards.audit.write("ask.unauthorized", client=client, query=query[:200],
+                               reason=auth_err, key=self.deps.api_keys.mask(self._presented_key()),
+                               request_id=request_id)
+            return None, ({
+                "error": "unauthorized",
+                "message": "需要 API Key：Authorization: Bearer <key> 或 X-API-Key",
+                "request_id": request_id,
+            }, 401, {"WWW-Authenticate": 'Bearer realm="rag"', "X-Request-Id": request_id})
 
-            behavior = str(result.get("behavior") or "unknown")
-            mode = str(result.get("mode") or "none")
-            answer_path = str(result.get("path") or "rag")
-            metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
-            metrics.inc("rag_answer_path_total", {"path": answer_path})
-            if answer_path == "keyword":
-                metrics.inc("rag_keyword_hit_total")
-            for item in result.get("keyword_rejected") or []:
-                metrics.inc("rag_keyword_rejected_total",
-                            {"reason": str(item.get("reason") or "unknown")})
-            if result.get("keyword_gate"):
-                metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
-            if not result.get("api_called"):
-                metrics.inc("rag_local_answer_total")
-            metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
-            metrics.observe("rag_ask_duration_seconds",
-                            result.get("latency_ms", 0) / 1000.0 or (time.monotonic() - started))
-            metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
-            metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
+        # 配了 Key 就按 Key 限流与计成本；未配置时退回按 IP（本机/内网场景）
+        identity = f"key:{key_name}" if key_name else client
+        decision = self.deps.guards.rate.allow(identity)
+        if not decision.allowed:
+            self.deps.metrics.inc("rag_rate_limited_total")
+            self.deps.metrics.inc("rag_http_requests_total", {"path": "/api/ask", "code": "429"})
+            self.deps.guards.audit.write("ask.rate_limited", client=client, query=query[:200],
+                               retry_after=decision.retry_after, request_id=request_id,
+                               api_key=key_name)
+            return None, ({"error": "rate limited", "retry_after": decision.retry_after,
+                           "request_id": request_id}, 429,
+                          {"Retry-After": decision.retry_after, "X-Request-Id": request_id})
+        # 幂等键必须绑定「谁问的 + 问了什么 + 用哪个模型」。
+        # 只按 header 取值时，同一个键换一个问题会原样返回上一题的答案：
+        # 实测先问「稳盈系列起购金额是多少」、再问「大额存单的期限是多久」，
+        # 第二次拿到的是第一题的 query 与 answer，还带 X-Idempotent-Replay。
+        # 后果不是重复计费，而是静默给错答案——结果看起来完全正常，
+        # 没有任何异常信号。调用方（重试层、脚本、复用一个 id 的前端）都会中招。
+        # 不存原文而存哈希：键要进审计与指标标签，不能带用户问题。
+        model = self.deps.guards.runtime.pick_model(f"{identity}|{query}")
+        raw_idem = (self.headers.get("Idempotency-Key")
+                    or str(payload.get("request_id") or "")).strip()
+        idem_key = ""
+        if raw_idem:
+            idem_key = hashlib.sha256(
+                f"{identity}\x00{query}\x00{model}\x00{raw_idem}".encode("utf-8")
+            ).hexdigest()
+        return {
+            "query": query, "session_id": session_id, "client": client,
+            "api_key": key_name, "identity": identity,
+            "request_id": request_id, "decision": decision, "idem_key": idem_key,
+            "cached": self.deps.guards.idem.get(idem_key),
+            "model": model,
+            "budget_blocked": self.deps.guards.cost.blocked,
+        }, None
+    def _annotate_result(self, result: dict, pre: dict) -> None:
+        kb_version = self.deps.store.active_version() if self.deps.store is not None else None
+        result["kb_version"] = kb_version
+        for citation in result.get("citations") or []:
+            citation.setdefault("version", kb_version)
+        result["canary"] = bool(pre["model"])
+        result["budget_blocked"] = pre["budget_blocked"]
+        result["request_id"] = pre["request_id"]
+    def _record_ask(self, result: dict, pre: dict, started: float, path_label: str) -> None:
+        llm_tokens = int((result.get("usage") or {}).get("total_tokens") or 0)
+        embed_tokens = int(result.get("embedding_tokens") or 0)
+        tokens = llm_tokens + embed_tokens
+        price = float(getattr(self.deps.pipe.settings, "token_price_per_1k", 0) or 0)
+        cost_usd = round(tokens / 1000 * price, 6) if price > 0 else 0.0
+        result["cost_usd"] = cost_usd
+        self.deps.guards.cost.add(tokens)
+        self.deps.guards.idem.put(pre["idem_key"], result)
+
+        if self.deps.tracer is not None:
+            # 旁路：emit 只入队，永不抛、永不阻塞（队列满就丢并计数）。
+            # 用 started 的单调钟换纳秒起点，保证 span 时长与 latency_ms 同一口径。
+            elapsed_ns = int((time.monotonic() - started) * 1e9)
+            self.deps.tracer.emit("rag.ask", time.time_ns() - max(0, elapsed_ns), {
+                "rag.behavior": behavior_of(result),
+                "rag.path": str(result.get("path") or "rag"),
+                "rag.mode": str(result.get("mode") or ""),
+                "rag.latency_ms": int(result.get("latency_ms") or 0),
+                "rag.citations": len(result.get("citations") or []),
+                "rag.tokens": tokens,
+                "rag.api_called": bool(result.get("api_called")),
+                "http.route": path_label,
+            })
+
+        behavior = str(result.get("behavior") or "unknown")
+        mode = str(result.get("mode") or "none")
+        answer_path = str(result.get("path") or "rag")
+        self.deps.metrics.inc("rag_ask_total", {"behavior": behavior, "mode": mode})
+        self.deps.metrics.inc("rag_answer_path_total", {"path": answer_path})
+        if answer_path == "keyword":
+            self.deps.metrics.inc("rag_keyword_hit_total")
+        for item in result.get("keyword_rejected") or []:
+            self.deps.metrics.inc("rag_keyword_rejected_total",
+                        {"reason": str(item.get("reason") or "unknown")})
+        if result.get("keyword_gate"):
+            self.deps.metrics.inc("rag_keyword_gate_total", {"gate": str(result["keyword_gate"])})
+        if not result.get("api_called"):
+            self.deps.metrics.inc("rag_local_answer_total")
+        self.deps.metrics.inc("rag_http_requests_total", {"path": path_label, "code": "200"})
+        self.deps.metrics.observe("rag_ask_duration_seconds",
+                        result.get("latency_ms", 0) / 1000.0 or (time.monotonic() - started))
+        self.deps.metrics.inc("rag_tokens_total", {"kind": "llm"}, llm_tokens)
+        self.deps.metrics.inc("rag_tokens_total", {"kind": "embedding"}, embed_tokens)
+        if cost_usd:
+            self.deps.metrics.inc("rag_cost_usd_total", value=cost_usd)
+        if pre.get("api_key"):
+            # 标签只放名字的哈希前缀：指标导出后可能被采集/转发，别把密钥名也带走
+            key_label = hashlib.sha256(str(pre["api_key"]).encode("utf-8")).hexdigest()[:8]
+            self.deps.metrics.inc("rag_api_tokens_total", {"key": key_label}, tokens)
             if cost_usd:
-                metrics.inc("rag_cost_usd_total", value=cost_usd)
-            if pre.get("api_key"):
-                # 标签只放名字的哈希前缀：指标导出后可能被采集/转发，别把密钥名也带走
-                key_label = hashlib.sha256(str(pre["api_key"]).encode("utf-8")).hexdigest()[:8]
-                metrics.inc("rag_api_tokens_total", {"key": key_label}, tokens)
-                if cost_usd:
-                    metrics.inc("rag_api_cost_usd_total", {"key": key_label}, value=cost_usd)
-            if result.get("degraded"):
-                metrics.inc("rag_retrieval_degraded_total",
-                            {"reason": str(result.get("degrade_reason") or "unknown")})
-            # 引用支持度：编号合法但内容对不上时单独计数，别和「无出处」混在一起
-            bad_citations = sum(1 for item in (result.get("citation_support") or [])
-                                if not item.get("supported"))
-            if bad_citations:
-                metrics.inc("rag_citation_unsupported_total", value=bad_citations)
+                self.deps.metrics.inc("rag_api_cost_usd_total", {"key": key_label}, value=cost_usd)
+        if result.get("degraded"):
+            self.deps.metrics.inc("rag_retrieval_degraded_total",
+                        {"reason": str(result.get("degrade_reason") or "unknown")})
+        # 引用支持度：编号合法但内容对不上时单独计数，别和「无出处」混在一起
+        bad_citations = sum(1 for item in (result.get("citation_support") or [])
+                            if not item.get("supported"))
+        if bad_citations:
+            self.deps.metrics.inc("rag_citation_unsupported_total", value=bad_citations)
 
-            guards.audit.write(
-                "ask", client=pre["client"], query=pre["query"][:200],
-                trace_id=result.get("trace_id"), request_id=pre["request_id"],
-                behavior=behavior, mode=mode, session_id=pre["session_id"],
-                retrieval_score=result.get("retrieval_score"), model=result.get("model"),
-                canary=bool(pre["model"]), budget_blocked=pre["budget_blocked"], tokens=tokens,
-                llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
-                latency_ms=result.get("latency_ms"), path=answer_path,
-                api_called=bool(result.get("api_called")),
-                citation_support_rate=result.get("citation_support_rate"),
-                keyword_terms=result.get("keyword_terms"),
-                keyword_gate=result.get("keyword_gate"),
-                keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
-                                  for r in (result.get("keyword_rejected") or [])],
-                stream=path_label.endswith("/stream"),
-                api_key=pre.get("api_key"),
-            )
-
-    return WriteRoutes
+        self.deps.guards.audit.write(
+            "ask", client=pre["client"], query=pre["query"][:200],
+            trace_id=result.get("trace_id"), request_id=pre["request_id"],
+            behavior=behavior, mode=mode, session_id=pre["session_id"],
+            retrieval_score=result.get("retrieval_score"), model=result.get("model"),
+            canary=bool(pre["model"]), budget_blocked=pre["budget_blocked"], tokens=tokens,
+            llm_tokens=llm_tokens, embedding_tokens=embed_tokens, cost_usd=cost_usd,
+            latency_ms=result.get("latency_ms"), path=answer_path,
+            api_called=bool(result.get("api_called")),
+            citation_support_rate=result.get("citation_support_rate"),
+            keyword_terms=result.get("keyword_terms"),
+            keyword_gate=result.get("keyword_gate"),
+            keyword_rejected=[f"{r.get('term')}:{r.get('reason')}"
+                              for r in (result.get("keyword_rejected") or [])],
+            stream=path_label.endswith("/stream"),
+            api_key=pre.get("api_key"),
+        )
