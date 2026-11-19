@@ -297,7 +297,7 @@ function bindSource(){
     lastFocus=btn;
     mask.hidden=false; drawer.hidden=false;
     if(window.markOpen) markOpen(mask);
-    if(window.openOverlay) openOverlay('srcDrawer');
+    if(window.openOverlay) openOverlay('srcDrawer', drawer);
     document.body.classList.add('no-scroll');
     requestAnimationFrame(function(){ drawer.classList.add('open'); });
     var closer=document.getElementById('srcClose');
@@ -587,6 +587,8 @@ async function ask(opts){
   opts=opts||{};
   var query=qEl.value.trim();
   if(!query){ qEl.focus(); return; }
+  // 清空还在撤销窗口内就开始新提问：撤销已经没意义，先把清空落定
+  if(pendingClear) commitClear();
   // 生成中再按 Enter / 再点发送：说一句「正在生成」，别静默吞掉输入
   if(busy){ toast('正在生成，先点停止或等它说完',true); return; }
   setBusy(true);
@@ -702,16 +704,76 @@ qEl.addEventListener('keydown',function(e){
 });
 syncSend();
 document.addEventListener('keydown',function(e){
-  if(e.key==='Escape'&&isTopOverlay('srcDrawer')) sourceView.close();
+  /* Esc 的第一优先级是「停止生成」：正在吐字时按 Esc，几乎一定是想停，
+     而不是想关某个浮层。只有不在生成中才轮到关浮层。 */
+  if(e.key==='Escape'){
+    if(busy&&controller){
+      // 与发送按钮同一套 600ms 判断：连按两下 Enter 的手速不该把请求掐掉
+      if(Date.now()-startedAt>=600) controller.abort();
+      return;
+    }
+    if(isTopOverlay('srcDrawer')) sourceView.close();
+    return;
+  }
+  /* Ctrl+Z 只接管「清空对话」这一种：撤销条不抢焦点（见 clear 的点击处理），
+     键盘用户就得有别的路进来。输入框里不碰——那儿的 Ctrl+Z 是撤销打字。 */
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='z'||e.key==='Z')){
+    if(!pendingClear) return;
+    var el=document.activeElement, tag=(el&&el.tagName)||'';
+    if(tag==='INPUT'||tag==='TEXTAREA'||(el&&el.isContentEditable)) return;
+    e.preventDefault(); undoClear();
+  }
 });
-document.getElementById('clear').onclick=function(){
-  if(!list.querySelector('.msg')){ return; }
-  var old=SESSION_ID;
-  SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
+/* ---------- 清空对话：立刻清屏，10 秒内可撤销 ----------
+   为什么不在清空前弹 confirm：清空是高频动作（聊完一题就清），每次都拦一下
+   很烦；而且 confirm 一旦点错就没了。
+   为什么不在清空后「直接」撤销：`/api/session/clear` 和 `JY.clearThread`
+   都是不可逆的，先执行再撤销只剩一个空壳。所以把「真清」压到窗口结束，
+   窗口内一切只发生在前端——撤销是无损的。 */
+var pendingClear=null;
+function commitClear(p){
+  p=p||pendingClear;
+  if(!p) return;
+  pendingClear=null;
+  clearTimeout(p.timer);
+  dismissNotice();
   fetch('/api/session/clear',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({session_id:old})}).catch(function(){});
-  if(window.JY) JY.clearCurrent();
-  list.innerHTML=''; renderEmpty(); toast('已清空对话');
+    body:JSON.stringify({session_id:p.sid})}).catch(function(){});
+  if(window.JY&&p.threadId) JY.clearThread(p.threadId);
+}
+function undoClear(){
+  if(!pendingClear) return;
+  var p=pendingClear; pendingClear=null;
+  clearTimeout(p.timer);
+  dismissNotice();
+  /* 清空之后又问了问题：那段内容属于新对话，撤销不该把它顶掉。
+     判据看**界面上有没有新消息**，不看 JY.turns——清空时我们刻意没清 turns
+     （撤销要靠它），所以 turns 一直非空，拿它判断等于条件恒真。
+     正常提问会在 ask() 开头把清空提交掉，走到这里只有「绕开 ask 塞了内容」的情况。 */
+  if(list.querySelector('.msg')){
+    commitClear(p); toast('已经开始了新对话，无法撤销了',true); return;
+  }
+  SESSION_ID=p.sid; saveSessionId(SESSION_ID);
+  list.innerHTML=p.html;
+  if(window.JY&&p.threadId) JY.setThread(p.threadId,{turns:p.turns,title:p.title});
+  scrollBottom(true);
+  toast('已恢复');
+}
+document.getElementById('clear').onclick=function(){
+  if(pendingClear) commitClear();            // 上一次还没落定又点一次：先把上一次算数
+  if(busy){ toast('正在生成，先停止再清空',true); return; }
+  if(!list.querySelector('.msg')) return;
+  var t=(window.JY&&JY.currentThread)?JY.currentThread():null;
+  var p={sid:SESSION_ID, threadId:t?t.id:'', turns:t?(t.turns||[]).slice():[],
+         title:t?t.title:'', html:list.innerHTML, timer:0};
+  pendingClear=p;
+  SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
+  p.timer=setTimeout(function(){ commitClear(p); },10000);
+  list.innerHTML=''; renderEmpty();
+  /* 不抢焦点：刚点完清空的人下一步多半是打字，把光标从输入框挪到「撤销」
+     只会添乱。键盘用户按 Ctrl+Z 一样能撤销（见下面的 keydown）。 */
+  notice({text:'已清空对话', action:'撤销', onAction:undoClear,
+          onClose:function(){ commitClear(p); }});
 };
 document.getElementById('exportMd').onclick=exportMarkdown;
 
@@ -750,7 +812,7 @@ async function openNoteDialog(query,d){
     hint:{title:(query||'').slice(0,60)}
   };
   ND.ready=false;
-  if(window.openOverlay) openOverlay('noteDialog');
+  if(window.openOverlay) openOverlay('noteDialog', document.getElementById('noteDialog'));
   document.getElementById('noteMask').hidden=false;
   document.getElementById('noteDialog').hidden=false;
   document.getElementById('ndTitle').value=query||'';

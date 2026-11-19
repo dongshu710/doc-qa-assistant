@@ -169,15 +169,23 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         '<link rel="icon" href="data:,">'
         f"<title>{title}</title><style>{BASE_CSS}{SETTINGS_CSS}{FILES_CSS}{SETUP_CSS}{css}</style></head>"
         f'<body class="page-{active}">'
+        # 跳转链：键盘用户每进一个页面都要先 Tab 过整条侧栏（十几个链接）才能到正文。
+        # 它必须是 body 下第一个可聚焦元素，否则等于没有。
+        '<a class="skip" href="#stage">跳到主要内容</a>'
         '<div class="app">'
         f"{nav(active)}"
         '<div class="main">'
         '<button class="mnav" id="sideOpen" type="button" aria-label="打开侧栏">'
         f"{icon('panel', 17)}</button>"
-        f'<div class="stage stage-{active}">{body}</div>'
+        # tabindex="-1"：让 skip link 的 #stage 能真正接管焦点（div 默认不可聚焦，
+        # 点了只是滚动一下，焦点仍在原处，读屏用户会以为跳转没生效）。
+        f'<div class="stage stage-{active}" id="stage" tabindex="-1">{body}</div>'
         "</div></div>"
         f"{FILES_HTML}{SETTINGS_HTML}{SETUP_HTML}"
         f'<div id="toasts"></div>'
+        # 状态播报区：必须常驻。读屏软件启动时索引 live region 列表，
+        # 之后动态插入的容器很可能一次都不播报。
+        '<div id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>'
         # 公共脚本先注入一次：侧栏与设置都要用 esc/toast，页面脚本不再各自复制一份
         f"<script>{JS_UTIL}</script>"
         f"<script>{SIDE_JS}</script>"

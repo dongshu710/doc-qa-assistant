@@ -185,8 +185,10 @@
         var item=list.querySelector('.file-item.on');
         if(item) select(item);
       };
-      detail.querySelector('[data-save]').onclick=function(){
-        var saveBtn=this; saveBtn.disabled=true; say('保存中…');
+      var saveBtn=detail.querySelector('[data-save]');
+      function save(){
+        if(saveBtn.disabled) return;          // 连按 Ctrl+S 不该发出两次 PUT
+        saveBtn.disabled=true; say('保存中…');
         fetch('/api/files/raw',{method:'PUT',headers:reqHeaders(true),body:JSON.stringify({
           path:d.path, content:area.value, base_rev:d.rev})}).then(function(r){
           return r.json().then(function(body){ return {status:r.status, body:body}; });
@@ -203,7 +205,15 @@
           load(current);      // front matter 里的标题/标签可能改过，列表要跟着刷新
         }).catch(function(e){ say('保存失败：'+((e&&e.message)||e),true); })
           .finally(function(){ saveBtn.disabled=false; });
-      };
+      }
+      saveBtn.onclick=save;
+      /* 编辑器里手会自己按 Ctrl+S。不拦的后果是浏览器弹「另存为」对话框，
+         而用户以为已经保存了——比不支持这个快捷键更糟，他会关掉页面。 */
+      area.addEventListener('keydown',function(e){
+        if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='s'||e.key==='S')){
+          e.preventDefault(); save();
+        }
+      });
       area.focus();
     }).catch(function(){
       detail.innerHTML='<p class="files-empty">读取失败，检查服务是否还在运行。</p>';
@@ -223,7 +233,7 @@
       +'<button class="btn sm" type="button" data-ok>创建</button></div></div>';
     document.body.appendChild(wrap);
     // 双击「新建笔记」时第二下落在刚出现的遮罩上，会把弹层立刻关掉
-    markOpen(wrap); openOverlay('newNote');
+    markOpen(wrap); openOverlay('newNote', wrap.querySelector('.pf-dlg') || wrap);
     var title=wrap.querySelector('#pfNewTitle'), body=wrap.querySelector('#pfNewBody');
     var msg=wrap.querySelector('.pf-msg'), okBtn=wrap.querySelector('[data-ok]');
     title.focus();

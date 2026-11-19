@@ -111,7 +111,7 @@ function openKbModal(title,html){
   $('kbModalTitle').textContent=title;
   $('kbModalBody').innerHTML=html;
   $('kbMask').hidden=false; $('kbModal').hidden=false;
-  markOpen($('kbMask')); openOverlay('kbModal');
+  markOpen($('kbMask')); openOverlay('kbModal', $('kbModal'));
 }
 function closeKbModal(){
   closeOverlay('kbModal');
@@ -371,7 +371,7 @@ async function uploadFiles(files){
 var CK={name:'', items:[], shown:0, seq:0, PAGE:80};
 function ckOpen(){
   $('ckMask').hidden=false; $('ckDrawer').hidden=false;
-  markOpen($('ckMask')); openOverlay('ckDrawer');
+  markOpen($('ckMask')); openOverlay('ckDrawer', $('ckDrawer'));
   document.body.classList.add('no-scroll');
   requestAnimationFrame(function(){
     $('ckDrawer').classList.add('open');

@@ -70,7 +70,8 @@
 
   function open(){
     if(window.__closeSide) window.__closeSide();
-    openOverlay('notesDrawer');
+    // 传元素才有焦点陷阱：只传 id 只是登记层级（侧栏那种非模态的就只登记）
+    openOverlay('notesDrawer', panel);
     panel.hidden=false; mask.hidden=false;
     if($('filesBtn')) $('filesBtn').setAttribute('aria-expanded','true');
     document.body.classList.add('set-open');

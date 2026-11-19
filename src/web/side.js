@@ -199,13 +199,25 @@
       call('DELETE','/api/threads/'+encodeURIComponent(id)).catch(function(){});
       JY.render();
     },
-    clearCurrent:function(){
-      var t=find(state.current); if(!t) return null;
+    clearThread:function(id){
+      /* 按 id 清，不按「当前」：清空对话的撤销窗口是 10 秒，这期间用户
+         完全可能已经切到别的会话或开了新对话。那时再把「当前」清掉，
+         清的是另一段上下文。 */
+      var t=find(id); if(!t) return null;
       t.turns=[]; t.title='新对话'; t.updated=now();
       persist(t,0);
       JY.render();
       return t;
     },
+    setThread:function(id,patch){
+      /* 撤销清空时把 turns 塞回去。同样按 id 定位。 */
+      var t=find(id); if(!t) return null;
+      Object.assign(t,patch||{});
+      persist(t,0);
+      JY.render();
+      return t;
+    },
+    clearCurrent:function(){ return JY.clearThread(state.current); },
     render:function(){
       var box=document.getElementById('convList'); if(!box) return;
       var q=(document.getElementById('convSearch')||{}).value||'';
@@ -218,13 +230,21 @@
         var g=group(t.updated);
         if(g!==last){ html+='<div class="conv-group">'+g+'</div>'; last=g; }
         var on=t.id===JY.currentId()?' on':'';
-        html+='<button type="button" class="conv'+on+'" data-id="'+t.id+'" '
-          +'title="'+esc(t.title||'')+' · '+esc(fmtFull(t.created||t.updated))+' · '+((t.turns&&t.turns.length)||t.count||0)+' 轮">'
-          +'<span class="t">'+esc(t.title||'新对话')+'</span>'
+        var label=t.title||'新对话';
+        /* 结构：div 容器 + 两个并列 button。
+           原来外层是 button，删除键是里面一个 <span role="button">：交互元素
+           不能嵌套（浏览器会把内层点击算给外层），而 span 没有 tabindex，
+           键盘永远够不到删除。 */
+        html+='<div class="conv'+on+'" data-id="'+t.id+'">'
+          +'<button type="button" class="conv-open" data-open="'+t.id+'" '
+          +'title="'+esc(label)+' · '+esc(fmtFull(t.created||t.updated))+' · '+((t.turns&&t.turns.length)||t.count||0)+' 轮">'
+          +'<span class="t">'+esc(label)+'</span>'
           // 用 created 而不是 updated：列表按 updated 排序，但显示"这段对话是哪次问的"更符合直觉，
           // 也更能区分同一句话问过很多次留下的同名会话
           +'<span class="ts">'+esc(timeShort(t.created||t.updated))+'</span>'
-          +'<span class="x" data-del="'+t.id+'" role="button" aria-label="删除这条会话">×</span></button>';
+          +'</button>'
+          +'<button type="button" class="x" data-del="'+t.id+'" '
+          +'aria-label="删除会话「'+esc(label)+'」" title="删除这条会话">×</button></div>';
       });
       if(!rows.length){
         html='<div class="side-empty">'+(q?'没有匹配的对话。'
@@ -288,6 +308,13 @@
       if(window.confirm('删除「'+(t.title||'新对话')+'」？只删这条会话记录，已存的笔记不受影响。')){
         JY.remove(id);
         document.dispatchEvent(new CustomEvent('jy:removed',{detail:id}));
+        /* 被删掉的那一行连同按钮一起没了，焦点会掉回 <body>——键盘用户
+           失去位置，读屏也不再播报。移到列表里的第一条，等价于
+           「焦点丢失时移到最近的逻辑位置」。 */
+        setTimeout(function(){
+          var next=document.querySelector('.conv-open');
+          if(next) try{ next.focus(); }catch(e){}
+        },0);
       }
       return;
     }

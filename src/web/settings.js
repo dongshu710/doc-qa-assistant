@@ -38,11 +38,10 @@
     if(window.__closeSide) window.__closeSide();
     panel.hidden=false; if(mask) mask.hidden=false;
     if(markOpen) markOpen(mask);
-    openOverlay('settings');
+    openOverlay('settings', panel);
     document.body.classList.add('set-open');
     if(!state.loaded) load();
-    var first=$('setBase');
-    if(first) setTimeout(function(){ try{ first.focus(); }catch(e){} },60);
+    // 移焦交给 util.js 的 trapFocus：它认 [autofocus]，面板一打开就落在第一个输入框。
   }
   function closePanel(){
     // 先落盘再隐藏：Esc 关面板时输入框的 blur 不一定先到，
@@ -72,18 +71,11 @@
       p.classList.toggle('on',p.getAttribute('data-pane')===name);
     });
   }
-  /* 焦点陷阱：面板是模态的，Tab 到最后一个控件后应该回到第一个，
-     否则焦点会跑到背后的页面上，键盘用户看着高亮消失、不知道自己在哪。 */
-  panel.addEventListener('keydown',function(e){
-    if(e.key!=='Tab') return;
-    var items=[].slice.call(panel.querySelectorAll(
-      'button:not([disabled]), [href], input:not([disabled]):not([type=hidden]), select, textarea, summary'
-    )).filter(function(el){ return el.offsetParent!==null; });
-    if(!items.length) return;
-    var first=items[0], last=items[items.length-1];
-    if(e.shiftKey&&document.activeElement===first){ e.preventDefault(); last.focus(); }
-    else if(!e.shiftKey&&document.activeElement===last){ e.preventDefault(); first.focus(); }
-  });
+  /* 焦点陷阱已收敛到 util.js 的 trapFocus（document 级 focusin 兜底 + Tab 循环）。
+     原来这里有一套「容器内 keydown + offsetParent 过滤」：
+     - 只在容器内生效，焦点一旦跑出去（脚本 focus、读屏跳转）就回不来了；
+     - 和新的那套同时存在会互相 preventDefault，跳到哪一边取决于监听顺序。
+     两套并存的症状是「Tab 有时跳第一个、有时跳最后一个」，很难归因，所以删旧留新。 */
   if(tabs) tabs.addEventListener('click',function(e){
     var btn=e.target.closest('button[data-tab]'); if(!btn) return;
     selectTab(btn.getAttribute('data-tab'));

@@ -64,7 +64,7 @@
     var open=!panel.hidden;
     if(open){ close(); return; }
     panel.hidden=false; mask.hidden=false;
-    openOverlay('kbd');
+    openOverlay('kbd', panel);
   }
   document.addEventListener('keydown',function(e){
     var tag=(document.activeElement&&document.activeElement.tagName)||'';
