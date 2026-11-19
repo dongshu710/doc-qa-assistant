@@ -171,6 +171,12 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 .sim-q:hover{border-color:var(--brand-line);background:var(--brand-tint);}
 
 .thinking{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--muted);}
+/* 长等待的已用时（3 秒后才出现）。tabular-nums 是必须的：否则秒数从 9 跳到
+   10 时字符宽度变化，整行文字会左右抖一下——正好发生在用户最焦躁的时候。 */
+.think-wait{font-size:11px;color:var(--faint);font-variant-numeric:tabular-nums;}
+/* 空的时候不占位：它是 flex item，空着也会吃一个 gap（9px），
+   让状态行整体看起来比平时宽一点 */
+.think-wait:empty{display:none;}
 .dots{display:inline-flex;gap:3px;}
 .dots i{width:5px;height:5px;border-radius:50%;background:var(--brand);animation:bounce 1.15s infinite ease-in-out;}
 .dots i:nth-child(2){animation-delay:.16s;} .dots i:nth-child(3){animation-delay:.32s;}
@@ -220,8 +226,11 @@ details.src[open] summary .ic{transform:rotate(90deg);}
 
 /* 来源前置：长答案里引用卡会排到几屏之后，先给一行可点的汇总 */
 .src-chip{margin:0 0 9px;}
+/* 文档名列进标签后可能很长（中文标题 + 后缀），超宽要截断：
+   这一行是"让用户认出是哪份"，截断后仍有识别价值，撑破布局则连正文都歪 */
 .src-jump{border:1px solid var(--line-2);background:var(--surface-2);color:var(--brand-600);
-  border-radius:7px;padding:3px 9px;font-size:12px;font-family:inherit;cursor:pointer;}
+  border-radius:7px;padding:3px 9px;font-size:12px;font-family:inherit;cursor:pointer;
+  max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .src-jump:hover{border-color:var(--brand);color:var(--brand);}
 
 /* 抽屉里的「上一块 / 下一块」 */

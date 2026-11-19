@@ -39,6 +39,13 @@ function bindKeyBar(){
 }
 var MODE={llm:'模型生成',extractive:'抽取式',extractive_fallback:'降级抽取',keyword_local:'本地关键词'};
 var BEHAVIOR={answer:['作答','ok'],ask_clarify:['追问澄清','brand'],no_answer:['未找到','warn'],refuse:['拒答','bad']};
+/* 两个引用指标的口径说明。pill 上写不下，只能放 title——鼠标用户能看到；
+   触屏看不到，所以文案本身得能读：「可核实」比「支持」自解释。
+   这两个数不是模型自评，是可复算的检查，所以值得解释而不是让人猜。 */
+var TIP_SUPPORT='逐句核对：被引的那句话能不能在被引文档里找到（数字必须一致，'
+  +'文字重合度达标）。差的那部分是改写或引错，值得点开出处看一眼。';
+var TIP_COVERAGE='带引用编号的句子占比。偏低说明有些结论没标出处——'
+  +'尤其是数字类结论，没标就等于没法核对。';
 var ART='{{_ASK_ART}}';
 
 /* 滚到底：宽屏滚的是 .chat-list，窄屏（≤900px）它的 overflow 是 visible，
@@ -56,6 +63,33 @@ function scrollBottom(force){
   if(force||near) window.scrollTo(0,doc.scrollHeight);
 }
 function autoGrow(){ qEl.style.height='auto'; qEl.style.height=Math.min(qEl.scrollHeight,124)+'px'; }
+
+/* ---------- 输入草稿 ----------
+   写到一半刷新、切会话、误关标签，写了几百字的问题就没了。这是最亏的一类
+   丢失：内容完全是用户自己产出的，而且往往正准备发出去。
+   只存本地一个键、不按会话分开（切会话通常就是想换个话题问，带着草稿过去
+   更符合预期）、不上传服务端（草稿是纯本地状态，同步它只带来隐私问题）。 */
+var DRAFT_KEY='jy_draft_v1', draftTimer=0;
+function saveDraftSoon(){
+  if(draftTimer) clearTimeout(draftTimer);
+  draftTimer=setTimeout(function(){
+    draftTimer=0;
+    try{
+      if(qEl.value.trim()) localStorage.setItem(DRAFT_KEY,qEl.value);
+      else localStorage.removeItem(DRAFT_KEY);
+    }catch(e){ /* 无痕模式或配额满：草稿不值得为此打扰用户 */ }
+  },300);
+}
+function clearDraft(){
+  if(draftTimer){ clearTimeout(draftTimer); draftTimer=0; }
+  try{ localStorage.removeItem(DRAFT_KEY); }catch(e){}
+}
+function restoreDraft(){
+  var v='';
+  try{ v=localStorage.getItem(DRAFT_KEY)||''; }catch(e){ return; }
+  if(!v) return;
+  qEl.value=v; autoGrow(); syncSend();
+}
 
 var heroEl=document.getElementById('hero'), exLoaded=false;
 function renderEmpty(){
@@ -93,7 +127,9 @@ function addBot(){
 }
 function thinkingHTML(text){
   return '<div class="ans-card"><div class="thinking"><span class="dots"><i></i><i></i><i></i></span>'
-    +'<span class="think-text">'+esc(text)+'</span></div>'
+    +'<span class="think-text">'+esc(text)+'</span>'
+    // 已用时占位：内容由 ask() 里的定时器填，3 秒内保持空
+    +'<span class="think-wait"></span></div>'
     +'<div class="sk" style="margin-top:13px;width:92%"></div>'
     +'<div class="sk" style="margin-top:7px;width:72%"></div></div>';
 }
@@ -129,10 +165,14 @@ function footHTML(d){
      只在真的校验过（checked>0）时才显示——没校验却写 100% 是撒谎。 */
   if(d.citation_support_checked>0&&d.citation_support_rate!=null){
     var sr=Math.round(d.citation_support_rate*100);
-    html+=pill('出处支持 '+sr+'%',sr<100?'warn':'');
+    // 文案从「出处支持」改成「引用可核实」：前者听起来像模型自评，后者说的是
+    // 一件用户能自己复现的事——点开出处看一眼，对不对自己判断。
+    html+='<span class="pill'+(sr<100?' warn':'')+'" title="'+esc(TIP_SUPPORT)+'">'
+      +'引用可核实 '+sr+'%</span>';
   }
   if(d.citation_coverage!=null&&d.citation_coverage<0.999){
-    html+=pill('引用覆盖 '+Math.round(d.citation_coverage*100)+'%','warn');
+    html+='<span class="pill warn" title="'+esc(TIP_COVERAGE)+'">'
+      +'引用覆盖 '+Math.round(d.citation_coverage*100)+'%</span>';
   }
   if(d.kb_version){ html+=pill('知识库 '+d.kb_version); }
   if(d.degraded){ html+=pill('降级','warn'); }
@@ -174,11 +214,25 @@ function answerHTML(d,q){
      出现两组相同数字，再叠加「检索依据 M 条」，读者不知道该信哪个。
      只在答案够长时才出现：短答案的引用卡就在下面 8px 处，这一行纯属多一层。 */
   if(d.citations&&d.citations.length&&(d.answer||'').length>600){
-    var docs={};
-    d.citations.forEach(function(c){ if(c.doc_id) docs[c.doc_id]=1; });
-    var dn=Object.keys(docs).length||d.citations.length;
-    h+='<div class="src-chip"><button type="button" class="src-jump">'
-      +'来源 '+dn+' 份</button></div>';
+    var names=[], seen={};
+    d.citations.forEach(function(c){
+      var key=c.doc_id||c.title; if(!key||seen[key]) return;
+      seen[key]=1;
+      if(c.title) names.push(c.title);
+    });
+    var dn=Object.keys(seen).length||d.citations.length;
+    /* 只写「来源 N 份」等于没说：用户仍然不知道是哪几份，要么点开、要么忽略。
+       NN/g 讲引用时明确要求「用有意义的标签」——文档名比"来源"有用得多。
+       只列前两份：超过就不值得占这一行，剩下的用 +N 表示。 */
+    var label, shown=Math.min(2,names.length);
+    if(shown){
+      label='来源：'+esc(names.slice(0,shown).join('、'))
+        +(dn>shown?' +'+(dn-shown):'');
+    }else{
+      label='来源 '+dn+' 份';
+    }
+    h+='<div class="src-chip"><button type="button" class="src-jump" '
+      +'title="查看全部 '+dn+' 份来源">'+label+'</button></div>';
   }
   if(local&&d.keyword_terms&&d.keyword_terms.length){
     h+='<div class="kw-hit"><span class="kw-hit-t">命中</span>'
@@ -601,13 +655,36 @@ async function ask(opts){
   body.innerHTML=thinkingHTML('正在检索知识库…');
   scrollBottom(true);
   qEl.value=''; autoGrow();
+  clearDraft();          // 问题已经发出去了，它不再是草稿
 
-  var answerEl=null, raw='';
+  var answerEl=null, pendingText='', flushTimer=0;
   function ensureAnswer(){
     if(answerEl) return answerEl;
     body.innerHTML='<div class="ans-card"><div class="answer streaming"></div></div>';
     answerEl=body.querySelector('.answer');
     return answerEl;
+  }
+  /* 缓冲刷新：不能每个 delta 都直接写 DOM。
+     `textContent +=` 本身便宜，但紧跟着的 scrollBottom() 会读 scrollHeight /
+     scrollTop / clientHeight 再写 scrollTop——读写交替就是强制同步布局。
+     token 速率按 30/s 算，就是每秒 30 次全文档重排，而答案越长单次越贵。
+     用户感受是「回答越长越卡」，很容易被误判成模型慢。
+     50ms 是折中：再长（>100ms）能看出输出一顿一顿。 */
+  function flushNow(){
+    if(flushTimer){ clearTimeout(flushTimer); flushTimer=0; }
+    if(!pendingText) return;
+    ensureAnswer().textContent += pendingText;
+    pendingText='';
+  }
+  function scheduleFlush(){
+    if(flushTimer) return;
+    flushTimer=setTimeout(function(){
+      flushTimer=0;
+      if(!pendingText) return;
+      ensureAnswer().textContent += pendingText;
+      pendingText='';
+      scrollBottom();
+    },50);
   }
   function finish(data){
     if(data.session_id){ SESSION_ID=data.session_id; saveSessionId(SESSION_ID); }
@@ -619,6 +696,9 @@ async function ask(opts){
   /* 半截答案：停止或断流时，已经吐出来的字比一句「失败」有用得多。
      以前这里只追加一句「（已停止生成）」，既不落库也不可重试，刷新一次就全没了。 */
   function finishPartial(note){
+    // 读 textContent 之前必须刷：最后 ≤50ms 的增量还在缓冲里。不刷就等于
+    // 「一按停止，结尾那几个字被吞了」——用户会以为停止动作有副作用。
+    flushNow();
     var text=(answerEl&&answerEl.textContent)||'';
     if(!text.trim()){
       body.innerHTML='<div class="ans-card"><div class="ans-label"><span class="pill warn">'+esc(note)+'</span></div>'
@@ -641,6 +721,20 @@ async function ask(opts){
     var t=body.querySelector('.think-text'); if(t) t.textContent='正在组织答案并校验引用…';
   },900);
 
+  /* 长等待的时间感。900ms 之后文案就固定了，TTFT 若是 8 秒，用户盯着同一句话
+     7 秒——分不清「还在想」和「卡死了」。Nielsen 的 10 秒档要求「知道还要多久」
+     或至少「知道系统还在动」；LLM 给不出剩余时间，但已用时能给。
+     3 秒内不显示：短请求闪一下「1 秒」反而像 bug。 */
+  var waitTimer=0, waitStarted=Date.now();
+  function stopWait(){
+    if(waitTimer){ clearInterval(waitTimer); waitTimer=0; }
+  }
+  waitTimer=setInterval(function(){
+    var el2=body.querySelector('.think-wait'); if(!el2) return;
+    var sec=Math.floor((Date.now()-waitStarted)/1000);
+    el2.textContent=sec<3?'':'· 已等待 '+sec+' 秒';
+  },1000);
+
   try{
     var resp=await fetch('/api/ask/stream',{method:'POST',headers:apiHeaders({'Content-Type':'application/json'}),
       body:JSON.stringify({query:query,session_id:SESSION_ID}),signal:controller.signal});
@@ -660,9 +754,16 @@ async function ask(opts){
     await readSSE(resp,function(name,data){
       if(name==='delta'){
         clearTimeout(timer);
-        ensureAnswer().textContent += (data.text||'');
-        scrollBottom();
+        // 文本开始流入，秒数就没有意义了；不停的话它会继续在原位空转，
+        // 屏幕上出现一个不属于任何东西的计时器
+        stopWait();
+        pendingText += (data.text||'');
+        scheduleFlush();
       }else if(name==='replace'){
+        /* replace 是「整体替换」：还没刷出去的增量属于被替换掉的旧内容，
+           不丢弃的话会被追加到新文本后面，屏幕上出现重复的一段。 */
+        pendingText='';
+        if(flushTimer){ clearTimeout(flushTimer); flushTimer=0; }
         ensureAnswer().textContent = (data.text||'');
         scrollBottom();
       }else if(name==='final'){
@@ -675,6 +776,11 @@ async function ask(opts){
     finish(finalData);
   }catch(err){
     clearTimeout(timer);
+    /* 先刷缓冲再判断「有没有内容」。缓冲是 50ms 一刷，断流往往发生在两次
+       刷新之间——不先刷的话，明明已经收到几百字，这里读到的是空，
+       于是被判成「什么都没收到」，直接显示错误卡片，已经收到的字全丢。
+       这是加缓冲之后最容易漏的一处。 */
+    flushNow();
     if(err && err.name==='AbortError'){
       finishPartial('已停止生成');
       toast('已停止生成');
@@ -685,6 +791,11 @@ async function ask(opts){
     }
   }finally{
     clearTimeout(timer);
+    stopWait();
+    // 缓冲定时器必须在这里兜底清掉：finish 会用完整答案重绘 body，
+    // 残留的定时器醒来时 answerEl 已脱离文档，写入无声无息但白做一次布局。
+    if(flushTimer){ clearTimeout(flushTimer); flushTimer=0; }
+    pendingText='';
     setBusy(false); controller=null; qEl.focus(); scrollBottom(true);
   }
 }
@@ -698,7 +809,7 @@ sendBtn.onclick=function(){
   }
   ask();
 };
-qEl.addEventListener('input',function(){ autoGrow(); syncSend(); });
+qEl.addEventListener('input',function(){ autoGrow(); syncSend(); saveDraftSoon(); });
 qEl.addEventListener('keydown',function(e){
   if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){ e.preventDefault(); ask(); }
 });
@@ -890,7 +1001,7 @@ function startNewChat(){
   if(window.JY) JY.create();
   // 新对话要有自己的服务端上下文：沿用旧 session_id 会让模型记得上一段
   SESSION_ID=newSessionId(); saveSessionId(SESSION_ID);
-  qEl.value=''; autoGrow();
+  qEl.value=''; autoGrow(); clearDraft();
   list.innerHTML=''; renderThread(); qEl.focus();
   if(window.innerWidth<=900) document.body.classList.remove('side-open');
 }
@@ -934,7 +1045,9 @@ function bindThreadEvents(){
 function boot(){
   bindThreadEvents();
   var pre=new URLSearchParams(location.search).get('q');
+  // ?q= 优先级高于草稿：它是「明确要问这一句」，草稿只是「上次没写完」
   if(pre){ qEl.value=pre; autoGrow(); ask(); }
+  else { restoreDraft(); }
 }
 bindKeyBar();
 bindChips();
