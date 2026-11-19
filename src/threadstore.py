@@ -35,6 +35,41 @@ MAX_BYTES = 4 * 1024 * 1024
 # 放在 threads/ 下、名字以 `_` 开头：`.json` 的 glob 会扫到它，所有扫描都要显式排除。
 INDEX_NAME = "_index.json"
 
+# 索引里存多少搜索文本。侧栏的搜索原来只匹配标题，而标题是自动截的（前 28 字），
+# 「我问过起购金额的事」这类回忆起点的词多半搜不到。问句全存、答案只取开头一小段：
+# 答案长且冗余，整段塞进索引会把 300 条会话的索引从几十 KB 撑到几 MB。
+SEARCH_TEXT_MAX = 600
+SEARCH_SNIPPET = 60
+# 索引格式版本。加字段就升一位：`_load_index` 见到旧版本直接当没有，
+# 触发一次全量重建（300 条约 700ms，只发生一次），比写迁移代码可靠。
+INDEX_SCHEMA = "thread-index/v2"
+
+
+def _search_text(turns: list) -> str:
+    """把一条会话压成可搜索的一行字。
+
+    只收问句 + 答案开头：用户找旧对话时想起的是「我当时怎么问的」，
+    而不是模型当时怎么答的；答案只用来兜住「答案里唯一的那个数字」。
+    """
+    parts: list[str] = []
+    for item in turns:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("q") or "").strip()
+        if question:
+            parts.append(question)
+        # 答案在 `d.answer` 里：`_clean_turns` 只放行 q / ts / d，前端 slimTurn
+        # 也把答案放在 d 下面。顶层 `a` 是测试/导出的写法，留作兜底。
+        answer = ""
+        if isinstance(item.get("d"), dict):
+            answer = str(item["d"].get("answer") or "")
+        if not answer:
+            answer = str(item.get("a") or item.get("answer") or "")
+        answer = answer.strip()
+        if answer:
+            parts.append(answer[:SEARCH_SNIPPET])
+    return " ".join(parts)[:SEARCH_TEXT_MAX]
+
 # 所有会话写入串行化。两个原因：
 # 1) 每次请求都会 new 一个 ThreadStore，实例锁拦不住并发，必须是模块级的；
 # 2) Windows 上两个线程同时 os.replace 到同一目标会抛 WinError 5（共享冲突），
@@ -80,11 +115,15 @@ class ThreadStore:
             return None
         if not isinstance(data, dict) or not isinstance(data.get("items"), dict):
             return None
+        # 版本不符就当没有：让 _index() 走一次全量重建。旧索引缺 `text` 字段时
+        # 搜索会静默搜不到正文——「没报错但结果不对」比慢一次更难发现。
+        if data.get("schema") != INDEX_SCHEMA:
+            return None
         return data
 
     def _save_index(self, items: dict, count: int) -> None:
         atomicfile.write_json(str(self._index_path()),
-                              {"schema": "thread-index/v1", "count": count, "items": items})
+                              {"schema": INDEX_SCHEMA, "count": count, "items": items})
 
     def _entry_of(self, thread_id: str, record: dict) -> dict:
         turns = record.get("turns") if isinstance(record.get("turns"), list) else []
@@ -94,6 +133,9 @@ class ThreadStore:
             "updated": str(record.get("updated") or record.get("created") or ""),
             "sid": str(record.get("sid") or ""),
             "turns": len(turns),
+            # 搜索用的一行字。放在索引里而不是搜索时读文件：300 条会话全读
+            # 要 700ms+，而侧栏搜索是逐字实时过滤的。
+            "text": _search_text(turns),
         }
 
     def _count_files(self) -> int:

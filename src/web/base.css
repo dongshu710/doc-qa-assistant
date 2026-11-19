@@ -188,6 +188,12 @@ main{flex:1 0 auto;}
 }
 .conv .x:focus-visible{opacity:1;}
 .conv .x:hover{background:var(--line-2);color:var(--ink);}
+/* 行内重命名：占据标题按钮的位置，高度跟行对齐（34px 的行留 28px 给输入框） */
+.conv-rename{
+  flex:1;min-width:0;height:28px;margin:0 2px;padding:0 8px;
+  border:1px solid var(--brand);border-radius:7px;
+  font:inherit;font-size:13px;color:var(--ink);background:var(--surface);
+}
 .side-empty{padding:18px 10px;font-size:12px;color:var(--faint);line-height:1.7;}
 .side-empty a{color:var(--brand);}
 .side-foot{flex:none;border-top:1px solid var(--side-line);padding-top:6px;display:flex;flex-direction:column;gap:1px;}
@@ -581,3 +587,35 @@ pre.cmd .c{color:#8a857c;}
   background:var(--brand-soft);border-radius:5px;padding:2px 7px;}
 .kbd-row span{font-size:12px;color:var(--muted);}
 .kbd-foot{padding:9px 16px 12px;font-size:12px;color:var(--faint);border-top:1px solid var(--line);}
+
+/* ============ 命令面板（Ctrl+K） ============
+   层级 140/141，比快捷键表（130/131）更高：它可以从任何地方唤出，
+   包括快捷键表开着的时候。 */
+.pal-mask{position:fixed;inset:0;background:rgba(24,22,18,.32);z-index:140;}
+.pal{position:fixed;left:50%;top:13vh;transform:translateX(-50%);z-index:141;
+  width:min(560px,92vw);max-height:70vh;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:0 24px 60px -30px rgba(24,22,18,.45);overflow:hidden;}
+.pal-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);}
+.pal-ic{flex:none;display:flex;color:var(--faint);}
+.pal-head input{flex:1;min-width:0;border:0;background:transparent;outline:none;
+  font:inherit;font-size:14px;color:var(--ink);}
+.pal-head input::placeholder{color:var(--faint);}
+.pal-esc{flex:none;font-family:var(--mono);font-size:11px;color:var(--faint);
+  background:var(--surface-2);border-radius:5px;padding:2px 6px;}
+.pal-list{flex:1;min-height:0;overflow:auto;padding:6px;}
+.pal-group{padding:9px 8px 3px;font-size:11px;font-weight:600;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--faint);}
+.pal-item{display:flex;align-items:baseline;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;}
+.pal-item .pi-title{flex:none;font-size:13px;color:var(--text);}
+/* 说明文字吃掉剩余宽度并省略：会话那一组的 desc 是正文摘要，可能很长 */
+.pal-item .pi-desc{flex:1;min-width:0;font-size:12px;color:var(--faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pal-item:hover{background:var(--hover);}
+.pal-item.on{background:var(--brand-soft);}
+.pal-item.on .pi-title{color:var(--brand-600);font-weight:600;}
+.pal-empty{padding:26px 14px;text-align:center;font-size:13px;color:var(--faint);}
+.pal-foot{display:flex;align-items:center;gap:14px;padding:8px 14px;
+  border-top:1px solid var(--line);font-size:11px;color:var(--faint);}
+.pal-foot kbd{font-family:var(--mono);background:var(--surface-2);border-radius:4px;padding:1px 5px;margin-right:2px;}
+.pal-note{margin-left:auto;font-variant-numeric:tabular-nums;}

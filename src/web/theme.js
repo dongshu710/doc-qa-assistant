@@ -22,15 +22,17 @@
 })();
 
 /* ---------- 快捷键总表 ----------
-   快捷键原来只活在 title 属性里：Ctrl+K 写在新对话按钮上，Ctrl+Shift+F 写在文件按钮上，
-   Ctrl+B 哪都没写。发现不了的快捷键等于没有。这里按 ? 或 F1 摊开一张表，
+   快捷键原来只活在 title 属性里：新对话写了 Ctrl+K（v1.44 起改成 Ctrl+Shift+O，
+   Ctrl+K 让位给命令面板），Ctrl+Shift+F 写在文件按钮上，Ctrl+B 哪都没写。
+   发现不了的快捷键等于没有。这里按 ? 或 F1 摊开一张表，
    表里的每一条都必须真在代码里绑过，否则就是另一种形式的骗人。 */
 (function(){
   /* 只列这一页真正能用的：汇报页没有侧栏也没有输入框，
      把 Ctrl+K 列上去等于教用户按一个没反应的键。 */
   var rows=[];
   if(document.getElementById('newChat')){
-    rows.push(['Ctrl / Cmd + K','新对话'],
+    rows.push(['Ctrl / Cmd + K','命令面板：搜命令或对话'],
+              ['Ctrl / Cmd + Shift + O','新对话'],
               ['Ctrl / Cmd + B','收起或展开侧栏'],
               ['Ctrl / Cmd + Shift + F','打开笔记与附件']);
   }

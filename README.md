@@ -1390,6 +1390,7 @@ v1.18.0 把这条分工做成了侧栏里点得到的按钮：
 ```
 src/web/   base.css  settings.css  files.css  ask.css  kb.css  debug.css
            side.js  settings.js  files.js  files_page.js  ask.js  kb.js  debug.js  theme.js  util.js
+           palette.js（命令面板 Ctrl+K）
            settings.html  files.html  files_page.html  ask.html  kb.html  art.txt
 ```
 

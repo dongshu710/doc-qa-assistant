@@ -135,7 +135,7 @@
         // 已经取过正文的保留在内存里，列表只更新元数据
         if(keep&&keep.loaded){ keep.title=it.title; keep.updated=it.updated; return keep; }
         return {id:it.id,title:it.title,created:it.created,updated:it.updated,
-                sid:it.sid,turns:[],loaded:false,count:it.turns};
+                sid:it.sid,turns:[],loaded:false,count:it.turns,text:it.text||''};
       });
       if(!find(state.current)) state.current='';
       JY.render();
@@ -175,6 +175,16 @@
       if(!t.turns) t.turns=[];
       t.turns.push(turn);
       if(t.title==='新对话'||!t.title) t.title=titleOf(turn&&turn.q);
+      /* 本地也拼一份：服务端索引要等下一次列表刷新才回来，这期间搜刚问过的词
+         会搜不到，用户看到的是「明明刚问过」。
+         答案也要取开头一段——和 threadstore._search_text 同一套口径，
+         不然「记得答案里有个一万元」就搜不到。 */
+      if(turn){
+        var seg=String(turn.q||'');
+        var ans=String(turn.a||(turn.d&&turn.d.answer)||'');
+        if(ans) seg+=' '+ans.slice(0,60);
+        if(seg.trim()) t.text=((t.text||'')+' '+seg).slice(0,600);
+      }
       t.updated=now();
       var i=state.threads.indexOf(t);
       if(i>0){ state.threads.splice(i,1); state.threads.unshift(t); }
@@ -218,12 +228,19 @@
       return t;
     },
     clearCurrent:function(){ return JY.clearThread(state.current); },
+    // 命令面板里的「重命名当前对话」走这里；不传 id 就是当前会话
+    rename:function(id){ startRename(id||state.current); },
     render:function(){
       var box=document.getElementById('convList'); if(!box) return;
       var q=(document.getElementById('convSearch')||{}).value||'';
       q=q.trim().toLowerCase();
+      /* 标题 + 正文一起搜。只搜标题时「我问过起购金额的事」多半搜不到——
+         标题是自动截的前 28 字，而用户记住的往往是正文里的某个词。
+         正文来自索引里的 text（服务端算好的问句 + 答案开头），不是现读文件。 */
       var rows=JY.list().filter(function(t){
-        return !q||String(t.title||'').toLowerCase().indexOf(q)>=0;
+        if(!q) return true;
+        if(String(t.title||'').toLowerCase().indexOf(q)>=0) return true;
+        return String(t.text||'').toLowerCase().indexOf(q)>=0;
       });
       var html='', last='';
       rows.forEach(function(t){
@@ -254,6 +271,48 @@
     }
   };
   window.JY=JY;
+
+  /* ---------- 行内重命名 ----------
+     会话标题是自动截的前 28 字，同一句话问过几次就全是同名，侧栏指数失效。
+     改名用行内 input 而不是弹窗：只改一行字，弹窗的成本远大于收益。
+     入口三个：双击标题、焦点在行上按 F2、命令面板里「重命名当前对话」。 */
+  function startRename(id){
+    var row=document.querySelector('.conv[data-id="'+id+'"]');
+    if(!row) return;
+    var btn=row.querySelector('.conv-open');
+    var t=find(id);
+    if(!btn||!t) return;
+    if(row.querySelector('.conv-rename')) return;      // 已经在编辑了
+    var input=document.createElement('input');
+    input.className='conv-rename';
+    input.type='text';
+    input.maxLength=120;
+    input.value=(t.title==='新对话'?'':(t.title||''));
+    input.setAttribute('aria-label','重命名会话');
+    btn.hidden=true;
+    row.insertBefore(input,btn);
+    input.focus();
+    try{ input.select(); }catch(e){}
+    var done=false;
+    function finish(save){
+      if(done) return;
+      done=true;
+      var v=input.value.trim();
+      input.remove();
+      btn.hidden=false;
+      if(save&&v&&v!==t.title) JY.setThread(id,{title:v});
+      try{ btn.focus(); }catch(e){}
+    }
+    /* blur 也要提交：用户改完直接去点别处，是最常见的结束方式。
+       Enter 提交、Esc 放弃，与系统里所有行内编辑一致。 */
+    input.addEventListener('blur',function(){ finish(true); });
+    input.addEventListener('keydown',function(e){
+      if(e.key==='Enter'){ e.preventDefault(); finish(true); }
+      else if(e.key==='Escape'){ e.preventDefault(); finish(false); }
+      // 别让 Esc / Ctrl+K 冒到全局去：编辑中途关侧栏或开面板，改动就丢了
+      e.stopPropagation();
+    });
+  }
 
   // 首屏：先取列表，列表为空才迁移旧数据（顺序不能反，否则会先把磁盘上的覆盖成空）
   state.ready=call('GET','/api/threads?limit='+MAX).then(function(res){
@@ -321,6 +380,11 @@
     var item=e.target.closest('.conv');
     if(!item) return;
     var tid=item.getAttribute('data-id');
+    /* 双击 = 改名。不用 dblclick 事件：第一次 click 已经切到这条会话并重绘了
+       整个列表，第二次 click 的目标是新节点，浏览器不保证还会派发 dblclick
+       （实测 Playwright 和 Edge 都不派发）。e.detail 是原生的连点计数，
+       不依赖 DOM 是否被换过。 */
+    if(e.detail>=2){ startRename(tid); return; }
     if(document.body.classList.contains('page-ask')){
       document.dispatchEvent(new CustomEvent('jy:thread',{detail:tid}));
     }else{
@@ -333,8 +397,16 @@
     el('newChat').onclick=function(){ location.href='/ask?new=1'; };
   }
   document.addEventListener('keydown',function(e){
+    if(e.key==='F2'){
+      var cur=e.target.closest&&e.target.closest('.conv');
+      if(cur){ e.preventDefault(); startRename(cur.getAttribute('data-id')); }
+      return;
+    }
     var meta=e.ctrlKey||e.metaKey;
-    if(meta&&(e.key==='k'||e.key==='K')){
+    /* Ctrl+K 已经让位给命令面板（见 palette.js）。占着它的代价是：
+       ChatGPT / Claude / VS Code 都是「开搜索」，迁过来的人按下去会得到
+       上下文被切走。新对话改 Ctrl+Shift+O——和多数编辑器的「打开」一致。 */
+    if(meta&&e.shiftKey&&(e.key==='o'||e.key==='O')){
       e.preventDefault();
       if(el('newChat')) el('newChat').click(); else location.href='/ask?new=1';
       return;

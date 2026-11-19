@@ -89,6 +89,8 @@ SETUP_HTML = load("setup.html")
 SETUP_JS = load("setup.js")
 THEME_HEAD = load("theme_head.html")  # 首屏防闪白：在 <head> 里就把主题定下来
 SETTINGS_JS = load("settings.js")
+# 命令面板：Ctrl+K。放在 SIDE_JS 之后装载——它要用 JY 的会话列表
+PALETTE_JS = load("palette.js")
 THEME_JS = load("theme.js")
 JS_UTIL = load("util.js")            # 页面脚本共用的小工具：转义、toast
 
@@ -117,8 +119,9 @@ def nav(active: str = "", links: bool = True) -> str:
         '<button class="side-mini-btn" id="sideMini" type="button" aria-label="收起侧栏" title="收起侧栏">'
         + icon("panel", 16) +
         '</button></div>'
-        '<button class="new-chat" id="newChat" type="button" title="新对话 · Ctrl+K">'
-        + icon("plus", 16) + '<span class="nc-label">新对话</span><kbd>Ctrl K</kbd></button>'
+        '<button class="new-chat" id="newChat" type="button" title="新对话 · Ctrl+Shift+O">'
+        # kbd 写 ⇧ 而不是 Shift：侧栏只有 260px，13px 的字塞不下完整拼写
+        + icon("plus", 16) + '<span class="nc-label">新对话</span><kbd>Ctrl ⇧ O</kbd></button>'
         '<div class="side-search">' + icon("search", 14) +
         '<input id="convSearch" type="search" placeholder="搜索对话" aria-label="搜索对话" autocomplete="off"></div>'
         '<div class="side-scroll"><div class="conv-list" id="convList"></div></div>'
@@ -189,6 +192,7 @@ def shell(active: str, title: str, body: str, script: str = "", css: str = "") -
         # 公共脚本先注入一次：侧栏与设置都要用 esc/toast，页面脚本不再各自复制一份
         f"<script>{JS_UTIL}</script>"
         f"<script>{SIDE_JS}</script>"
+        f"<script>{PALETTE_JS}</script>"
         f"<script>{script}</script>"
         f"<script>{FILES_JS}</script>"
         f"<script>{SETTINGS_JS}</script><script>{SETUP_JS}</script>"
